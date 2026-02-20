@@ -131,32 +131,30 @@ class WebViewController: NSWindowController, WKNavigationDelegate, WKUIDelegate,
     /// Load the web app after the server is ready.
     func loadWebApp(port: Int) {
         loadingLabel.stringValue = "Loading..."
-        let url = URL(string: "http://localhost:\(port)")!
-
-        // Pre-seed the httpOnly auth cookie into WKWebView's cookie store before
-        // loading the page. This lets the React app pass checkAuth() immediately
-        // without showing the login screen. The cookie is httpOnly so JS can't
-        // read it — no XSS risk. The token comes from ServerManager which already
-        // parsed .env at startup.
+        let baseURL = URL(string: "http://localhost:\(port)")!
         let token = serverManager.authToken
+
+        // Call the login API endpoint first — the server's Set-Cookie response
+        // header properly sets the httpOnly cookie in WKWebView's cookie store.
+        // This is more reliable than manually injecting cookies.
         if !token.isEmpty {
-            let cookieProps: [HTTPCookiePropertyKey: Any] = [
-                .name: "medusa-auth",
-                .value: token,
-                .domain: "localhost",
-                .path: "/",
-                .expires: Date().addingTimeInterval(24 * 60 * 60),
-            ]
-            if let cookie = HTTPCookie(properties: cookieProps) {
-                webView.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) {
-                    self.webView.load(URLRequest(url: url))
-                }
-                return
+            let loginURL = URL(string: "http://localhost:\(port)/api/auth/login")!
+            var request = URLRequest(url: loginURL)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try? JSONSerialization.data(withJSONObject: ["token": token])
+
+            webView.load(request)
+
+            // After the login POST completes, navigate to the main page.
+            // We use a short delay to let the Set-Cookie header be processed.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                self.webView.load(URLRequest(url: baseURL))
             }
+            return
         }
 
-        // No auth token configured — load directly
-        webView.load(URLRequest(url: url))
+        webView.load(URLRequest(url: baseURL))
     }
 
     /// Show an error message on the loading overlay.
