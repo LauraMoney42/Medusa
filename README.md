@@ -1,14 +1,6 @@
-<p align="center">
-  <img src="docs/medusa_logo.png" alt="Medusa" width="180" />
-</p>
+# Medusa
 
-<h1 align="center">Medusa</h1>
-
-<p align="center">
-  Multi-bot AI orchestration platform — run parallel Claude sessions with real-time Hub coordination, @mention routing, and project management.
-</p>
-
----
+Multi-bot AI orchestration platform — run parallel Claude sessions with real-time Hub coordination, @mention routing, and project management.
 
 ![Architecture](docs/medusa_architecture.png)
 
@@ -199,3 +191,10 @@ Medusa/
 - **Desktop**: Swift, SwiftUI, WKWebView
 - **AI**: Claude Code CLI (spawned as child processes)
 - **Data**: JSON file storage (no database required)
+
+## Features Coming Soon
+
+- Voice input (Wispr integration or similar)
+- Token usage meter
+- Updated projects pane
+- Easy LLM swapping

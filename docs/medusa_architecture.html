@@ -130,6 +130,23 @@
     .reason-card h4 { font-size: .85rem; font-weight: 600; color: var(--green-bright); margin-bottom: 10px; }
     .reason-card ul li { font-size: .83rem; }
 
+    /* ── Tables ── */
+    table {
+      width: 100%; border-collapse: collapse; margin: 12px 0;
+      font-size: .85rem;
+    }
+    th {
+      text-align: left; padding: 8px 12px;
+      color: var(--green-bright); font-weight: 600;
+      border-bottom: 1px solid var(--green-dim);
+      font-size: .75rem; text-transform: uppercase; letter-spacing: .5px;
+    }
+    td {
+      padding: 6px 12px; color: var(--text-muted);
+      border-bottom: 1px solid rgba(31,46,31,.5);
+    }
+    td code { font-size: .78em; }
+
     hr { border: none; border-top: 1px solid var(--border); margin: 48px 0; }
 
     footer {
@@ -138,7 +155,6 @@
     }
     footer a { color: var(--green-bright); text-decoration: none; }
 
-    /* Print-safe: kill glows, gradients and borders that bleed into PDF */
     @media print {
       body { padding: 24px 16px; }
       h1 {
@@ -148,14 +164,8 @@
         background-clip: unset !important;
         color: #e8f5e9 !important;
       }
-      .logo-ring {
-        border: none !important;
-        box-shadow: none !important;
-      }
-      .card, .diagram-card, .reason-card {
-        box-shadow: none !important;
-        break-inside: avoid;
-      }
+      .logo-ring { border: none !important; box-shadow: none !important; }
+      .card, .diagram-card, .reason-card { box-shadow: none !important; break-inside: avoid; }
       h2 { break-after: avoid; }
     }
   </style>
@@ -173,216 +183,421 @@
 
 <!-- OVERVIEW -->
 <div class="card">
-  <p>Medusa is a multi-bot orchestration system that enables parallel execution of multiple Claude AI sessions with real-time coordination via a shared Hub. Bots collaborate, self-assign tasks, and escalate blockers — all without leaving a single interface.</p>
+  <p>Medusa is a multi-bot orchestration system that enables parallel execution of multiple Claude AI sessions with real-time coordination via a shared Hub. Bots communicate through <code>[HUB-POST:]</code> broadcasts and <code>[BOT-TASK:]</code> direct messages, self-assign tasks, auto-escalate blockers, and update project status — all coordinated through REST APIs and Socket.IO events.</p>
 </div>
 
 <!-- HIGH-LEVEL ARCHITECTURE -->
 <h2>High-Level Architecture</h2>
 <div class="diagram-card">
-  <div class="diagram-title">System Overview - Client - Server - Bots - Storage</div>
+  <div class="diagram-title">System Overview — Client · Server · Bots · Storage · Desktop</div>
   <div class="mermaid" id="diagram-1">
 graph TB
-    subgraph Client["Client (React + TypeScript)"]
-        UI[UI Components]
-        Sidebar[Sidebar]
-        HubUI[Hub Chat]
-        ProjectsUI[Projects Pane]
-        Kanban[Kanban Board]
-        SocketClient[Socket.IO Client]
-        Zustand[Zustand Stores]
+    subgraph Desktop["macOS Desktop App (Swift + WKWebView)"]
+        ServerMgr[Server Manager<br/>Auto-build · Port cleanup]
+        WebView[WKWebView<br/>Cookie auth · Screen capture]
     end
 
-    subgraph Server["Server (Node.js + Express)"]
-        API[REST API]
+    subgraph Client["Client (React + TypeScript + Zustand)"]
+        UI[UI Components]
+        Sidebar[Sidebar · Bot List · Projects]
+        HubUI[Hub Chat]
+        SocketClient[Socket.IO Client]
+    end
+
+    subgraph Server["Server (Node.js + Express + Socket.IO)"]
+        API[REST API<br/>Auth · Sessions · Hub · Projects · Settings]
         SocketServer[Socket.IO Server]
         ProcessMgr[Process Manager]
-        ProjectStore[Project Store]
-        ChatStore[Chat Store]
-        DevlogMgr[Devlog Manager]
-        GracefulShutdown[Graceful Shutdown]
+        MentionRouter[Mention Router<br/>@name · @all · BOT-TASK]
+        PollScheduler[Hub Poll Scheduler<br/>Stale detection · Hibernation]
+        ModelRouter[Model Router<br/>haiku · sonnet · opus]
+        Summarizer[Conversation Summarizer]
+        TaskSync[Task Sync Manager<br/>Fuzzy match · Auto-update]
+        SettingsStore[Settings Store<br/>Multi-account · LLM config]
+        AutoDeliver[Autonomous Deliver<br/>Unified streaming pipeline]
+        Shutdown[Graceful Shutdown<br/>Auto-resume on restart]
     end
 
-    subgraph Bots["Bot Sessions (Claude CLI)"]
-        Bot1[Bot Session 1]
-        Bot2[Bot Session 2]
-        BotN[Bot Session N]
+    subgraph Bots["Claude CLI Bot Sessions"]
+        Bot1["Bot 1<br/>(e.g. Product Manager)"]
+        Bot2["Bot 2<br/>(e.g. Full Stack Dev)"]
+        BotN["Bot N<br/>(e.g. UI Dev)"]
     end
 
-    subgraph Storage["File System Storage"]
-        Devlog[devlog.md]
-        ProjectsFile[projects.json]
-        Chats[chats dir]
+    subgraph Storage["File System (~/.claude-chat/)"]
+        Sessions[sessions.json]
+        HubLog[hub.json]
+        Projects[projects.json]
+        Settings[settings.json<br/>chmod 600]
+        ChatFiles[chats/*.json]
+        Interrupted[interrupted-sessions.json]
     end
+
+    ServerMgr -->|spawns & monitors| Server
+    WebView -->|httpOnly cookie| Client
 
     UI --> SocketClient
-    SocketClient -->|WebSocket| SocketServer
-    SocketServer -->|WebSocket| SocketClient
-    UI --> API
-    API --> ProjectStore
-    API --> ChatStore
-    API --> DevlogMgr
+    SocketClient <-->|WebSocket| SocketServer
+    UI -->|fetch| API
+
     SocketServer --> ProcessMgr
     ProcessMgr --> Bot1
     ProcessMgr --> Bot2
     ProcessMgr --> BotN
-    ProjectStore --> ProjectsFile
-    ChatStore --> Chats
-    DevlogMgr --> Devlog
-    GracefulShutdown -. monitors .-> ProcessMgr
-    SocketServer -. shutdown event .-> SocketClient
+
+    Bot1 -->|"[HUB-POST:] [BOT-TASK:]"| MentionRouter
+    Bot2 -->|"[HUB-POST:] [BOT-TASK:]"| MentionRouter
+    MentionRouter -->|"@mention delivery"| AutoDeliver
+    AutoDeliver --> ProcessMgr
+
+    PollScheduler -->|"periodic check"| AutoDeliver
+    ModelRouter -.->|"tier selection"| ProcessMgr
+    Summarizer -.->|"compress history"| ChatFiles
+    TaskSync -.->|"[TASK-DONE:] → update"| Projects
+
+    API --> SettingsStore
+    SettingsStore --> Settings
+    ProcessMgr --> ChatFiles
+    MentionRouter --> HubLog
+    Shutdown -.->|"save state"| Interrupted
   </div>
 </div>
 
-<!-- DATA FLOW DIAGRAMS -->
-<h2>Data Flow Diagrams</h2>
+<!-- BOT COMMUNICATION -->
+<h2>Bot-to-Bot Communication</h2>
+
+<div class="card">
+  <h3>Two Communication Protocols</h3>
+  <p>Bots communicate through two distinct marker protocols, both detected inline during streaming output:</p>
+  <ul>
+    <li><strong><code>[HUB-POST: message]</code></strong> — Public broadcast to Hub. Visible to all clients. Stored in hub.json. Routes @mentions to target bots. Triggers <code>[TASK-DONE:]</code> detection.</li>
+    <li><strong><code>[BOT-TASK: @BotName message]</code></strong> — Private direct message. NOT visible in Hub. NOT stored. Routes directly to target bot via MentionRouter. Used for bot-to-bot task delegation without Hub noise.</li>
+  </ul>
+</div>
 
 <div class="diagram-card">
-  <div class="diagram-title">Hub Message Flow</div>
+  <div class="diagram-title">Hub Message + @Mention Flow</div>
   <div class="mermaid" id="diagram-2">
 sequenceDiagram
     participant User
     participant Client
     participant Server
-    participant Bot1
-    participant Bot2
+    participant MentionRouter
+    participant Bot1 as Bot A
+    participant Bot2 as Bot B
+
     User->>Client: Types message in Hub
-    Client->>Server: emit hub message event
-    Server->>Server: Append to hub message log
-    Server-->>Client: broadcast hub message to all clients
-    Server-->>Bot1: Include in next system prompt if mentioned
-    Server-->>Bot2: Include in next system prompt if mentioned
-    Bot1->>Server: Posts HUB-POST response
-    Server->>Server: Parse HUB-POST from bot output
-    Server-->>Client: broadcast hub message to all clients
+    Client->>Server: socket emit hub:post
+    Server->>Server: Store in hub.json
+    Server-->>Client: broadcast hub:message
+    Server->>MentionRouter: extractMentions(@BotB)
+
+    MentionRouter->>MentionRouter: Check guards<br/>(cooldown, queue depth, chain depth)
+    alt Bot B idle
+        MentionRouter->>Bot2: autonomousDeliver(source: mention)
+    else Bot B busy
+        MentionRouter->>MentionRouter: Queue (max 3 pending)
+        Note over MentionRouter: Drains on session:idle
+    end
+
+    Bot2->>Server: [HUB-POST: response with @BotA]
+    Server->>Server: Strip marker, store in hub.json
+    Server-->>Client: broadcast hub:message
+    Server->>MentionRouter: Route @BotA (chain depth +1)
+    MentionRouter->>Bot1: autonomousDeliver(source: mention)
+    Note over MentionRouter: Max chain depth: 3
   </div>
 </div>
 
 <div class="diagram-card">
-  <div class="diagram-title">Task Assignment Flow</div>
+  <div class="diagram-title">BOT-TASK Direct Routing <span>(invisible to Hub)</span></div>
   <div class="mermaid" id="diagram-3">
 sequenceDiagram
-    participant PM as Product Manager Bot
+    participant Bot1 as Bot A (PM)
     participant Server
-    participant Client
-    participant Dev as Developer Bot
-    PM->>Server: HUB-POST task assignment for Dev
-    Server->>Server: Create or update project assignment
-    Server-->>Client: emit hub message event
-    Server-->>Client: emit session pending-task event
-    Client->>Client: Update session badge
-    Dev->>Server: Poll or auto-check Hub for assignments
-    Dev->>Server: HUB-POST Acknowledged starting work
-    Dev->>Server: TASK-DONE with task description
-    Server->>Server: Parse TASK-DONE and update project
+    participant MentionRouter
+    participant Bot2 as Bot B (Dev)
+
+    Bot1->>Server: [BOT-TASK: @BotB implement feature X]
+    Server->>Server: Strip marker from stream<br/>(NOT stored in Hub)
+    Server->>MentionRouter: processBotTaskContent()
+    MentionRouter->>MentionRouter: Resolve @BotB name<br/>(longest-first match)
+    MentionRouter->>Bot2: autonomousDeliver(source: bot-to-bot)
+    Bot2->>Server: [HUB-POST: @BotA done, feature X complete]
+    Server->>Server: Store in hub.json
+    Server-->>Bot1: Next system prompt includes Hub update
+    Bot2->>Server: [TASK-DONE: Implemented feature X]
+    Server->>Server: TaskSyncManager fuzzy-match<br/>(Jaccard ≥ 0.6)
+    Server->>Server: Auto-update project assignment → done
   </div>
 </div>
 
+<!-- AUTONOMOUS DELIVERY PIPELINE -->
+<h2>Autonomous Delivery Pipeline</h2>
+
+<div class="card">
+  <p>All bot-initiated message delivery flows through a unified <code>autonomousDeliver()</code> pipeline. This replaced 4 separate streaming implementations with a single, consistent path.</p>
+  <table>
+    <tr><th>Source</th><th>Compact Hub</th><th>Detect Hub Posts</th><th>Persist User Msg</th><th>Check NO-ACTION</th><th>Trigger</th></tr>
+    <tr><td><code>mention</code></td><td>Yes</td><td>Yes</td><td>Yes</td><td>No</td><td>@BotName in Hub</td></tr>
+    <tr><td><code>poll</code></td><td>Yes</td><td>Yes</td><td>Deferred</td><td>Yes</td><td>Scheduled hub check</td></tr>
+    <tr><td><code>nudge</code></td><td>Yes</td><td>Yes</td><td>No</td><td>No</td><td>Stale task escalation</td></tr>
+    <tr><td><code>resume</code></td><td>No</td><td>No</td><td>Yes</td><td>No</td><td>Server restart recovery</td></tr>
+    <tr><td><code>bot-to-bot</code></td><td>Yes</td><td>Yes</td><td>Yes</td><td>No</td><td>[BOT-TASK:] marker</td></tr>
+  </table>
+</div>
+
+<!-- MODEL ROUTING -->
+<h2>Tiered Model Routing</h2>
+<div class="card">
+  <p>Every message is classified into a model tier before sending to Claude CLI. On failure, auto-escalates to the next tier (haiku → sonnet → opus).</p>
+  <table>
+    <tr><th>Tier</th><th>When Used</th><th>Cost</th></tr>
+    <tr><td><code>haiku</code></td><td>Poll checks, nudges, status queries, acknowledgments, [NO-ACTION]</td><td>Lowest</td></tr>
+    <tr><td><code>sonnet</code></td><td>@mention responses, general user messages (default)</td><td>Medium</td></tr>
+    <tr><td><code>opus</code></td><td>Architecture, design, code review, security audit, RFC</td><td>Highest</td></tr>
+  </table>
+</div>
+
+<hr/>
+
+<!-- DATA FLOW -->
+<h2>Message Processing Flow</h2>
+
 <div class="diagram-card">
-  <div class="diagram-title">Graceful Shutdown Flow</div>
+  <div class="diagram-title">User Message → Bot Response Pipeline</div>
   <div class="mermaid" id="diagram-4">
-sequenceDiagram
-    participant User
-    participant Client
-    participant Server
-    participant ProcessMgr
-    participant Bots
-    User->>Client: Clicks Stop All button
-    Client->>Server: POST /api/shutdown
-    Server->>Server: Set isShuttingDown to true
-    Server->>Server: Close HTTP server
-    Server-->>Client: emit server shutting-down event
-    Client->>Client: Show shutting down banner
-    Server->>ProcessMgr: getBusySessions
-    ProcessMgr-->>Server: list of busy session IDs
-    loop Every 500ms up to 30s
-        Server->>ProcessMgr: getBusySessions
-        alt All bots idle
-            ProcessMgr-->>Server: empty list
-            Server->>Server: process exit 0
-        else Timeout exceeded
-            Server->>ProcessMgr: killAllSessions
-            Server->>Server: process exit 0
-        end
-    end
+graph TB
+    A["User sends message"] --> B["handler.ts receives socket event"]
+    B --> C["Build system prompt:<br/>session prompt + skills<br/>+ conversation summary<br/>+ Hub section (last 20 msgs)"]
+    C --> D["selectModel() → tier"]
+    D --> E["ProcessManager.sendMessage()<br/>claude -p ... --resume --model tier"]
+    E --> F["StreamParser (NDJSON)"]
+    F --> G["HubPostDetector on each delta"]
+    G --> H{Marker detected?}
+    H -->|"[HUB-POST:]"| I["Store in hub.json<br/>Broadcast to clients<br/>Route @mentions<br/>Check TASK-DONE"]
+    H -->|"[BOT-TASK:]"| J["Route to target bot<br/>via MentionRouter<br/>(not stored in Hub)"]
+    H -->|Clean text| K["emit message:stream:delta"]
+    I --> K
+    J --> K
+    K --> L["Stream end"]
+    L --> M["Persist to chat history"]
+    M --> N{"Messages ≥ 30?"}
+    N -->|Yes| O["Summarize with haiku<br/>Trim to last 5 messages"]
+    N -->|No| P["emit session:status idle"]
+    O --> P
+    P --> Q["MentionRouter.onSessionIdle()<br/>Drain pending queue"]
   </div>
 </div>
 
 <div class="diagram-card">
-  <div class="diagram-title">Project Status Update Flow <span>Manual — Automation Planned</span></div>
+  <div class="diagram-title">Graceful Shutdown + Auto-Resume</div>
   <div class="mermaid" id="diagram-5">
 sequenceDiagram
-    participant Dev as Developer Bot
+    participant Trigger as SIGTERM / POST /shutdown
     participant Server
-    participant Client
-    Dev->>Server: TASK-DONE implemented feature X
-    Server->>Server: Append to devlog.md
-    Server-->>Client: broadcast hub message
-    Note over Server,Client: Manual step — automation planned
-    Client->>Server: PATCH project assignment status
-    Server->>Server: Update projects.json status to done
-    Server-->>Client: broadcast project updated event
-    Client->>Client: Update Projects pane UI
+    participant ProcessMgr
+    participant Storage
+    participant Bots
+
+    Trigger->>Server: Initiate shutdown
+    Server->>Server: Stop accepting connections
+    Server->>Server: Stop PollScheduler
+    Server-->>Server: emit server:shutting-down
+    loop Every 500ms up to 30s
+        Server->>ProcessMgr: getBusySessions()
+        alt All idle
+            Server->>Server: Clean exit (code 0)
+        else Timeout
+            Server->>ProcessMgr: Kill all sessions
+            ProcessMgr->>Storage: Write interrupted-sessions.json
+            Server->>Server: Force exit
+        end
+    end
+
+    Note over Server: On next startup (1s after listen)
+    Server->>Storage: Read interrupted-sessions.json
+    Server->>Storage: Delete file immediately
+    loop For each interrupted session
+        Server->>Bots: autonomousDeliver(source: resume)
+        Server->>Server: Hub post "Resuming work for BotName"
+    end
   </div>
 </div>
 
 <hr/>
 
-<!-- COMPONENT DETAILS -->
-<h2>Component Details</h2>
+<!-- REST API -->
+<h2>REST API Endpoints</h2>
 
 <div class="grid-2">
   <div class="card">
-    <h3>Client — State (Zustand)</h3>
+    <h3>Auth</h3>
     <ul>
-      <li><code>sessionStore</code> — Bot sessions, busy/idle, pending tasks</li>
-      <li><code>projectStore</code> — Projects, assignments, completion</li>
-      <li><code>chatStore</code> — Hub messages, @mention routing</li>
-      <li><code>useSocket</code> — Socket.IO connection management</li>
+      <li><code>POST /api/auth/login</code> — Validate token, set httpOnly cookie</li>
+      <li><code>POST /api/auth/logout</code> — Clear cookie</li>
+      <li><code>GET /api/auth/me</code> — Check if authenticated</li>
     </ul>
   </div>
   <div class="card">
-    <h3>Client — UI Components</h3>
+    <h3>Sessions</h3>
     <ul>
-      <li><strong>Sidebar</strong> — Bot list, Projects pane, Hub, Stop All</li>
-      <li><strong>Hub</strong> — Shared message feed for bot coordination</li>
-      <li><strong>Projects</strong> — Priority badges (P0/P1/P2) + status dots</li>
-      <li><strong>Kanban</strong> — Drag-drop task board</li>
+      <li><code>GET /api/sessions</code> — List all bot sessions</li>
+      <li><code>POST /api/sessions</code> — Create session</li>
+      <li><code>PATCH /api/sessions/:id</code> — Rename / update prompt</li>
+      <li><code>DELETE /api/sessions/:id</code> — Delete + cleanup</li>
+      <li><code>PUT /api/sessions/reorder</code> — Reorder list</li>
+      <li><code>POST /api/sessions/bulk-prompt-append</code> — Deploy protocol updates to all bots</li>
     </ul>
   </div>
 </div>
 
 <div class="grid-2">
   <div class="card">
-    <h3>Socket Events — Client → Server</h3>
+    <h3>Hub</h3>
     <ul>
-      <li><code>user:message</code> — Send message to bot</li>
-      <li><code>hub:message</code> — Post to Hub</li>
-      <li><code>session:create</code> — Spawn new bot session</li>
-      <li><code>session:stop</code> — Terminate bot session</li>
-      <li><code>task:done</code> — Mark task complete</li>
+      <li><code>GET /api/hub</code> — All hub messages</li>
+      <li><code>POST /api/hub</code> — Post to Hub (REST — bots, CLI, external tools)</li>
+      <li><code>GET /api/hub/tasks</code> — Unacknowledged completed tasks</li>
+      <li><code>POST /api/hub/tasks/ack</code> — Acknowledge all tasks</li>
     </ul>
   </div>
   <div class="card">
-    <h3>Socket Events — Server → Client</h3>
+    <h3>Projects</h3>
     <ul>
-      <li><code>session:status</code> — Bot busy/idle state</li>
-      <li><code>session:pending-task</code> — Task assignment notification</li>
-      <li><code>hub:message</code> — Broadcast Hub message</li>
-      <li><code>server:shutting-down</code> — Graceful shutdown event</li>
+      <li><code>GET /api/projects</code> — List projects (summary)</li>
+      <li><code>GET /api/projects/:id</code> — Full project detail</li>
+      <li><code>POST /api/projects</code> — Create project</li>
+      <li><code>PATCH /api/projects/:id</code> — Update project</li>
+      <li><code>DELETE /api/projects/:id</code> — Delete project</li>
     </ul>
   </div>
 </div>
 
+<div class="grid-2">
+  <div class="card">
+    <h3>Settings</h3>
+    <ul>
+      <li><code>GET /api/settings</code> — Current settings (key masked)</li>
+      <li><code>PATCH /api/settings</code> — Update LLM provider / API key</li>
+      <li><code>POST /api/settings/account</code> — Switch active account</li>
+      <li><code>GET /api/settings/login-status</code> — Check Claude CLI login per account</li>
+      <li><code>POST /api/settings/account/:id/login</code> — OAuth login</li>
+      <li><code>POST /api/settings/account/:id/logout</code> — Logout</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>System</h3>
+    <ul>
+      <li><code>GET /api/health</code> — Health check (no auth)</li>
+      <li><code>POST /api/health/shutdown</code> — Graceful shutdown</li>
+      <li><code>GET /api/skills</code> — Available skills catalog</li>
+      <li><code>POST /api/images</code> — Upload image (max 20MB)</li>
+      <li><code>GET /api/chat/:id/messages</code> — Chat history</li>
+      <li><code>GET /api/caffeine/status</code> — Caffeinate status</li>
+      <li><code>POST /api/caffeine/enable</code> — Prevent Mac sleep</li>
+      <li><code>POST /api/caffeine/disable</code> — Allow Mac sleep</li>
+    </ul>
+  </div>
+</div>
+
+<hr/>
+
+<!-- SOCKET.IO EVENTS -->
+<h2>Socket.IO Events</h2>
+
+<div class="grid-2">
+  <div class="card">
+    <h3>Client → Server</h3>
+    <ul>
+      <li><code>message:send</code> — Send message to bot (text + images)</li>
+      <li><code>message:abort</code> — Kill running Claude process</li>
+      <li><code>hub:post</code> — Post to Hub</li>
+      <li><code>session:join</code> / <code>session:leave</code> — Room management</li>
+      <li><code>session:toggle-yolo</code> — Toggle skip-permissions</li>
+      <li><code>session:set-yolo</code> — Set skip-permissions explicitly</li>
+      <li><code>session:update-system-prompt</code></li>
+      <li><code>session:update-skills</code></li>
+      <li><code>session:update-working-dir</code></li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>Server → Client</h3>
+    <ul>
+      <li><code>message:stream:start</code> / <code>delta</code> / <code>end</code> — Streaming response</li>
+      <li><code>message:stream:tool</code> / <code>tool_result</code> — Tool use</li>
+      <li><code>message:error</code> — Stream error</li>
+      <li><code>message:user</code> — Echo user message</li>
+      <li><code>session:status</code> — busy/idle state</li>
+      <li><code>session:pending-task</code> — Queued mention badge</li>
+      <li><code>hub:message</code> — Hub broadcast</li>
+      <li><code>task:done</code> — Task completed</li>
+      <li><code>projects:updated</code> — File watcher change</li>
+      <li><code>server:shutting-down</code> — Shutdown notice</li>
+    </ul>
+  </div>
+</div>
+
+<hr/>
+
+<!-- MENTION ROUTER GUARDS -->
+<h2>Mention Router — Safety Guards</h2>
 <div class="card">
-  <h3>REST API Endpoints</h3>
+  <table>
+    <tr><th>Guard</th><th>Behavior</th></tr>
+    <tr><td><strong>Self-mention</strong></td><td>Dropped silently (prevents loops)</td></tr>
+    <tr><td><strong>Max queue depth</strong></td><td>3 pending mentions per bot (4th+ silently dropped)</td></tr>
+    <tr><td><strong>Cooldown</strong></td><td>60 seconds between deliveries to same bot</td></tr>
+    <tr><td><strong>Chain depth</strong></td><td>Max 3 hops (Bot A → Bot B → Bot C → stop)</td></tr>
+    <tr><td><strong>@all broadcast</strong></td><td>Pings every session except the sender</td></tr>
+    <tr><td><strong>Name resolution</strong></td><td>Sorted longest-first to prevent partial matches (e.g. "UI Dev" before "Dev")</td></tr>
+  </table>
+</div>
+
+<hr/>
+
+<!-- HUB POLL SCHEDULER -->
+<h2>Hub Poll Scheduler</h2>
+<div class="card">
+  <p>Background scheduler that periodically nudges idle bots to check the Hub for new messages. Enabled via <code>HUB_POLLING=true</code>.</p>
   <ul>
-    <li><code>POST /api/sessions</code> — Create new bot session</li>
-    <li><code>POST /api/sessions/:id/message</code> — Send message to bot</li>
-    <li><code>DELETE /api/sessions/:id</code> — Stop bot session</li>
-    <li><code>GET /api/projects</code> — List all projects</li>
-    <li><code>POST /api/projects</code> — Create project</li>
-    <li><code>PATCH /api/projects/:id/assignments/:assignmentId</code> — Update assignment status</li>
-    <li><code>POST /api/shutdown</code> — Trigger graceful shutdown</li>
+    <li><strong>Poll interval:</strong> 2 minutes (configurable)</li>
+    <li><strong>Per-bot cooldown:</strong> 10 minutes</li>
+    <li><strong>Max bots per tick:</strong> 4</li>
+    <li><strong>New message filtering:</strong> Only polls if new Hub messages since last check</li>
+    <li><strong>Hibernation:</strong> Bots with no pending tasks only wake for direct @mentions or @all</li>
+    <li><strong>Stale detection:</strong> If a bot has a pending task for 10+ minutes, posts System warning to Hub and sends a nudge</li>
+    <li><strong>[NO-ACTION]:</strong> Empty check-in responses silently discarded (no chat history entry)</li>
+  </ul>
+</div>
+
+<hr/>
+
+<!-- SETTINGS + MULTI-ACCOUNT -->
+<h2>Settings &amp; Multi-Account</h2>
+<div class="card">
+  <p>Two Claude accounts with separate <code>CLAUDE_CONFIG_DIR</code> paths. API key stored locally with chmod 600 protection and masked in all API responses.</p>
+  <ul>
+    <li><strong>Account switching:</strong> Affects <code>CLAUDE_CONFIG_DIR</code> for new bot messages only</li>
+    <li><strong>Login status:</strong> Runs <code>claude auth status --json</code> per account (handles exit code 1)</li>
+    <li><strong>Login/logout:</strong> Runs <code>claude auth login</code> / <code>claude auth logout</code> with correct config dir</li>
+    <li><strong>LLM provider:</strong> <code>claude</code> or <code>openai</code> (stored in settings.json)</li>
+    <li><strong>API key masking:</strong> Only last 4 chars returned to clients (<code>sk-...abcd</code>)</li>
+  </ul>
+</div>
+
+<hr/>
+
+<!-- DESKTOP APP -->
+<h2>macOS Desktop App</h2>
+<div class="card">
+  <p>Native Swift/SwiftUI wrapper that manages the full server lifecycle.</p>
+  <ul>
+    <li><strong>ServerManager:</strong> Finds Node/npm, auto-builds client + server if missing, spawns <code>node dist/index.js</code>, polls <code>/api/health</code> for readiness</li>
+    <li><strong>WebViewController:</strong> WKWebView with httpOnly cookie injection (no login screen), loading overlay with spinner</li>
+    <li><strong>Port cleanup:</strong> Kills stale processes on port 3456 at startup</li>
+    <li><strong>Screen capture:</strong> Native macOS ScreenCaptureKit overlays — full screen (SC4), window picker (SC5), region select (SC6)</li>
+    <li><strong>JS bridge:</strong> <code>window.webkit.messageHandlers.captureScreen.postMessage()</code> → Swift → <code>CustomEvent('medusaNativeCapture')</code></li>
   </ul>
 </div>
 
@@ -397,31 +612,31 @@ sequenceDiagram
       <div class="pills">
         <span class="pill">React 18</span><span class="pill">TypeScript</span>
         <span class="pill">Zustand</span><span class="pill">Socket.IO Client</span>
-        <span class="pill">Vite</span><span class="pill">Electron</span>
+        <span class="pill">Vite</span>
       </div>
     </div>
     <div class="stack-group" style="margin-top:20px">
       <h3>Server</h3>
       <div class="pills">
         <span class="pill">Node.js</span><span class="pill">Express</span>
-        <span class="pill">Socket.IO Server</span><span class="pill">TypeScript</span>
+        <span class="pill">Socket.IO</span><span class="pill">TypeScript</span>
         <span class="pill">Zod</span>
       </div>
     </div>
   </div>
   <div class="card">
     <div class="stack-group">
-      <h3>Bots</h3>
+      <h3>Desktop</h3>
       <div class="pills">
-        <span class="pill">Claude CLI</span><span class="pill">SSE Streaming</span>
-        <span class="pill">haiku</span><span class="pill">sonnet</span><span class="pill">opus</span>
+        <span class="pill">Swift</span><span class="pill">SwiftUI</span>
+        <span class="pill">WKWebView</span><span class="pill">ScreenCaptureKit</span>
       </div>
     </div>
     <div class="stack-group" style="margin-top:20px">
-      <h3>Storage</h3>
+      <h3>AI + Storage</h3>
       <div class="pills">
-        <span class="pill">File-based</span><span class="pill">projects.json</span>
-        <span class="pill">chats/hub.json</span><span class="pill">devlog.md</span>
+        <span class="pill">Claude CLI</span><span class="pill">haiku</span><span class="pill">sonnet</span><span class="pill">opus</span>
+        <span class="pill">JSON files</span><span class="pill">No database</span>
       </div>
     </div>
   </div>
@@ -433,7 +648,7 @@ sequenceDiagram
 <h2>Key Design Decisions</h2>
 <div class="reason-grid">
   <div class="reason-card">
-    <h4>Why File-Based Storage?</h4>
+    <h4>File-Based Storage</h4>
     <ul>
       <li>No database setup required</li>
       <li>Human-readable JSON + Markdown</li>
@@ -442,16 +657,16 @@ sequenceDiagram
     </ul>
   </div>
   <div class="reason-card">
-    <h4>Why Socket.IO Over REST Polling?</h4>
+    <h4>Socket.IO Over REST Polling</h4>
     <ul>
       <li>Real-time Hub + status updates</li>
-      <li>Low-latency task assignment pings</li>
+      <li>Low-latency task assignment</li>
       <li>Bidirectional server push</li>
-      <li>Single persistent connection</li>
+      <li>Token-by-token streaming</li>
     </ul>
   </div>
   <div class="reason-card">
-    <h4>Why Process Manager Over Threads?</h4>
+    <h4>Process-per-Bot Isolation</h4>
     <ul>
       <li>Each bot crash is isolated</li>
       <li>Claude CLI is a CLI tool, not a lib</li>
@@ -460,76 +675,54 @@ sequenceDiagram
     </ul>
   </div>
   <div class="reason-card">
-    <h4>Why Graceful Shutdown?</h4>
+    <h4>Dual Protocol (HUB-POST + BOT-TASK)</h4>
     <ul>
-      <li>Bots finish work before exit</li>
-      <li>No mid-task data corruption</li>
-      <li>Configurable drain timeout</li>
-      <li>Force-kill fallback at 30s</li>
+      <li>HUB-POST = public coordination</li>
+      <li>BOT-TASK = private delegation</li>
+      <li>Reduces Hub noise for direct tasks</li>
+      <li>Both detected inline during streaming</li>
+    </ul>
+  </div>
+  <div class="reason-card">
+    <h4>Tiered Model Routing</h4>
+    <ul>
+      <li>Haiku for cheap status checks</li>
+      <li>Sonnet for standard work</li>
+      <li>Opus for architecture decisions</li>
+      <li>Auto-escalation on failure</li>
+    </ul>
+  </div>
+  <div class="reason-card">
+    <h4>Conversation Summarization</h4>
+    <ul>
+      <li>Compress at 30 messages</li>
+      <li>Haiku one-shot (under 200 words)</li>
+      <li>Trim to last 5 + summary</li>
+      <li>Prevents context overflow</li>
     </ul>
   </div>
 </div>
 
 <hr/>
 
-<!-- FUTURE + SECURITY + PERFORMANCE -->
-<h2>Future Architecture Improvements</h2>
-<div class="grid-2">
-  <div class="card">
-    <h3>Planned — P1</h3>
-    <ul>
-      <li><strong>Devlog Hygiene Automation</strong> — Auto-PATCH projects on <code>task:done</code></li>
-      <li><strong>@all Mention Support</strong> — Broadcast to all active bots</li>
-      <li><strong>Message Queuing</strong> — Deliver to busy bots after current op</li>
-    </ul>
-  </div>
-  <div class="card">
-    <h3>Backlog — P2</h3>
-    <ul>
-      <li><strong>Conversation Summarization</strong> — Compress long bot contexts</li>
-      <li><strong>Stale Assignment Detection</strong> — Auto-escalate at 10 min</li>
-      <li><strong>Desktop Notifications</strong> — System alerts for @mentions</li>
-      <li><strong>Bot Health Monitoring</strong> — Response times, auto-restart</li>
-    </ul>
-  </div>
-</div>
-
-<h2>Security Considerations</h2>
+<!-- SECURITY -->
+<h2>Security</h2>
 <div class="card">
   <ul>
-    <li><strong>Local Only</strong> — No auth required; runs on localhost trusted env</li>
-    <li><strong>No Secret Storage</strong> — <code>.env</code> tokens are gitignored, never committed</li>
-    <li><strong>Process Sandboxing</strong> — Bots run sandboxed by default</li>
-    <li><strong>CORS</strong> — Server only accepts localhost origins</li>
+    <li><strong>httpOnly cookie auth</strong> — Token never accessible to JavaScript</li>
+    <li><strong>Rate limiting</strong> — 5 login attempts/15min, 500 API req/15min, 100 uploads/hr</li>
+    <li><strong>API key protection</strong> — settings.json chmod 600, keys masked in all responses</li>
+    <li><strong>CORS</strong> — Restricted to configured origins only</li>
+    <li><strong>Socket auth</strong> — Cookie or Bearer token required on every connection</li>
+    <li><strong>Process sandboxing</strong> — Bots run in Claude CLI sandbox by default (YOLO mode opt-in per session)</li>
+    <li><strong>.env secrets</strong> — Gitignored, never committed</li>
   </ul>
-</div>
-
-<h2>Performance Optimization</h2>
-<div class="grid-2">
-  <div class="card">
-    <h3>Token Efficiency — P0 Complete</h3>
-    <ul>
-      <li>Tiered model routing (haiku / sonnet / opus)</li>
-      <li>Hub filtering — only @mentions in bot context</li>
-      <li>Devlog pagination on startup</li>
-      <li>Idle bot hibernation</li>
-      <li>Bot-to-bot terse protocol (&lt;50 tokens)</li>
-    </ul>
-  </div>
-  <div class="card">
-    <h3>UI Optimization</h3>
-    <ul>
-      <li>Projects pane — max 3 visible, scrollable</li>
-      <li>Sessions lazy-rendered on demand</li>
-      <li>Optimistic updates before server confirms</li>
-    </ul>
-  </div>
 </div>
 
 <!-- FOOTER -->
 <footer>
   Built by <a href="https://www.linkedin.com/in/lauramoney/" target="_blank">Laura Money</a> at
-  <a href="https://kindcode.ai" target="_blank">KindCode</a> &nbsp;·&nbsp; Medusa Architecture v1.1
+  <a href="https://kindcode.ai" target="_blank">KindCode</a> &nbsp;·&nbsp; Medusa Architecture v2.0
 </footer>
 
 <script>
