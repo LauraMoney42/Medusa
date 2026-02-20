@@ -1,0 +1,9 @@
+{
+  "name": "ios-bot",
+  "version": "1.0.0",
+  "description": "iOS Testing & Screenshot Bot — builds, launches simulators, captures screenshots, runs Claude vision analysis",
+  "private": true,
+  "dependencies": {
+    "ios-simulator-mcp": "^1.5.2"
+  }
+}

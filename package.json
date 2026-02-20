@@ -1,0 +1,12 @@
+{
+  "name": "claude-chat",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "bash scripts/dev.sh",
+    "dev:server": "cd server && npx tsx watch src/index.ts",
+    "dev:client": "cd client && npm run dev",
+    "build": "bash scripts/build.sh",
+    "start": "cd server && node dist/index.js"
+  }
+}

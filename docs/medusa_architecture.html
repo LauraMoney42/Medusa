@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Medusa Architecture</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --bg:           #0a0f0a;
+      --surface:      #111711;
+      --card:         #161e16;
+      --border:       #1f2e1f;
+      --green-dim:    #2d5a2d;
+      --green:        #3a7a3a;
+      --green-bright: #4caf50;
+      --green-glow:   #66bb6a;
+      --text:         #e8f5e9;
+      --text-muted:   #8aab8a;
+      --accent:       #00e676;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+      line-height: 1.7;
+      padding: 48px 24px;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    /* ── Header ── */
+    .page-header { text-align: center; margin-bottom: 56px; }
+    .logo-ring {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 100px; height: 100px; border-radius: 50%;
+      background: radial-gradient(circle at 40% 35%, #1a3a1a, #0a0f0a);
+      border: 1.5px solid var(--green);
+      box-shadow: 0 0 32px rgba(74,175,74,.3), inset 0 0 16px rgba(0,0,0,.6);
+      margin-bottom: 20px;
+      overflow: hidden;
+    }
+    .logo-ring img { width: 100%; height: 100%; object-fit: cover; }
+    h1 {
+      font-size: 2.4rem; font-weight: 700; letter-spacing: -.5px;
+      background: linear-gradient(135deg, var(--green-glow) 0%, var(--accent) 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .subtitle { margin-top: 10px; color: var(--text-muted); font-size: .95rem; }
+
+    /* ── Section headings ── */
+    h2 {
+      font-size: 1.35rem; font-weight: 600; color: var(--green-glow);
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 10px; margin: 48px 0 24px; letter-spacing: .2px;
+    }
+    h3 {
+      font-size: .78rem; font-weight: 600; color: var(--text-muted);
+      margin: 32px 0 12px; text-transform: uppercase; letter-spacing: 1px;
+    }
+
+    /* ── Cards ── */
+    .card {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 14px; padding: 28px 32px; margin-bottom: 24px;
+      box-shadow: 0 2px 16px rgba(0,0,0,.4);
+    }
+    .card p { color: var(--text-muted); font-size: .95rem; }
+
+    /* ── Diagram wrapper ── */
+    .diagram-card {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 14px; padding: 32px 24px; margin-bottom: 32px;
+      overflow-x: auto; box-shadow: 0 2px 24px rgba(0,0,0,.45);
+    }
+    .diagram-card .diagram-title {
+      font-size: .85rem; font-weight: 600; color: var(--green-bright);
+      margin-bottom: 20px; text-transform: uppercase; letter-spacing: 1px;
+    }
+    .diagram-card .diagram-title span {
+      color: #4a4a4a; font-weight: 400; font-size: .75rem;
+      margin-left: 8px; text-transform: none; letter-spacing: 0;
+    }
+    .mermaid { display: flex; justify-content: center; }
+
+    /* ── Two-col grid ── */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 20px; margin-bottom: 24px;
+    }
+
+    /* ── Tech pills ── */
+    .stack-group { margin-bottom: 20px; }
+    .stack-group h3 { margin-bottom: 10px; }
+    .pills { display: flex; flex-wrap: wrap; gap: 8px; }
+    .pill {
+      background: var(--surface); border: 1px solid var(--green-dim);
+      border-radius: 20px; padding: 4px 14px;
+      font-size: .8rem; color: var(--green-bright);
+      font-family: "SF Mono", "Fira Code", monospace;
+    }
+
+    /* ── Lists ── */
+    ul { list-style: none; padding: 0; }
+    ul li {
+      padding: 5px 0 5px 18px; position: relative;
+      color: var(--text-muted); font-size: .9rem;
+    }
+    ul li::before { content: "›"; position: absolute; left: 0; color: var(--green-bright); font-weight: 700; }
+    ul li strong { color: var(--text); }
+
+    /* ── Inline code ── */
+    code {
+      background: #0d160d; border: 1px solid var(--border); border-radius: 5px;
+      padding: 1px 6px; font-family: "SF Mono","Fira Code",monospace;
+      font-size: .82em; color: var(--accent);
+    }
+
+    /* ── Design decision cards ── */
+    .reason-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+    .reason-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-left: 3px solid var(--green); border-radius: 10px; padding: 18px 20px;
+    }
+    .reason-card h4 { font-size: .85rem; font-weight: 600; color: var(--green-bright); margin-bottom: 10px; }
+    .reason-card ul li { font-size: .83rem; }
+
+    hr { border: none; border-top: 1px solid var(--border); margin: 48px 0; }
+
+    footer {
+      text-align: center; color: var(--text-muted); font-size: .78rem;
+      margin-top: 64px; padding-top: 24px; border-top: 1px solid var(--border);
+    }
+    footer a { color: var(--green-bright); text-decoration: none; }
+
+    /* Print-safe: kill glows, gradients and borders that bleed into PDF */
+    @media print {
+      body { padding: 24px 16px; }
+      h1 {
+        background: none !important;
+        -webkit-background-clip: unset !important;
+        -webkit-text-fill-color: #e8f5e9 !important;
+        background-clip: unset !important;
+        color: #e8f5e9 !important;
+      }
+      .logo-ring {
+        border: none !important;
+        box-shadow: none !important;
+      }
+      .card, .diagram-card, .reason-card {
+        box-shadow: none !important;
+        break-inside: avoid;
+      }
+      h2 { break-after: avoid; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="page-header">
+  <div class="logo-ring">
+    <img src="../client/public/MedusaIcon.png" alt="Medusa Logo" />
+  </div>
+  <h1>Medusa Architecture</h1>
+  <p class="subtitle">Multi-bot AI Orchestration Platform — System Design Reference</p>
+</div>
+
+<!-- OVERVIEW -->
+<div class="card">
+  <p>Medusa is a multi-bot orchestration system that enables parallel execution of multiple Claude AI sessions with real-time coordination via a shared Hub. Bots collaborate, self-assign tasks, and escalate blockers — all without leaving a single interface.</p>
+</div>
+
+<!-- HIGH-LEVEL ARCHITECTURE -->
+<h2>High-Level Architecture</h2>
+<div class="diagram-card">
+  <div class="diagram-title">System Overview - Client - Server - Bots - Storage</div>
+  <div class="mermaid" id="diagram-1">
+graph TB
+    subgraph Client["Client (React + TypeScript)"]
+        UI[UI Components]
+        Sidebar[Sidebar]
+        HubUI[Hub Chat]
+        ProjectsUI[Projects Pane]
+        Kanban[Kanban Board]
+        SocketClient[Socket.IO Client]
+        Zustand[Zustand Stores]
+    end
+
+    subgraph Server["Server (Node.js + Express)"]
+        API[REST API]
+        SocketServer[Socket.IO Server]
+        ProcessMgr[Process Manager]
+        ProjectStore[Project Store]
+        ChatStore[Chat Store]
+        DevlogMgr[Devlog Manager]
+        GracefulShutdown[Graceful Shutdown]
+    end
+
+    subgraph Bots["Bot Sessions (Claude CLI)"]
+        Bot1[Bot Session 1]
+        Bot2[Bot Session 2]
+        BotN[Bot Session N]
+    end
+
+    subgraph Storage["File System Storage"]
+        Devlog[devlog.md]
+        ProjectsFile[projects.json]
+        Chats[chats dir]
+    end
+
+    UI --> SocketClient
+    SocketClient -->|WebSocket| SocketServer
+    SocketServer -->|WebSocket| SocketClient
+    UI --> API
+    API --> ProjectStore
+    API --> ChatStore
+    API --> DevlogMgr
+    SocketServer --> ProcessMgr
+    ProcessMgr --> Bot1
+    ProcessMgr --> Bot2
+    ProcessMgr --> BotN
+    ProjectStore --> ProjectsFile
+    ChatStore --> Chats
+    DevlogMgr --> Devlog
+    GracefulShutdown -. monitors .-> ProcessMgr
+    SocketServer -. shutdown event .-> SocketClient
+  </div>
+</div>
+
+<!-- DATA FLOW DIAGRAMS -->
+<h2>Data Flow Diagrams</h2>
+
+<div class="diagram-card">
+  <div class="diagram-title">Hub Message Flow</div>
+  <div class="mermaid" id="diagram-2">
+sequenceDiagram
+    participant User
+    participant Client
+    participant Server
+    participant Bot1
+    participant Bot2
+    User->>Client: Types message in Hub
+    Client->>Server: emit hub message event
+    Server->>Server: Append to hub message log
+    Server-->>Client: broadcast hub message to all clients
+    Server-->>Bot1: Include in next system prompt if mentioned
+    Server-->>Bot2: Include in next system prompt if mentioned
+    Bot1->>Server: Posts HUB-POST response
+    Server->>Server: Parse HUB-POST from bot output
+    Server-->>Client: broadcast hub message to all clients
+  </div>
+</div>
+
+<div class="diagram-card">
+  <div class="diagram-title">Task Assignment Flow</div>
+  <div class="mermaid" id="diagram-3">
+sequenceDiagram
+    participant PM as Product Manager Bot
+    participant Server
+    participant Client
+    participant Dev as Developer Bot
+    PM->>Server: HUB-POST task assignment for Dev
+    Server->>Server: Create or update project assignment
+    Server-->>Client: emit hub message event
+    Server-->>Client: emit session pending-task event
+    Client->>Client: Update session badge
+    Dev->>Server: Poll or auto-check Hub for assignments
+    Dev->>Server: HUB-POST Acknowledged starting work
+    Dev->>Server: TASK-DONE with task description
+    Server->>Server: Parse TASK-DONE and update project
+  </div>
+</div>
+
+<div class="diagram-card">
+  <div class="diagram-title">Graceful Shutdown Flow</div>
+  <div class="mermaid" id="diagram-4">
+sequenceDiagram
+    participant User
+    participant Client
+    participant Server
+    participant ProcessMgr
+    participant Bots
+    User->>Client: Clicks Stop All button
+    Client->>Server: POST /api/shutdown
+    Server->>Server: Set isShuttingDown to true
+    Server->>Server: Close HTTP server
+    Server-->>Client: emit server shutting-down event
+    Client->>Client: Show shutting down banner
+    Server->>ProcessMgr: getBusySessions
+    ProcessMgr-->>Server: list of busy session IDs
+    loop Every 500ms up to 30s
+        Server->>ProcessMgr: getBusySessions
+        alt All bots idle
+            ProcessMgr-->>Server: empty list
+            Server->>Server: process exit 0
+        else Timeout exceeded
+            Server->>ProcessMgr: killAllSessions
+            Server->>Server: process exit 0
+        end
+    end
+  </div>
+</div>
+
+<div class="diagram-card">
+  <div class="diagram-title">Project Status Update Flow <span>Manual — Automation Planned</span></div>
+  <div class="mermaid" id="diagram-5">
+sequenceDiagram
+    participant Dev as Developer Bot
+    participant Server
+    participant Client
+    Dev->>Server: TASK-DONE implemented feature X
+    Server->>Server: Append to devlog.md
+    Server-->>Client: broadcast hub message
+    Note over Server,Client: Manual step — automation planned
+    Client->>Server: PATCH project assignment status
+    Server->>Server: Update projects.json status to done
+    Server-->>Client: broadcast project updated event
+    Client->>Client: Update Projects pane UI
+  </div>
+</div>
+
+<hr/>
+
+<!-- COMPONENT DETAILS -->
+<h2>Component Details</h2>
+
+<div class="grid-2">
+  <div class="card">
+    <h3>Client — State (Zustand)</h3>
+    <ul>
+      <li><code>sessionStore</code> — Bot sessions, busy/idle, pending tasks</li>
+      <li><code>projectStore</code> — Projects, assignments, completion</li>
+      <li><code>chatStore</code> — Hub messages, @mention routing</li>
+      <li><code>useSocket</code> — Socket.IO connection management</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>Client — UI Components</h3>
+    <ul>
+      <li><strong>Sidebar</strong> — Bot list, Projects pane, Hub, Stop All</li>
+      <li><strong>Hub</strong> — Shared message feed for bot coordination</li>
+      <li><strong>Projects</strong> — Priority badges (P0/P1/P2) + status dots</li>
+      <li><strong>Kanban</strong> — Drag-drop task board</li>
+    </ul>
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <h3>Socket Events — Client → Server</h3>
+    <ul>
+      <li><code>user:message</code> — Send message to bot</li>
+      <li><code>hub:message</code> — Post to Hub</li>
+      <li><code>session:create</code> — Spawn new bot session</li>
+      <li><code>session:stop</code> — Terminate bot session</li>
+      <li><code>task:done</code> — Mark task complete</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>Socket Events — Server → Client</h3>
+    <ul>
+      <li><code>session:status</code> — Bot busy/idle state</li>
+      <li><code>session:pending-task</code> — Task assignment notification</li>
+      <li><code>hub:message</code> — Broadcast Hub message</li>
+      <li><code>server:shutting-down</code> — Graceful shutdown event</li>
+    </ul>
+  </div>
+</div>
+
+<div class="card">
+  <h3>REST API Endpoints</h3>
+  <ul>
+    <li><code>POST /api/sessions</code> — Create new bot session</li>
+    <li><code>POST /api/sessions/:id/message</code> — Send message to bot</li>
+    <li><code>DELETE /api/sessions/:id</code> — Stop bot session</li>
+    <li><code>GET /api/projects</code> — List all projects</li>
+    <li><code>POST /api/projects</code> — Create project</li>
+    <li><code>PATCH /api/projects/:id/assignments/:assignmentId</code> — Update assignment status</li>
+    <li><code>POST /api/shutdown</code> — Trigger graceful shutdown</li>
+  </ul>
+</div>
+
+<hr/>
+
+<!-- TECH STACK -->
+<h2>Technical Stack</h2>
+<div class="grid-2">
+  <div class="card">
+    <div class="stack-group">
+      <h3>Client</h3>
+      <div class="pills">
+        <span class="pill">React 18</span><span class="pill">TypeScript</span>
+        <span class="pill">Zustand</span><span class="pill">Socket.IO Client</span>
+        <span class="pill">Vite</span><span class="pill">Electron</span>
+      </div>
+    </div>
+    <div class="stack-group" style="margin-top:20px">
+      <h3>Server</h3>
+      <div class="pills">
+        <span class="pill">Node.js</span><span class="pill">Express</span>
+        <span class="pill">Socket.IO Server</span><span class="pill">TypeScript</span>
+        <span class="pill">Zod</span>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="stack-group">
+      <h3>Bots</h3>
+      <div class="pills">
+        <span class="pill">Claude CLI</span><span class="pill">SSE Streaming</span>
+        <span class="pill">haiku</span><span class="pill">sonnet</span><span class="pill">opus</span>
+      </div>
+    </div>
+    <div class="stack-group" style="margin-top:20px">
+      <h3>Storage</h3>
+      <div class="pills">
+        <span class="pill">File-based</span><span class="pill">projects.json</span>
+        <span class="pill">chats/hub.json</span><span class="pill">devlog.md</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<hr/>
+
+<!-- KEY DESIGN DECISIONS -->
+<h2>Key Design Decisions</h2>
+<div class="reason-grid">
+  <div class="reason-card">
+    <h4>Why File-Based Storage?</h4>
+    <ul>
+      <li>No database setup required</li>
+      <li>Human-readable JSON + Markdown</li>
+      <li>Git-friendly version history</li>
+      <li>Right-sized for 5–15 bots</li>
+    </ul>
+  </div>
+  <div class="reason-card">
+    <h4>Why Socket.IO Over REST Polling?</h4>
+    <ul>
+      <li>Real-time Hub + status updates</li>
+      <li>Low-latency task assignment pings</li>
+      <li>Bidirectional server push</li>
+      <li>Single persistent connection</li>
+    </ul>
+  </div>
+  <div class="reason-card">
+    <h4>Why Process Manager Over Threads?</h4>
+    <ul>
+      <li>Each bot crash is isolated</li>
+      <li>Claude CLI is a CLI tool, not a lib</li>
+      <li>OS-level resource management</li>
+      <li>Easy per-process debugging</li>
+    </ul>
+  </div>
+  <div class="reason-card">
+    <h4>Why Graceful Shutdown?</h4>
+    <ul>
+      <li>Bots finish work before exit</li>
+      <li>No mid-task data corruption</li>
+      <li>Configurable drain timeout</li>
+      <li>Force-kill fallback at 30s</li>
+    </ul>
+  </div>
+</div>
+
+<hr/>
+
+<!-- FUTURE + SECURITY + PERFORMANCE -->
+<h2>Future Architecture Improvements</h2>
+<div class="grid-2">
+  <div class="card">
+    <h3>Planned — P1</h3>
+    <ul>
+      <li><strong>Devlog Hygiene Automation</strong> — Auto-PATCH projects on <code>task:done</code></li>
+      <li><strong>@all Mention Support</strong> — Broadcast to all active bots</li>
+      <li><strong>Message Queuing</strong> — Deliver to busy bots after current op</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>Backlog — P2</h3>
+    <ul>
+      <li><strong>Conversation Summarization</strong> — Compress long bot contexts</li>
+      <li><strong>Stale Assignment Detection</strong> — Auto-escalate at 10 min</li>
+      <li><strong>Desktop Notifications</strong> — System alerts for @mentions</li>
+      <li><strong>Bot Health Monitoring</strong> — Response times, auto-restart</li>
+    </ul>
+  </div>
+</div>
+
+<h2>Security Considerations</h2>
+<div class="card">
+  <ul>
+    <li><strong>Local Only</strong> — No auth required; runs on localhost trusted env</li>
+    <li><strong>No Secret Storage</strong> — <code>.env</code> tokens are gitignored, never committed</li>
+    <li><strong>Process Sandboxing</strong> — Bots run sandboxed by default</li>
+    <li><strong>CORS</strong> — Server only accepts localhost origins</li>
+  </ul>
+</div>
+
+<h2>Performance Optimization</h2>
+<div class="grid-2">
+  <div class="card">
+    <h3>Token Efficiency — P0 Complete</h3>
+    <ul>
+      <li>Tiered model routing (haiku / sonnet / opus)</li>
+      <li>Hub filtering — only @mentions in bot context</li>
+      <li>Devlog pagination on startup</li>
+      <li>Idle bot hibernation</li>
+      <li>Bot-to-bot terse protocol (&lt;50 tokens)</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>UI Optimization</h3>
+    <ul>
+      <li>Projects pane — max 3 visible, scrollable</li>
+      <li>Sessions lazy-rendered on demand</li>
+      <li>Optimistic updates before server confirms</li>
+    </ul>
+  </div>
+</div>
+
+<!-- FOOTER -->
+<footer>
+  Built by <a href="https://www.linkedin.com/in/lauramoney/" target="_blank">Laura Money</a> at
+  <a href="https://kindcode.ai" target="_blank">KindCode</a> &nbsp;·&nbsp; Medusa Architecture v1.1
+</footer>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'base',
+    securityLevel: 'loose',
+    themeVariables: {
+      darkMode: true,
+      background:           '#111711',
+      mainBkg:              '#161e16',
+      nodeBorder:           '#3a7a3a',
+      clusterBkg:           '#0d160d',
+      clusterBorder:        '#2d5a2d',
+      titleColor:           '#e8f5e9',
+      edgeLabelBackground:  '#0a0f0a',
+      lineColor:            '#4caf50',
+      primaryColor:         '#1a2e1a',
+      primaryBorderColor:   '#4caf50',
+      primaryTextColor:     '#e8f5e9',
+      secondaryColor:       '#0d1a0d',
+      secondaryBorderColor: '#2d5a2d',
+      secondaryTextColor:   '#8aab8a',
+      tertiaryColor:        '#111711',
+      tertiaryBorderColor:  '#2d5a2d',
+      tertiaryTextColor:    '#8aab8a',
+      noteBkgColor:         '#1a2e1a',
+      noteTextColor:        '#e8f5e9',
+      noteBorderColor:      '#3a7a3a',
+      activationBkgColor:   '#1a2e1a',
+      activationBorderColor:'#4caf50',
+      actorBkg:             '#161e16',
+      actorBorder:          '#4caf50',
+      actorTextColor:       '#e8f5e9',
+      actorLineColor:       '#3a7a3a',
+      signalColor:          '#4caf50',
+      signalTextColor:      '#e8f5e9',
+      labelBoxBkgColor:     '#111711',
+      labelBoxBorderColor:  '#2d5a2d',
+      labelTextColor:       '#8aab8a',
+      loopTextColor:        '#8aab8a',
+      altSectionBkgColor:   '#0d160d',
+      fontFamily:           '-apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif',
+      fontSize:             '14px'
+    }
+  });
+</script>
+</body>
+</html>

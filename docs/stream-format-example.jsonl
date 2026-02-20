@@ -1,0 +1,75 @@
+# Stream JSON Format Examples — captured 2026-02-11
+# Command: claude -p "say hello" --output-format stream-json --verbose
+#
+# Three scenarios captured:
+#   1. Basic (no --include-partial-messages) — 3 lines: system, assistant, result
+#   2. Streaming (with --include-partial-messages) — full SSE-style stream events
+#   3. Tool use — shows assistant tool_use, user tool_result, assistant response, result
+#
+# Each line is a valid JSON object (NDJSON format).
+# The "type" field determines the message kind.
+
+# ============================================================
+# SCENARIO 1: Basic output (no partial messages)
+# ============================================================
+# Line types: system → assistant → result
+
+{"type":"system","subtype":"init","cwd":"~/Documents","session_id":"7f460c20-69ec-418e-bb09-0c2e3f30b93a","tools":["Task","TaskOutput","Bash","Glob","Grep","ExitPlanMode","Read","Edit","Write","NotebookEdit","WebFetch","TodoWrite","WebSearch","TaskStop","AskUserQuestion","Skill","EnterPlanMode","ToolSearch"],"mcp_servers":[],"model":"claude-opus-4-6","permissionMode":"default","apiKeySource":"none","claude_code_version":"2.1.39","uuid":"d96cccb4-0fcf-4129-be8a-22e7a1a8946f"}
+{"type":"assistant","message":{"model":"claude-opus-4-6","id":"msg_017fyb973QLsWEMUWbBNs4Ya","type":"message","role":"assistant","content":[{"type":"text","text":"Hello! How can I help you today?"}],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":3,"cache_creation_input_tokens":1516,"cache_read_input_tokens":18064,"output_tokens":1}},"parent_tool_use_id":null,"session_id":"7f460c20-69ec-418e-bb09-0c2e3f30b93a"}
+{"type":"result","subtype":"success","is_error":false,"duration_ms":2113,"duration_api_ms":2102,"num_turns":1,"result":"Hello! How can I help you today?","stop_reason":null,"session_id":"7f460c20-69ec-418e-bb09-0c2e3f30b93a","total_cost_usd":0.019247,"usage":{"input_tokens":3,"cache_creation_input_tokens":1516,"cache_read_input_tokens":18064,"output_tokens":29}}
+
+# ============================================================
+# SCENARIO 2: Streaming with --include-partial-messages
+# ============================================================
+# Line types: system → stream_event (message_start) → stream_event (content_block_start)
+#   → stream_event (content_block_delta) × N → assistant (full message)
+#   → stream_event (content_block_stop) → stream_event (message_delta)
+#   → stream_event (message_stop) → result
+
+{"type":"system","subtype":"init","cwd":"~/Documents","session_id":"79312ee1-5b5f-4a7c-a92c-e0b42a5dd5d9","tools":["Task","TaskOutput","Bash","Glob","Grep","ExitPlanMode","Read","Edit","Write","NotebookEdit","WebFetch","TodoWrite","WebSearch","TaskStop","AskUserQuestion","Skill","EnterPlanMode","ToolSearch"],"mcp_servers":[],"model":"claude-opus-4-6","permissionMode":"default","apiKeySource":"none","claude_code_version":"2.1.39","uuid":"dfaeae2c-eaf0-48cc-9f02-11939398390f"}
+{"type":"stream_event","event":{"type":"message_start","message":{"model":"claude-opus-4-6","id":"msg_01BQEvW5uAje2ueXEnFb9U8c","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":3,"output_tokens":1}}},"session_id":"79312ee1-5b5f-4a7c-a92c-e0b42a5dd5d9","parent_tool_use_id":null}
+{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}},"session_id":"79312ee1-5b5f-4a7c-a92c-e0b42a5dd5d9","parent_tool_use_id":null}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}},"session_id":"79312ee1-5b5f-4a7c-a92c-e0b42a5dd5d9","parent_tool_use_id":null}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"! How can I help"}},"session_id":"79312ee1-5b5f-4a7c-a92c-e0b42a5dd5d9","parent_tool_use_id":null}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" you today?"}},"session_id":"79312ee1-5b5f-4a7c-a92c-e0b42a5dd5d9","parent_tool_use_id":null}
+{"type":"assistant","message":{"model":"claude-opus-4-6","id":"msg_01BQEvW5uAje2ueXEnFb9U8c","type":"message","role":"assistant","content":[{"type":"text","text":"Hello! How can I help you today?"}],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":3,"output_tokens":1}},"parent_tool_use_id":null,"session_id":"79312ee1-5b5f-4a7c-a92c-e0b42a5dd5d9"}
+{"type":"stream_event","event":{"type":"content_block_stop","index":0},"session_id":"79312ee1-5b5f-4a7c-a92c-e0b42a5dd5d9","parent_tool_use_id":null}
+{"type":"stream_event","event":{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":29},"context_management":{"applied_edits":[]}},"session_id":"79312ee1-5b5f-4a7c-a92c-e0b42a5dd5d9","parent_tool_use_id":null}
+{"type":"stream_event","event":{"type":"message_stop"},"session_id":"79312ee1-5b5f-4a7c-a92c-e0b42a5dd5d9","parent_tool_use_id":null}
+{"type":"result","subtype":"success","is_error":false,"duration_ms":10522,"duration_api_ms":10507,"num_turns":1,"result":"Hello! How can I help you today?","stop_reason":null,"session_id":"79312ee1-5b5f-4a7c-a92c-e0b42a5dd5d9","total_cost_usd":0.01053,"usage":{"input_tokens":3,"output_tokens":29}}
+
+# ============================================================
+# SCENARIO 3: Tool use (Read tool)
+# ============================================================
+# Line types: system → assistant (with tool_use content) → user (tool_result)
+#   → assistant (text response) → result
+# Note: In streaming mode, stream_events would appear between these lines too.
+
+{"type":"system","subtype":"init","cwd":"~/Documents","session_id":"f395f3b2-4425-4e61-af99-dc9566c56648","tools":["Task","TaskOutput","Bash","Glob","Grep","ExitPlanMode","Read","Edit","Write","NotebookEdit","WebFetch","TodoWrite","WebSearch","TaskStop","AskUserQuestion","Skill","EnterPlanMode","ToolSearch"],"mcp_servers":[],"model":"claude-opus-4-6","permissionMode":"default","apiKeySource":"none","claude_code_version":"2.1.39","uuid":"d1405d89-b582-4bc2-ba47-5f3ed3bb40ec"}
+{"type":"assistant","message":{"model":"claude-opus-4-6","id":"msg_01Wn2LGURCaKpDNfzUwpDwN9","type":"message","role":"assistant","content":[{"type":"tool_use","id":"toolu_01Py5uU75Waj3fWh3vNS2F9s","name":"Read","input":{"file_path":"~/Projects/claude-chat/.env.example"}}],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":3,"output_tokens":26}},"parent_tool_use_id":null,"session_id":"f395f3b2-4425-4e61-af99-dc9566c56648"}
+{"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_01Py5uU75Waj3fWh3vNS2F9s","type":"tool_result","content":"     1\u2192HOST=0.0.0.0\n     2\u2192PORT=3456\n     3\u2192AUTH_TOKEN=change-this-to-a-random-secret\n     4\u2192"}]},"parent_tool_use_id":null,"session_id":"f395f3b2-4425-4e61-af99-dc9566c56648","tool_use_result":{"type":"text","file":{"filePath":"~/Projects/claude-chat/.env.example","content":"HOST=0.0.0.0\nPORT=3456\nAUTH_TOKEN=change-this-to-a-random-secret\n","numLines":4}}}
+{"type":"assistant","message":{"model":"claude-opus-4-6","id":"msg_01CwnYYjN17ZGDp8c3cshjLg","type":"message","role":"assistant","content":[{"type":"text","text":"The .env.example file contains three environment variables: HOST, PORT, and AUTH_TOKEN."}],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":1}},"parent_tool_use_id":null,"session_id":"f395f3b2-4425-4e61-af99-dc9566c56648"}
+{"type":"result","subtype":"success","is_error":false,"duration_ms":6652,"duration_api_ms":6642,"num_turns":2,"result":"The .env.example file contains three environment variables: HOST, PORT, and AUTH_TOKEN.","stop_reason":null,"session_id":"f395f3b2-4425-4e61-af99-dc9566c56648","total_cost_usd":0.0345925,"usage":{"input_tokens":4,"output_tokens":212}}
+
+# ============================================================
+# TYPE REFERENCE
+# ============================================================
+#
+# type: "system"    — First line, session init. subtype: "init"
+# type: "assistant"  — Complete assistant message (text or tool_use content blocks)
+# type: "user"       — Tool result returned to assistant
+# type: "result"     — Final line, session complete. subtype: "success" or "error"
+#
+# With --include-partial-messages:
+# type: "stream_event" — Wraps Anthropic SSE events:
+#   event.type: "message_start"       — New message beginning
+#   event.type: "content_block_start" — New content block (text or tool_use)
+#   event.type: "content_block_delta" — Incremental text/input_json chunk
+#   event.type: "content_block_stop"  — Content block finished
+#   event.type: "message_delta"       — Message-level updates (stop_reason, usage)
+#   event.type: "message_stop"        — Message complete
+#
+# Key fields on all lines:
+#   session_id         — Stable across the conversation
+#   parent_tool_use_id — Non-null when inside a sub-agent tool call
+#   uuid               — Unique per line

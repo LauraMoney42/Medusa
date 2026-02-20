@@ -1,0 +1,22 @@
+node_modules/
+dist/
+.env
+server/uploads/*
+!server/uploads/.gitkeep
+*.log
+.DS_Store
+
+# Additional ignores
+.env.*
+*.pem
+*.key
+app/
+
+# Internal dev logs (not for public distribution)
+devlog.md
+WORKLOG.md
+MedusaLog.txt
+MedusaLogoOriginal.png
+
+# Sensitive docs
+docs/security_audit_report.md

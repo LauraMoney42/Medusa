@@ -1,0 +1,367 @@
+/* =========================================
+   Medusa -- Warm Charcoal theme
+   ========================================= */
+
+:root {
+  /* ---- Base backgrounds (warm charcoal, no blue tint) ---- */
+  --bg-primary:   #1c1c1e;
+  --bg-secondary: #2c2c2e;
+  --bg-tertiary:  #161618;
+  --bg-hover:     rgba(255, 255, 255, 0.06);
+  --bg-active:    rgba(255, 255, 255, 0.09);
+
+  /* ---- Text (warm neutrals) ---- */
+  --text-primary:   #e5e5ea;
+  --text-secondary: #8e8e93;
+  --text-muted:     #636366;
+
+  /* ---- Accent (dark forest green — kept) ---- */
+  --accent:       #1a7a3c;
+  --accent-hover: #156832;
+  --accent-glow:  rgba(26, 122, 60, 0.25);
+
+  /* ---- Status / feedback ---- */
+  --danger:  #c0392b;
+  --success: #00e87b;
+  --warning: #ffcc00;
+
+  /* ---- Borders (warm neutral edges) ---- */
+  --border:       rgba(255, 255, 255, 0.08);
+  --border-light: rgba(255, 255, 255, 0.12);
+  --border-glow:  rgba(26, 122, 60, 0.20);
+
+  /* ---- Surface tokens (warm charcoal) ---- */
+  --glass-bg:           #232325;
+  --glass-bg-heavy:     #1a1a1c;
+  --glass-shadow:       0 4px 24px rgba(0, 0, 0, 0.4);
+  --glass-shadow-modal: 0 12px 64px rgba(0, 0, 0, 0.6), 0 0 1px rgba(255, 255, 255, 0.06);
+
+  /* ---- Typography ---- */
+  --font: system-ui, -apple-system, BlinkMacSystemFont, 'SF Pro Display',
+    'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'SF Mono', 'Fira Code', 'Fira Mono', Menlo, Consolas, monospace;
+
+  /* ---- Radii ---- */
+  --radius:    14px;
+  --radius-sm: 8px;
+  --radius-lg: 18px;
+
+  /* ---- Layout ---- */
+  --sidebar-width: 260px;
+}
+
+/* Reset */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: #141416;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Subtle ambient glow pulse */
+@keyframes ambientGlow {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+/* Neon glow for accent buttons */
+@keyframes neonPulse {
+  0%, 100% { box-shadow: 0 0 8px rgba(26, 122, 60, 0.3), 0 0 20px rgba(26, 122, 60, 0.1); }
+  50% { box-shadow: 0 0 12px rgba(26, 122, 60, 0.5), 0 0 30px rgba(26, 122, 60, 0.15); }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.10);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+/* Selection */
+::selection {
+  background: rgba(26, 122, 60, 0.3);
+}
+
+/* Links */
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/* Button reset */
+button {
+  font-family: inherit;
+  font-size: inherit;
+  border: none;
+  cursor: pointer;
+  background: none;
+  color: inherit;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* Input reset */
+input,
+textarea {
+  font-family: inherit;
+  font-size: inherit;
+  border: none;
+  outline: none;
+  background: none;
+  color: inherit;
+}
+
+/* Layout */
+.app-layout {
+  display: flex;
+  height: 100%;
+  width: 100%;
+}
+
+/* =========================================
+   Markdown / Code blocks
+   ========================================= */
+
+.markdown-body {
+  line-height: 1.6;
+  word-wrap: break-word;
+}
+
+.markdown-body p {
+  margin-bottom: 0.5em;
+}
+
+.markdown-body p:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  padding-left: 1.5em;
+  margin-bottom: 0.5em;
+}
+
+.markdown-body blockquote {
+  border-left: 3px solid rgba(255, 255, 255, 0.12);
+  padding-left: 0.75em;
+  color: var(--text-secondary);
+  margin-bottom: 0.5em;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4 {
+  margin-top: 0.75em;
+  margin-bottom: 0.25em;
+  font-weight: 600;
+}
+
+.markdown-body h1 { font-size: 1.4em; }
+.markdown-body h2 { font-size: 1.2em; }
+.markdown-body h3 { font-size: 1.1em; }
+
+.markdown-body code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 0.15em 0.35em;
+  border-radius: var(--radius-sm);
+}
+
+.markdown-body pre {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin-bottom: 0.5em;
+  overflow-x: auto;
+}
+
+.markdown-body pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.85em;
+  line-height: 1.5;
+}
+
+.markdown-body table {
+  border-collapse: collapse;
+  margin-bottom: 0.5em;
+  width: 100%;
+}
+
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+  text-align: left;
+}
+
+.markdown-body th {
+  background: rgba(255, 255, 255, 0.04);
+  font-weight: 600;
+}
+
+.markdown-body hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 0.75em 0;
+}
+
+/* Drop overlay fade-in */
+@keyframes dropOverlayIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Bot status: spinning cog for busy state */
+@keyframes cogSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Bot status: pulsing dot for pending task */
+@keyframes pendingPulse {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.3); }
+}
+
+/* iOS-style typing dots bounce */
+@keyframes typingBounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.3; }
+  30% { transform: translateY(-4px); opacity: 1; }
+}
+
+/* Session edit button: show on hover */
+.sidebar div[style*="cursor: grab"]:hover .session-edit-btn,
+.sidebar div[style*="cursor: pointer"]:hover .session-edit-btn {
+  opacity: 1 !important;
+}
+.session-edit-btn:hover {
+  color: var(--accent) !important;
+}
+
+/* =========================================
+   Responsive: sidebar collapses on mobile
+   ========================================= */
+
+@media (max-width: 768px) {
+  .sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 100;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+  }
+
+  .sidebar.open {
+    transform: translateX(0);
+  }
+
+  .sidebar-overlay {
+    display: block;
+  }
+
+  .mobile-header {
+    display: flex;
+  }
+
+  /* Touch-friendly tap targets: min 44px per Apple HIG */
+  .mobile-header button {
+    min-width: 44px !important;
+    min-height: 44px !important;
+    padding: 10px !important;
+    font-size: 22px !important;
+  }
+
+  /* Sidebar session items */
+  .sidebar div[style*="cursor: pointer"] {
+    min-height: 44px !important;
+    padding: 10px 16px !important;
+  }
+
+  /* Sidebar buttons (New Session, Create, Cancel) */
+  .sidebar button {
+    min-height: 44px !important;
+  }
+
+  /* Sidebar form inputs */
+  .sidebar input {
+    min-height: 44px !important;
+    font-size: 16px !important;
+  }
+
+  /* Chat textarea */
+  .app-layout textarea {
+    font-size: 16px !important;
+    min-height: 44px !important;
+  }
+
+  /* Send / Abort buttons in chat input */
+  .app-layout button[title="Send"],
+  .app-layout button[title="Abort"] {
+    width: 44px !important;
+    height: 44px !important;
+  }
+
+  /* Textarea wrapper sticks to bottom above keyboard */
+  .app-layout {
+    height: 100%;
+    height: 100dvh;
+  }
+
+  html, body, #root {
+    height: 100dvh;
+  }
+}
+
+@media (min-width: 769px) {
+  .sidebar-overlay {
+    display: none !important;
+  }
+
+  .mobile-header {
+    display: none !important;
+  }
+}
