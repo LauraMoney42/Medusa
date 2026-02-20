@@ -15,11 +15,11 @@ Medusa lets you run multiple Claude Code bots simultaneously, each with their ow
 - **Real-time streaming** — Responses stream token-by-token via Socket.IO
 - **Multi-account support** — Switch between two Claude accounts (e.g. Personal / Work)
 - **macOS desktop app** — Native Swift wrapper with auto-managed server lifecycle
-- **Remote access** — Use from your phone over LAN, Tailscale, or Cloudflare Tunnel
-
 ## Prerequisites
 
+- **macOS** (desktop app is Mac-only)
 - **Node.js** v18+ (with npm)
+- **Xcode Command Line Tools** — `xcode-select --install`
 - **Claude Code CLI** installed and authenticated (`npm install -g @anthropic-ai/claude-code`)
   - Requires a Claude Max subscription or API key configured in the CLI
 
@@ -31,44 +31,13 @@ cd Medusa
 cd server && npm install && cd ..
 cd client && npm install && cd ..
 npm run build
-npm start
+bash app/build-app.sh
+open app/Medusa.app
 ```
 
-That's it. On first run, Medusa auto-generates a `.env` file with a random auth token. The token is printed to the console — use it to log in at `http://localhost:3456`.
+That's it. The desktop app auto-starts the server and handles everything. On first run, Medusa auto-generates an auth token — the app logs you in automatically.
 
 To customize settings later, edit `.env` in the project root.
-
-## Running
-
-### Production (recommended)
-
-```bash
-npm run build    # builds client + copies to server/dist/public
-npm start        # starts server on port 3456
-```
-
-### Development
-
-```bash
-npm run dev      # starts server (hot-reload) + Vite dev server concurrently
-```
-
-- Server API: `http://localhost:3456`
-- Client (Vite): `http://localhost:5173`
-
-### macOS Desktop App (optional)
-
-Build a native Medusa.app that auto-manages the server — no terminal needed after setup:
-
-```bash
-bash app/build-app.sh    # compiles with swiftc (no Xcode project needed)
-open app/Medusa.app       # launch — server starts automatically
-```
-
-Requires Xcode Command Line Tools (`xcode-select --install`). The app:
-- Starts the Node.js server on launch, kills it on quit
-- Loads the UI in a native window with auto-login
-- Handles port cleanup and auto-build if dependencies are missing
 
 ## How It Works
 
@@ -97,35 +66,9 @@ Create projects with tasks that can be assigned to bots:
 - Assignment to specific bots
 - Progress visualization in the sidebar
 
-## Remote Access
-
-### Same Wi-Fi (LAN)
-
-```bash
-ipconfig getifaddr en0
-```
-
-Open `http://<your-mac-ip>:3456` from any device on the same network.
-
-### Tailscale (recommended for mobile)
-
-1. Install Tailscale on your Mac and phone
-2. Sign in on both devices
-3. Find your Mac's Tailscale IP: `tailscale ip -4`
-4. Open `http://<tailscale-ip>:3456` on your phone
-
-### Cloudflare Tunnel (quick public URL)
-
-```bash
-brew install cloudflare/cloudflare/cloudflared
-cloudflared tunnel --url http://localhost:3456
-```
-
 ## Security
 
-- **Always set `AUTH_TOKEN`** in `.env` before exposing the server to any network
-- Token is sent as `Authorization: Bearer <token>` on HTTP and via `socket.handshake.auth.token` on WebSocket
-- `/api/health` is unauthenticated (for monitoring)
+- Auth token auto-generated on first run and injected into the desktop app automatically
 - Settings file (`~/.claude-chat/settings.json`) is `chmod 600` — contains API keys
 - API keys are masked in all API responses (only last 4 chars shown)
 
