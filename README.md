@@ -23,54 +23,38 @@ Medusa lets you run multiple Claude Code bots simultaneously, each with their ow
 - **Claude Code CLI** installed and authenticated (`npm install -g @anthropic-ai/claude-code`)
   - Requires a Claude Max subscription or API key configured in the CLI
 
-## Setup
+## Quick Start
 
 ```bash
-# Clone the repo
 git clone https://github.com/LauraMoney42/Medusa.git
 cd Medusa
-
-# Install server dependencies
 cd server && npm install && cd ..
-
-# Install client dependencies
 cd client && npm install && cd ..
-
-# Create your environment file
-cp .env.example .env
+npm run build
+npm start
 ```
 
-Edit `.env` and set a strong `AUTH_TOKEN`:
+That's it. On first run, Medusa auto-generates a `.env` file with a random auth token. The token is printed to the console — use it to log in at `http://localhost:3456`.
 
-```
-HOST=0.0.0.0
-PORT=3456
-AUTH_TOKEN=pick-a-random-secret-here
-```
-
-The `AUTH_TOKEN` is used as a Bearer token for HTTP requests and Socket.IO authentication. If left empty, auth is disabled (not recommended for remote access).
+To customize settings later, edit `.env` in the project root.
 
 ## Running
+
+### Production (recommended)
+
+```bash
+npm run build    # builds client + copies to server/dist/public
+npm start        # starts server on port 3456
+```
 
 ### Development
 
 ```bash
-./scripts/dev.sh
-# or
-npm run dev
+npm run dev      # starts server (hot-reload) + Vite dev server concurrently
 ```
-
-This starts both the Express server (port 3456, with hot-reload via `tsx watch`) and the Vite dev server (port 5173) concurrently.
 
 - Server API: `http://localhost:3456`
 - Client (Vite): `http://localhost:5173`
-
-### Production
-
-```bash
-npm run build    # builds client + copies to server/dist/public
-npm start        # starts server on port 3456, serves client as static files
-```
 
 ### macOS Desktop App
 

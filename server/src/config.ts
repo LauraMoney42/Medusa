@@ -1,12 +1,23 @@
 import dotenv from "dotenv";
+import crypto from "crypto";
+import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load .env from project root (two levels up from server/src/)
-dotenv.config({ path: path.resolve(__dirname, "../../.env") });
+const envPath = path.resolve(__dirname, "../../.env");
+
+// Auto-generate .env with a random AUTH_TOKEN on first run
+if (!fs.existsSync(envPath)) {
+  const token = crypto.randomBytes(32).toString("hex");
+  const content = `# Medusa — auto-generated on first run\nHOST=0.0.0.0\nPORT=3456\nAUTH_TOKEN=${token}\n`;
+  fs.writeFileSync(envPath, content, "utf-8");
+  console.log(`[medusa] Created .env with auto-generated AUTH_TOKEN`);
+}
+
+dotenv.config({ path: envPath });
 
 export interface Config {
   host: string;

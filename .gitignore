@@ -8,6 +8,7 @@ server/uploads/*
 
 # Additional ignores
 .env.*
+!.env.example
 *.pem
 *.key
 app/

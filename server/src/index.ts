@@ -412,9 +412,12 @@ async function resumeInterruptedSessions(): Promise<InterruptedSession[]> {
 
 // ---- Start listening ----
 server.listen(config.port, config.host, () => {
-  console.log(
-    `[medusa] Server running at http://${config.host}:${config.port}`
-  );
+  console.log(`\n  🐍 Medusa is running!\n`);
+  console.log(`  Local:   http://localhost:${config.port}`);
+  if (config.authToken) {
+    console.log(`  Token:   ${config.authToken.slice(0, 8)}...${config.authToken.slice(-4)}`);
+  }
+  console.log("");
 
   // Hot-reload projects.json when it changes on disk (e.g., a bot edits it directly).
   // Broadcasts projects:updated to all clients so the Projects Pane refreshes without restart.
