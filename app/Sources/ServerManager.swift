@@ -58,8 +58,13 @@ class ServerManager {
     // MARK: - .env Parsing
 
     private func parseEnv() throws -> [String: String] {
-        guard FileManager.default.fileExists(atPath: envPath) else {
-            throw ServerError.envFileNotFound(envPath)
+        // Auto-generate .env on first run
+        if !FileManager.default.fileExists(atPath: envPath) {
+            var tokenBytes = [UInt8](repeating: 0, count: 32)
+            _ = SecRandomCopyBytes(kSecRandomDefault, tokenBytes.count, &tokenBytes)
+            let token = tokenBytes.map { String(format: "%02x", $0) }.joined()
+            let content = "# Medusa — auto-generated on first run\nHOST=0.0.0.0\nPORT=3456\nAUTH_TOKEN=\(token)\n"
+            try content.write(toFile: envPath, atomically: true, encoding: .utf8)
         }
 
         let content = try String(contentsOfFile: envPath, encoding: .utf8)
