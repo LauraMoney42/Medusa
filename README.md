@@ -1,6 +1,14 @@
-# Medusa
+<p align="center">
+  <img src="docs/medusa_logo.png" alt="Medusa" width="180" />
+</p>
 
-Multi-bot AI orchestration platform — run parallel Claude sessions with real-time Hub coordination, @mention routing, and project management.
+<h1 align="center">Medusa</h1>
+
+<p align="center">
+  Multi-bot AI orchestration platform — run parallel Claude sessions with real-time Hub coordination, @mention routing, and project management.
+</p>
+
+---
 
 ![Architecture](docs/medusa_architecture.png)
 
