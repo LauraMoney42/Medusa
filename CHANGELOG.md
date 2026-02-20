@@ -1,3 +1,7 @@
+## 2026-02-19 22:00
+- Updated README.md: renamed from "Claude Chat" to "Medusa", added architecture diagram, documented Hub, @mention routing, multi-bot orchestration, project management, macOS desktop app, updated project structure, tech stack
+- Files modified: README.md
+
 ## 2026-02-19 19:00
 - Fixed desktop app auto-login: WebViewController now pre-seeds httpOnly auth cookie into WKWebView cookie store before loading the page
 - Eliminates login screen on every app launch/server restart — cookie is set from .env AUTH_TOKEN
