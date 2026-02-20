@@ -11,7 +11,8 @@ server/uploads/*
 !.env.example
 *.pem
 *.key
-app/
+# Desktop app — source included, built .app excluded
+app/Medusa.app/
 
 # Internal dev logs (not for public distribution)
 devlog.md

@@ -56,15 +56,19 @@ npm run dev      # starts server (hot-reload) + Vite dev server concurrently
 - Server API: `http://localhost:3456`
 - Client (Vite): `http://localhost:5173`
 
-### macOS Desktop App
+### macOS Desktop App (optional)
 
-The `app/` directory contains a native Swift/SwiftUI wrapper that:
-- Automatically starts the Node.js server on launch
-- Loads the UI in a WKWebView with pre-seeded auth
-- Kills the server when you quit the app
-- Handles stale port cleanup
+Build a native Medusa.app that auto-manages the server — no terminal needed after setup:
 
-Open `app/Medusa.xcodeproj` in Xcode to build and run.
+```bash
+bash app/build-app.sh    # compiles with swiftc (no Xcode project needed)
+open app/Medusa.app       # launch — server starts automatically
+```
+
+Requires Xcode Command Line Tools (`xcode-select --install`). The app:
+- Starts the Node.js server on launch, kills it on quit
+- Loads the UI in a native window with auto-login
+- Handles port cleanup and auto-build if dependencies are missing
 
 ## How It Works
 
