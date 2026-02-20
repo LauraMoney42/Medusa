@@ -28,16 +28,11 @@ Medusa lets you run multiple Claude Code bots simultaneously, each with their ow
 ```bash
 git clone https://github.com/LauraMoney42/Medusa.git
 cd Medusa
-cd server && npm install && cd ..
-cd client && npm install && cd ..
-npm run build
 bash app/build-app.sh
 open app/Medusa.app
 ```
 
-That's it. The desktop app auto-starts the server and handles everything. On first run, Medusa auto-generates an auth token — the app logs you in automatically.
-
-To customize settings later, edit `.env` in the project root.
+That's it. On first launch the app automatically installs dependencies, builds the client and server, generates an auth token, and logs you in. Just wait for the loading screen to finish.
 
 ## How It Works
 
