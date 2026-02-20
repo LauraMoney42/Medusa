@@ -53,7 +53,11 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
         <div className={styles.content}>
           <div className={styles.icon} style={{ color: slide.iconColor }}>
             {slide.iconType === 'sparkles' ? (
-              <img src="/MedusaIcon.png" alt="Medusa" style={{ width: 72, height: 72, borderRadius: 12 }} />
+              <img src="/MedusaIcon.png" alt="Medusa" style={{
+                width: 100, height: 100, borderRadius: '50%',
+                border: '1.5px solid #3a7a3a',
+                boxShadow: '0 0 32px rgba(74,175,74,.3), inset 0 0 16px rgba(0,0,0,.6)',
+              }} />
             ) : (
               <SlideIcon type={slide.iconType} />
             )}

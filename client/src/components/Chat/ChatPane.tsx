@@ -36,7 +36,7 @@ export default function ChatPane({ onMenuToggle }: ChatPaneProps) {
           <img src="/MedusaIcon.png" alt="Medusa" style={styles.emptyIcon} />
           <h2 style={styles.emptyTitle}>Welcome to Medusa</h2>
           <p style={styles.emptyText}>
-            Select or create a session to get started
+            Select Medusa or another bot from the sidebar to begin
           </p>
           <p style={styles.creditText}>
             Created by{' '}
