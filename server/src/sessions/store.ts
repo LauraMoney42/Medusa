@@ -1,7 +1,13 @@
 import fs from "fs";
 import path from "path";
+import os from "os";
+import crypto from "crypto";
+import { fileURLToPath } from "url";
 import { z } from "zod";
 import config from "../config.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const SessionMetaSchema = z.object({
   id: z.string(),
@@ -41,8 +47,13 @@ export class SessionStore {
       fs.mkdirSync(dir, { recursive: true });
     }
     if (!fs.existsSync(this.filePath)) {
-      this.writeAtomic([]);
-      this.sessions = [];
+      // First launch — seed from default-bots.json if it exists
+      const defaults = this.loadDefaults();
+      this.writeAtomic(defaults);
+      this.sessions = defaults;
+      if (defaults.length > 0) {
+        console.log(`[sessions] Seeded ${defaults.length} default bot(s) on first launch`);
+      }
       return;
     }
     try {
@@ -50,6 +61,33 @@ export class SessionStore {
       this.sessions = SessionsFileSchema.parse(JSON.parse(raw));
     } catch {
       this.sessions = [];
+    }
+  }
+
+  /** Load default bot templates from server/default-bots.json. */
+  private loadDefaults(): SessionMeta[] {
+    try {
+      // default-bots.json is at server root (two levels up from dist/sessions/)
+      const defaultsPath = path.resolve(__dirname, "../../default-bots.json");
+      if (!fs.existsSync(defaultsPath)) return [];
+
+      const raw = fs.readFileSync(defaultsPath, "utf-8");
+      const templates = JSON.parse(raw) as Array<{ name: string; systemPrompt: string }>;
+      const now = new Date().toISOString();
+      const homeDir = os.homedir();
+      const defaultWorkingDir = path.join(homeDir, "Documents");
+
+      return templates.map((t) => ({
+        id: crypto.randomUUID(),
+        name: t.name,
+        workingDir: fs.existsSync(defaultWorkingDir) ? defaultWorkingDir : homeDir,
+        createdAt: now,
+        lastActiveAt: now,
+        systemPrompt: t.systemPrompt.replace(/~\//g, homeDir + "/"),
+      }));
+    } catch (err) {
+      console.error("[sessions] Failed to load default bots:", err);
+      return [];
     }
   }
 
