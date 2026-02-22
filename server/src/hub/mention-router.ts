@@ -3,6 +3,8 @@ import type { ProcessManager } from "../claude/process-manager.js";
 import type { SessionStore } from "../sessions/store.js";
 import type { ChatStore } from "../chat/store.js";
 import type { HubStore, HubMessage } from "./store.js";
+import type { TokenLogger } from "../metrics/token-logger.js";
+import type { QuickTaskStore } from "../projects/quick-task-store.js";
 import { autonomousDeliver } from "../claude/autonomous-deliver.js";
 
 interface PendingMention {
@@ -34,6 +36,8 @@ export class MentionRouter {
   private hubStore: HubStore;
   private chatStore: ChatStore;
   private io: IOServer;
+  private tokenLogger?: TokenLogger;
+  private quickTaskStore?: QuickTaskStore;
 
   /** sessionId -> FIFO queue of pending mentions (max MAX_PENDING per bot) */
   private pendingMentions = new Map<string, PendingMention[]>();
@@ -53,13 +57,17 @@ export class MentionRouter {
     sessionStore: SessionStore,
     hubStore: HubStore,
     chatStore: ChatStore,
-    io: IOServer
+    io: IOServer,
+    tokenLogger?: TokenLogger,
+    quickTaskStore?: QuickTaskStore
   ) {
     this.processManager = processManager;
     this.sessionStore = sessionStore;
     this.hubStore = hubStore;
     this.chatStore = chatStore;
     this.io = io;
+    this.tokenLogger = tokenLogger;
+    this.quickTaskStore = quickTaskStore;
   }
 
   /**
@@ -124,12 +132,13 @@ export class MentionRouter {
     // Drain pending hub mentions first
     const mentionQueue = this.pendingMentions.get(sessionId);
     if (mentionQueue && mentionQueue.length > 0) {
+      // Check cooldown BEFORE consuming from queue to prevent mention loss
+      const lastTime = this.lastMentionTime.get(sessionId) ?? 0;
+      if (Date.now() - lastTime < MentionRouter.COOLDOWN_MS) return;
       const pending = mentionQueue.shift()!;
       if (mentionQueue.length === 0) {
         this.pendingMentions.delete(sessionId);
       }
-      const lastTime = this.lastMentionTime.get(sessionId) ?? 0;
-      if (Date.now() - lastTime < MentionRouter.COOLDOWN_MS) return;
       this.deliverMention(sessionId, pending.hubMessage, pending.chainDepth);
       return;
     }
@@ -260,6 +269,8 @@ export class MentionRouter {
       chatStore: this.chatStore,
       mentionRouter: this,
       chainDepth,
+      tokenLogger: this.tokenLogger,
+      quickTaskStore: this.quickTaskStore,
     }).catch((err) => {
       console.error(`[mention-router] bot-to-bot delivery failed for ${sessionId}:`, err);
     });
@@ -317,6 +328,8 @@ export class MentionRouter {
       chatStore: this.chatStore,
       mentionRouter: this,
       chainDepth,
+      tokenLogger: this.tokenLogger,
+      quickTaskStore: this.quickTaskStore,
     }).catch((err) => {
       console.error(`[mention-router] autonomousDeliver failed for ${sessionId}:`, err);
     });

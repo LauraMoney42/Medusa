@@ -22,43 +22,71 @@ function renderWithMentions(text: string): React.ReactNode {
 }
 
 export default function HubMessage({ message }: HubMessageProps) {
+  // Match both old ('You') and new ('User') sender names for backward compat
+  const isUser = message.from === 'You' || message.from === 'User';
+
   const time = new Date(message.timestamp).toLocaleTimeString([], {
     hour: '2-digit',
     minute: '2-digit',
   });
 
   return (
-    <div style={styles.container}>
-      <div style={styles.header}>
-        <span style={styles.name}>
-          {message.from}
-        </span>
-        <span style={styles.time}>{time}</span>
-      </div>
-      <div style={styles.text}>{renderWithMentions(message.text)}</div>
-      {message.images && message.images.length > 0 && (
-        <div style={styles.imageRow}>
-          {message.images.map((src, i) => (
-            <img
-              key={i}
-              src={src}
-              alt="Attached"
-              style={styles.image}
-              onClick={() => window.open(src, '_blank')}
-            />
-          ))}
+    <div style={{
+      ...styles.wrapper,
+      justifyContent: isUser ? 'flex-end' : 'flex-start',
+    }}>
+      <div style={{
+        ...styles.container,
+        ...(isUser ? styles.userContainer : styles.botContainer),
+      }}>
+        <div style={styles.header}>
+          <span style={{
+            ...styles.name,
+            color: '#4aba6a',
+          }}>
+            {isUser ? 'User' : message.from}
+          </span>
+          <span style={styles.time}>{time}</span>
         </div>
-      )}
+        <div style={styles.text}>{renderWithMentions(message.text)}</div>
+        {message.images && message.images.length > 0 && (
+          <div style={styles.imageRow}>
+            {message.images.map((src, i) => (
+              <img
+                key={i}
+                src={src}
+                alt="Attached"
+                style={styles.image}
+                onClick={() => window.open(src, '_blank')}
+              />
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
 const styles: Record<string, React.CSSProperties> = {
+  wrapper: {
+    display: 'flex',
+    width: '100%',
+  },
   container: {
     padding: '10px 14px',
     borderRadius: 'var(--radius-md, 10px)',
+    maxWidth: '80%',
+    minWidth: 120,
+  },
+  botContainer: {
     background: '#232325',
     border: '1px solid rgba(255, 255, 255, 0.08)',
+    borderBottomLeftRadius: 4,
+  },
+  userContainer: {
+    background: 'rgba(74, 186, 106, 0.12)',
+    border: '1px solid rgba(74, 186, 106, 0.2)',
+    borderBottomRightRadius: 4,
   },
   header: {
     display: 'flex',
@@ -69,7 +97,6 @@ const styles: Record<string, React.CSSProperties> = {
   name: {
     fontSize: 13,
     fontWeight: 600,
-    color: '#4aba6a',
     letterSpacing: '0.02em',
   },
   time: {

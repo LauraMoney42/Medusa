@@ -6,6 +6,8 @@ import { getSocket } from '../../socket';
 import { uploadImage } from '../../api';
 import HubMessage from './HubMessage';
 import ImagePreview from '../Input/ImagePreview';
+import ScreenshotButton from '../Input/ScreenshotButton';
+import MentionAutocomplete from './MentionAutocomplete';
 
 const HUB_MAX_HEIGHT = 150;
 
@@ -13,14 +15,38 @@ interface HubFeedProps {
   onMenuToggle?: () => void;
 }
 
+/**
+ * Extract the @mention query from input at the cursor position.
+ * Returns text after @ if currently typing a mention, or null.
+ */
+function getMentionQuery(input: string, cursor: number): string | null {
+  const before = input.slice(0, cursor);
+  const atIndex = before.lastIndexOf('@');
+  if (atIndex === -1) return null;
+
+  // @ must be at start or preceded by whitespace
+  if (atIndex > 0 && !/\s/.test(before[atIndex - 1])) return null;
+
+  const query = before.slice(atIndex + 1);
+
+  // Allow multi-word bot names (e.g. "Full Stack Dev") — up to 4 words
+  if (query.split(/\s+/).length > 4) return null;
+
+  return query;
+}
+
 export default function HubFeed({ onMenuToggle }: HubFeedProps) {
   const messages = useHubStore((s) => s.messages);
   const markAllSeen = useHubStore((s) => s.markAllSeen);
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const activeView = useSessionStore((s) => s.activeView);
+  const sessions = useSessionStore((s) => s.sessions);
 
   const [input, setInput] = useState('');
   const [images, setImages] = useState<{ file: File; preview: string }[]>([]);
+  const [cursorPos, setCursorPos] = useState(0);
+  const [mentionVisible, setMentionVisible] = useState(false);
+  const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0);
   const bottomRef = useRef<HTMLDivElement>(null);
   const hubTextareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -55,6 +81,40 @@ export default function HubFeed({ onMenuToggle }: HubFeedProps) {
     });
   };
 
+  // @-mention autocomplete: build candidates and filtered list
+  const mentionCandidates = [
+    ...sessions.map((s) => s.name),
+    'You',
+    'all',
+  ];
+
+  const mentionQuery = getMentionQuery(input, cursorPos);
+  const mentionFiltered = mentionQuery !== null
+    ? mentionCandidates.filter((name) =>
+        name.toLowerCase().startsWith(mentionQuery.toLowerCase())
+      )
+    : [];
+
+  // Show/hide autocomplete based on whether we have a query + matches
+  useEffect(() => {
+    setMentionVisible(mentionQuery !== null && mentionFiltered.length > 0);
+    setMentionSelectedIndex(0);
+  }, [mentionQuery, mentionFiltered.length]);
+
+  const handleMentionSelect = useCallback((newValue: string, newCursorPos: number) => {
+    setInput(newValue);
+    setCursorPos(newCursorPos);
+    setMentionVisible(false);
+    // Move textarea cursor to new position
+    requestAnimationFrame(() => {
+      if (hubTextareaRef.current) {
+        hubTextareaRef.current.selectionStart = newCursorPos;
+        hubTextareaRef.current.selectionEnd = newCursorPos;
+        hubTextareaRef.current.focus();
+      }
+    });
+  }, []);
+
   const handleSend = useCallback(async () => {
     const text = input.trim();
     if (!text && images.length === 0) return;
@@ -75,7 +135,7 @@ export default function HubFeed({ onMenuToggle }: HubFeedProps) {
       // sessionId is optional for user posts — server handles missing session gracefully
       ...(activeSessionId ? { sessionId: activeSessionId } : {}),
       text: text || '(image)',
-      from: 'You',
+      from: 'User',
       ...(uploadedPaths.length > 0 ? { images: uploadedPaths } : {}),
     });
 
@@ -85,6 +145,7 @@ export default function HubFeed({ onMenuToggle }: HubFeedProps) {
       URL.revokeObjectURL(img.preview);
     }
     setImages([]);
+    setMentionVisible(false);
     // Reset textarea height after send
     if (hubTextareaRef.current) {
       hubTextareaRef.current.style.height = 'auto';
@@ -103,14 +164,57 @@ export default function HubFeed({ onMenuToggle }: HubFeedProps) {
     el.style.overflowY = el.scrollHeight > HUB_MAX_HEIGHT ? 'auto' : 'hidden';
   }, []);
 
+  const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInput(e.target.value);
+    setCursorPos(e.target.selectionStart ?? e.target.value.length);
+  }, []);
+
+  const handleInputClick = useCallback((e: React.MouseEvent<HTMLTextAreaElement>) => {
+    const target = e.target as HTMLTextAreaElement;
+    setCursorPos(target.selectionStart ?? 0);
+  }, []);
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      // Let mention autocomplete consume arrow/tab/enter/escape keys first
+      if (mentionVisible && mentionFiltered.length > 0) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          setMentionSelectedIndex((prev) => (prev + 1) % mentionFiltered.length);
+          return;
+        }
+        if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          setMentionSelectedIndex((prev) => (prev - 1 + mentionFiltered.length) % mentionFiltered.length);
+          return;
+        }
+        if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+          e.preventDefault();
+          const name = mentionFiltered[mentionSelectedIndex];
+          if (name && mentionQuery !== null) {
+            const atStart = cursorPos - mentionQuery.length - 1;
+            const before = input.slice(0, atStart);
+            const after = input.slice(cursorPos);
+            const newValue = `${before}@${name} ${after}`;
+            const newCursor = before.length + name.length + 2;
+            handleMentionSelect(newValue, newCursor);
+          }
+          return;
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          setMentionVisible(false);
+          return;
+        }
+      }
+
+      // Normal send on Enter (without shift)
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         handleSend();
       }
     },
-    [handleSend],
+    [handleSend, mentionVisible, mentionFiltered, mentionSelectedIndex, mentionQuery, cursorPos, input, handleMentionSelect],
   );
 
   const handlePaste = useCallback(
@@ -134,6 +238,11 @@ export default function HubFeed({ onMenuToggle }: HubFeedProps) {
     },
     [],
   );
+
+  // Screenshot capture handler — adds captured image to staged images
+  const handleScreenshot = useCallback((file: File, preview: string) => {
+    setImages((prev) => [...prev, { file, preview }]);
+  }, []);
 
   const canSend = input.trim() || images.length > 0;
 
@@ -179,28 +288,56 @@ export default function HubFeed({ onMenuToggle }: HubFeedProps) {
             ))}
           </div>
         )}
-        <div style={styles.inputArea}>
-          <textarea
-            ref={hubTextareaRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            onPaste={handlePaste}
-            onInput={handleHubInput}
-            placeholder="Post to the Hub... (@all, @BotName)"
-            rows={1}
-            style={styles.textarea}
+        <div style={styles.inputAreaOuter}>
+          {/* @-mention autocomplete popup */}
+          <MentionAutocomplete
+            inputValue={input}
+            cursorPosition={cursorPos}
+            onSelect={handleMentionSelect}
+            onDismiss={() => setMentionVisible(false)}
+            visible={mentionVisible}
           />
-          <button
-            onClick={handleSend}
-            disabled={!canSend}
-            style={{
-              ...styles.sendBtn,
-              opacity: canSend ? 1 : 0.4,
-            }}
-          >
-            Send
-          </button>
+          <div style={styles.inputArea}>
+            <textarea
+              ref={hubTextareaRef}
+              value={input}
+              onChange={handleInputChange}
+              onClick={handleInputClick}
+              onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
+              onInput={handleHubInput}
+              placeholder="Post to the Hub... (type @ to mention)"
+              rows={1}
+              style={styles.textarea}
+            />
+            <ScreenshotButton
+              onCapture={handleScreenshot}
+              disabled={false}
+            />
+            <button
+              onClick={handleSend}
+              disabled={!canSend}
+              style={{
+                ...styles.sendBtn,
+                opacity: canSend ? 1 : 0.4,
+              }}
+              title="Send"
+            >
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <line x1="22" y1="2" x2="11" y2="13" />
+                <polygon points="22 2 15 22 11 13 2 9 22 2" />
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -282,6 +419,9 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 8,
     flexWrap: 'wrap',
   },
+  inputAreaOuter: {
+    position: 'relative',
+  } as React.CSSProperties,
   inputArea: {
     display: 'flex',
     alignItems: 'flex-end',
@@ -305,16 +445,19 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'block',
   } as React.CSSProperties,
   sendBtn: {
-    padding: '8px 16px',
-    borderRadius: 'var(--radius-md, 10px)',
-    background: '#4aba6a',
-    color: '#141416',
-    border: 'none',
-    fontSize: 13,
-    fontWeight: 600,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 36,
+    height: 36,
+    borderRadius: '50%',
+    background: 'rgba(26, 122, 60, 0.18)',
+    color: '#a8d8b8',
+    border: '1px solid rgba(26, 122, 60, 0.25)',
+    flexShrink: 0,
     cursor: 'pointer',
-    whiteSpace: 'nowrap',
-    transition: 'opacity 0.15s',
+    transition: 'opacity 0.15s, box-shadow 0.3s, background 0.15s',
+    boxShadow: '0 0 12px rgba(26, 122, 60, 0.15), 0 0 24px rgba(26, 122, 60, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.06)',
   } as React.CSSProperties,
   noSessionArea: {
     display: 'flex',
