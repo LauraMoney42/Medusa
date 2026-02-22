@@ -17,6 +17,7 @@ import { selectModel, NEXT_TIER, type ModelTier } from "./model-router.js";
 import { processHubPosts } from "../hub/post-processor.js";
 import { summarizeConversation } from "../chat/conversation-summarizer.js";
 import config from "../config.js";
+import { compress } from "../compressor/engine.js";
 
 export interface AutonomousDeliverParams {
   sessionId: string;
@@ -279,6 +280,12 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
   }
 
   finalSystemPrompt = finalSystemPrompt.trim();
+
+  // TC-4: Compress assembled system prompt. Autonomous delivery (polls, mentions,
+  // bot-to-bot) uses aggressive level since these are internal ops where token
+  // savings matter most and bots tolerate terse context.
+  const compressLevel = compactMode ? "aggressive" as const : "moderate" as const;
+  finalSystemPrompt = compress(finalSystemPrompt, compressLevel).compressed;
 
   // Send to bot with tier escalation on failure
   try {

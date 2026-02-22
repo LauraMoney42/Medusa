@@ -185,6 +185,11 @@ export function shutdown(): Promise<void> {
   return request<void>('/api/health/shutdown', { method: 'POST' });
 }
 
+/** Triggers a server restart (exits with code 75 so the macOS app auto-relaunches). */
+export function restartApp(): Promise<void> {
+  return request<void>('/api/health/restart', { method: 'POST' });
+}
+
 export interface AccountLoginStatus {
   loggedIn: boolean;
   email?: string;

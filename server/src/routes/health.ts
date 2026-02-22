@@ -45,6 +45,23 @@ export function createHealthRouter(
     });
   });
 
+  /**
+   * POST /api/health/restart
+   * Triggers a server restart by exiting with code 75.
+   * The macOS app detects this exit code and auto-relaunches the server.
+   * Uses cookie-based auth (same as other API endpoints).
+   */
+  router.post("/restart", (_req: Request, res: Response) => {
+    console.log("[restart] Restart requested via HTTP");
+    res.status(202).json({ ok: true, message: "Restarting" });
+
+    // Exit with code 75 so the macOS app knows to restart (not crash)
+    setImmediate(() => {
+      console.log("[restart] Exiting with code 75 for auto-restart...");
+      process.exit(75);
+    });
+  });
+
   return router;
 }
 

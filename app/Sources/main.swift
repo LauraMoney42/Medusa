@@ -31,6 +31,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self?.webViewController.updateLoadingStatus(message)
         }
 
+        // Wire up auto-restart: reload the WebView when server restarts (exit code 75)
+        serverManager.onRestart = { [weak self] port in
+            self?.webViewController.loadWebApp(port: port)
+        }
+
         // Start the Node.js server (auto-builds if needed), then load the web view
         serverManager.start { [weak self] result in
             switch result {

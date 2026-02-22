@@ -267,7 +267,7 @@ export class MentionRouter {
 
   /**
    * Extract @mentions from message text by scanning for known session names.
-   * Handles multi-word names like "Full Stack Dev" or "UI Dev".
+   * Handles multi-word names like "Security" or "Medusa".
    * Sorted longest-first so "@Full Stack Dev" matches the full name, not just "Dev".
    */
   private extractMentions(text: string, senderSessionId?: string): string[] {

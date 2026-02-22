@@ -45,6 +45,12 @@ export interface Config {
   summarizationThreshold: number;
   /** Enable tiered model routing (Haiku for simple, Sonnet for coding, Opus for architecture) (default: true) */
   modelRoutingEnabled: boolean;
+  /** Enable hub context compression before injection (default: true) */
+  compressionEnabled: boolean;
+  /** Compression level: conservative | moderate | aggressive (default: moderate) */
+  compressionLevel: "conservative" | "moderate" | "aggressive";
+  /** Emit compression audit log to console (default: false) */
+  compressionAudit: boolean;
   /** Display name for account 1 */
   account1Name: string;
   /** CLAUDE_CONFIG_DIR path for account 1 (default: ~/.claude) */
@@ -95,6 +101,9 @@ const config: Config = {
   summarizationEnabled: process.env.SUMMARIZATION_ENABLED !== "false",
   summarizationThreshold: parseInt(process.env.SUMMARIZATION_THRESHOLD || "30", 10),
   modelRoutingEnabled: process.env.MODEL_ROUTING_ENABLED !== "false",
+  compressionEnabled: process.env.COMPRESSION_ENABLED !== "false",
+  compressionLevel: (process.env.COMPRESSION_LEVEL || "moderate") as "conservative" | "moderate" | "aggressive",
+  compressionAudit: process.env.COMPRESSION_AUDIT === "true",
   account1Name: process.env.ACCOUNT_1_NAME || "Account 1",
   account1ConfigDir: process.env.ACCOUNT_1_CONFIG_DIR || "~/.claude",
   account2Name: process.env.ACCOUNT_2_NAME || "Account 2",

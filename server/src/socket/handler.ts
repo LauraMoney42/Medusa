@@ -4,6 +4,7 @@ import { timingSafeEqual, createHash } from "crypto";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
 import config from "../config.js";
+import { compress } from "../compressor/engine.js";
 
 // P2-9: Validate that every image path is within the uploads directory.
 // Accepts URL paths (/uploads/filename) and converts them to filesystem paths
@@ -307,6 +308,27 @@ Active bots: ${botNames || "none"}`;
   }
 
   section += "\n--- END HUB ---";
+
+  // TC-4: Compress hub context before injection to reduce token usage.
+  // Respects config flags — disabled via COMPRESSION_ENABLED=false.
+  if (config.compressionEnabled) {
+    const level = config.compressionLevel;
+    const audit = config.compressionAudit;
+    const result = compress(section, level, { audit });
+
+    if (audit && result.audit) {
+      console.log(
+        `[token-compressor] Hub context compressed: ratio=${result.audit.ratio}, ` +
+        `removed=${result.audit.removed.length} items, level=${level}`
+      );
+      for (const entry of result.audit.removed) {
+        console.log(`  [${entry.strategy}] ${entry.reason}`);
+      }
+    }
+
+    return result.compressed;
+  }
+
   return section;
 }
 
@@ -604,6 +626,10 @@ export function setupSocketHandler(
         // Inject hub context filtered to this bot's relevant messages
         finalSystemPrompt += buildHubPromptSection(hubStore, store, sessionId, meta.name);
         finalSystemPrompt = finalSystemPrompt.trim();
+
+        // TC-4: Compress the assembled system prompt (hub context + summary + instructions).
+        // Uses moderate level — balances token savings with semantic preservation.
+        finalSystemPrompt = compress(finalSystemPrompt, "moderate").compressed;
 
         try {
           // Select model based on routing config

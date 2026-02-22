@@ -48,6 +48,10 @@ class ServerManager {
     /// Called on the main thread with status messages for the loading screen.
     var onStatus: ((String) -> Void)?
 
+    /// Called on the main thread when the server auto-restarts (exit code 75).
+    /// Passes the new port so the WebView can reload.
+    var onRestart: ((Int) -> Void)?
+
     init(projectRoot: String, serverDir: String, envPath: String) {
         self.projectRoot = projectRoot
         self.serverDir = serverDir
@@ -393,7 +397,25 @@ class ServerManager {
         }
 
         proc.terminationHandler = { [weak self] p in
-            guard self?.process != nil else { return }
+            guard let self = self, self.process != nil else { return }
+
+            // Exit code 75 = restart requested (from /api/health/restart)
+            if p.terminationStatus == 75 {
+                self.process = nil
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    self.start(completion: { result in
+                        switch result {
+                        case .success(let port):
+                            // Notify via onStatus so the WebView can reload
+                            self.onRestart?(port)
+                        case .failure(let error):
+                            completionOnce(.failure(error))
+                        }
+                    })
+                }
+                return
+            }
+
             let data = errPipe.fileHandleForReading.availableData
             let msg = String(data: data, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? "exit code \(p.terminationStatus)"

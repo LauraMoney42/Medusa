@@ -1,3 +1,11 @@
+## 2026-02-21 12:00
+- Simplified Settings modal: replaced complex account cards with a single toggle button to switch between Account 1 and Account 2
+- Removed per-account login/logout buttons, status pills, refresh button, and terminal command hints
+- Added "Restart App" button in Settings for applying login/logout changes
+- New server endpoint: POST /api/health/restart — exits with code 75 for auto-restart
+- macOS app: ServerManager detects exit code 75 and auto-relaunches the server + reloads WebView
+- Files modified: client/src/components/Sidebar/SettingsModal.tsx, client/src/api.ts, server/src/routes/health.ts, app/Sources/ServerManager.swift, app/Sources/main.swift
+
 ## 2026-02-19 22:00
 - Updated README.md: renamed from "Claude Chat" to "Medusa", added architecture diagram, documented Hub, @mention routing, multi-bot orchestration, project management, macOS desktop app, updated project structure, tech stack
 - Files modified: README.md

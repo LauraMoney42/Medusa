@@ -9,32 +9,25 @@ interface SettingsModalProps {
 export default function SettingsModal({ onClose }: SettingsModalProps) {
   const [settings, setSettings] = useState<SettingsResponse | null>(null);
   const [switching, setSwitching] = useState(false);
-  // Per-account login status: undefined = not yet checked, null = checking
   const [loginStatuses, setLoginStatuses] = useState<Record<number, AccountLoginStatus | null>>({});
-  // Track which accounts have a login/logout action in progress
-  const [actionInProgress, setActionInProgress] = useState<Record<number, 'login' | 'logout' | null>>({});
+  const [restarting, setRestarting] = useState(false);
 
-  // Load settings instantly, then kick off async login status check
   useEffect(() => {
     api.fetchSettings().then(setSettings).catch(console.error);
 
-    // Mark both accounts as "checking"
     setLoginStatuses({ 1: null, 2: null });
     api.fetchLoginStatus()
-      .then((resp) => {
-        setLoginStatuses(resp.loginStatuses);
-      })
-      .catch(() => {
-        // If status check fails, show unknown state
-        setLoginStatuses({});
-      });
+      .then((resp) => setLoginStatuses(resp.loginStatuses))
+      .catch(() => setLoginStatuses({}));
   }, []);
 
-  const handleSwitch = async (accountId: 1 | 2) => {
-    if (!settings || settings.activeAccount === accountId || switching) return;
+  // Single-click toggle: switch to the other account
+  const handleToggle = async () => {
+    if (!settings || switching) return;
+    const target: 1 | 2 = settings.activeAccount === 1 ? 2 : 1;
     setSwitching(true);
     try {
-      const updated = await api.setAccount(accountId);
+      const updated = await api.setAccount(target);
       setSettings(updated);
     } catch (err) {
       console.error('Failed to switch account:', err);
@@ -43,45 +36,18 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
     }
   };
 
-  const handleLogin = async (accountId: 1 | 2) => {
-    setActionInProgress((prev) => ({ ...prev, [accountId]: 'login' }));
+  const handleRestart = async () => {
+    setRestarting(true);
     try {
-      const result = await api.loginClaudeAccount(accountId);
-      setLoginStatuses((prev) => ({ ...prev, [accountId]: result.loginStatus }));
-    } catch (err) {
-      console.error(`Login failed for account ${accountId}:`, err);
-    } finally {
-      setActionInProgress((prev) => ({ ...prev, [accountId]: null }));
-    }
-  };
-
-  const handleLogout = async (accountId: 1 | 2) => {
-    setActionInProgress((prev) => ({ ...prev, [accountId]: 'logout' }));
-    try {
-      const result = await api.logoutClaudeAccount(accountId);
-      setLoginStatuses((prev) => ({ ...prev, [accountId]: result.loginStatus }));
-    } catch (err) {
-      console.error(`Logout failed for account ${accountId}:`, err);
-    } finally {
-      setActionInProgress((prev) => ({ ...prev, [accountId]: null }));
-    }
-  };
-
-  const refreshStatus = async () => {
-    setLoginStatuses({ 1: null, 2: null });
-    try {
-      const resp = await api.fetchLoginStatus();
-      setLoginStatuses(resp.loginStatuses);
+      await api.restartApp();
     } catch {
-      setLoginStatuses({});
+      // Server is shutting down — connection error is expected
     }
   };
 
-  // Build login command hint for accounts that aren't logged in
-  const notLoggedInAccounts = settings?.accounts.filter((acct) => {
-    const status = loginStatuses[acct.id];
-    return status && !status.loggedIn;
-  }) ?? [];
+
+  const activeStatus = settings ? loginStatuses[settings.activeAccount] : undefined;
+  const isChecking = activeStatus === null;
 
   return (
     <>
@@ -93,108 +59,70 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
         </div>
 
         <div style={styles.section}>
-          <div style={styles.sectionLabelRow}>
-            <span style={styles.sectionLabel}>Claude Account</span>
-            <button onClick={refreshStatus} style={styles.refreshBtn} title="Refresh login status">↻</button>
-          </div>
+          <span style={styles.sectionLabel}>Claude Account</span>
 
           {settings ? (
-            <div style={styles.accountList}>
-              {settings.accounts.map((acct) => {
-                const isActive = acct.id === settings.activeAccount;
-                const status = loginStatuses[acct.id];
-                const isChecking = status === null && acct.id in loginStatuses;
-                const action = actionInProgress[acct.id];
-
-                return (
-                  <div
-                    key={acct.id}
+            <>
+              {/* Toggle switch */}
+              <button
+                onClick={handleToggle}
+                disabled={switching}
+                style={styles.toggle}
+              >
+                <div style={styles.toggleTrack}>
+                  <span
                     style={{
-                      ...styles.accountCard,
-                      ...(isActive ? styles.accountCardActive : styles.accountCardInactive),
+                      ...styles.toggleOption,
+                      ...(settings.activeAccount === 1 ? styles.toggleOptionActive : {}),
                     }}
                   >
-                    <button
-                      onClick={() => handleSwitch(acct.id)}
-                      disabled={switching}
-                      style={styles.accountBtn}
-                    >
-                      <div style={styles.accountBtnInner}>
-                        <div style={styles.accountNameRow}>
-                          <span style={styles.accountName}>{acct.name}</span>
-                          {/* Status pill */}
-                          {isChecking ? (
-                            <span style={styles.statusPillChecking}>Checking…</span>
-                          ) : status?.loggedIn ? (
-                            <span style={styles.statusPillLoggedIn}>Logged in</span>
-                          ) : status && !status.loggedIn ? (
-                            <span style={styles.statusPillNotLoggedIn}>Not logged in</span>
-                          ) : null}
-                        </div>
-                        <span style={styles.accountDir}>{acct.configDir}</span>
-                        {/* Email + subscription when logged in */}
-                        {status?.loggedIn && status.email && (
-                          <span style={styles.accountEmail}>
-                            {status.email}
-                            {status.subscriptionType ? ` · ${status.subscriptionType}` : ''}
-                          </span>
-                        )}
-                      </div>
-                      <div style={styles.accountActions}>
-                        {isActive && <span style={styles.activePill}>Active</span>}
-                      </div>
-                    </button>
-                    {/* Login / Logout action buttons */}
-                    <div style={styles.actionRow}>
-                      {status?.loggedIn ? (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleLogout(acct.id); }}
-                          disabled={!!action}
-                          style={styles.logoutBtn}
-                        >
-                          {action === 'logout' ? 'Logging out…' : 'Log out'}
-                        </button>
-                      ) : status && !status.loggedIn ? (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleLogin(acct.id); }}
-                          disabled={!!action}
-                          style={styles.loginBtn}
-                        >
-                          {action === 'login' ? 'Logging in…' : 'Log in'}
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+                    {settings.accounts[0]?.name || 'Account 1'}
+                  </span>
+                  <span
+                    style={{
+                      ...styles.toggleOption,
+                      ...(settings.activeAccount === 2 ? styles.toggleOptionActive : {}),
+                    }}
+                  >
+                    {settings.accounts[1]?.name || 'Account 2'}
+                  </span>
+                </div>
+              </button>
+
+              {/* Active account info */}
+              <div style={styles.statusRow}>
+                {isChecking ? (
+                  <span style={styles.statusText}>Checking…</span>
+                ) : activeStatus?.loggedIn ? (
+                  <span style={styles.statusTextOk}>
+                    {activeStatus.email}
+                    {activeStatus.subscriptionType ? ` · ${activeStatus.subscriptionType}` : ''}
+                  </span>
+                ) : activeStatus && !activeStatus.loggedIn ? (
+                  <span style={styles.statusTextErr}>Not logged in</span>
+                ) : null}
+              </div>
+            </>
           ) : (
             <div style={styles.loading}>Loading…</div>
           )}
         </div>
 
         <div style={styles.note}>
-          Switching accounts affects new messages only. Existing sessions continue with their original account.
+          Switching accounts affects new messages only.
         </div>
 
-        {notLoggedInAccounts.length > 0 && (
-          <div style={styles.hint}>
-            Or log in via terminal:
-            {notLoggedInAccounts.map((acct) => {
-              // Account 1 uses default config dir (~/.claude), no env var needed
-              const isDefault = acct.configDir === '~/.claude';
-              const cmd = isDefault
-                ? 'claude login'
-                : `CLAUDE_CONFIG_DIR=${acct.configDir} claude login`;
-              return (
-                <div key={acct.id} style={styles.hintItem}>
-                  <span style={styles.hintLabel}>{acct.name}:</span>
-                  <code style={styles.code}>{cmd}</code>
-                </div>
-              );
-            })}
-          </div>
-        )}
+        {/* Restart button — always visible for quick access */}
+        <button
+          onClick={handleRestart}
+          disabled={restarting}
+          style={styles.restartBtn}
+        >
+          {restarting ? 'Restarting…' : 'Restart App'}
+        </button>
+        <div style={styles.restartHint}>
+          Restart to apply login/logout changes from terminal.
+        </div>
       </div>
     </>
   );
@@ -218,7 +146,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 'var(--radius-md)',
     padding: '20px',
     boxShadow: '0 20px 60px rgba(0, 0, 0, 0.6)',
-    width: 380,
+    width: 340,
     maxWidth: '90vw',
   },
   header: {
@@ -245,150 +173,61 @@ const styles: Record<string, React.CSSProperties> = {
   section: {
     marginBottom: 12,
   },
-  sectionLabelRow: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
   sectionLabel: {
     fontSize: 11,
     fontWeight: 600,
     color: 'var(--text-secondary)',
     textTransform: 'uppercase',
     letterSpacing: '0.08em',
+    display: 'block',
+    marginBottom: 8,
   },
-  refreshBtn: {
-    background: 'none',
-    border: 'none',
-    color: 'var(--text-secondary)',
-    cursor: 'pointer',
-    fontSize: 14,
-    padding: '0 4px',
-    borderRadius: 4,
-  },
-  accountList: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 6,
-  },
-  accountCard: {
-    borderRadius: 'var(--radius-sm)',
-    border: '1px solid',
-    overflow: 'hidden',
-  },
-  accountCardActive: {
-    background: 'rgba(26, 122, 60, 0.15)',
-    borderColor: 'rgba(74, 186, 106, 0.4)',
-  },
-  accountCardInactive: {
-    background: 'rgba(255, 255, 255, 0.04)',
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-  },
-  accountBtn: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+  // Toggle switch (segmented control)
+  toggle: {
+    display: 'block',
     width: '100%',
-    padding: '10px 12px',
+    padding: 0,
     border: 'none',
     background: 'transparent',
     cursor: 'pointer',
-    textAlign: 'left',
   },
-  accountBtnInner: {
+  toggleTrack: {
     display: 'flex',
-    flexDirection: 'column',
+    background: 'rgba(255, 255, 255, 0.06)',
+    borderRadius: 8,
+    padding: 3,
     gap: 2,
+  },
+  toggleOption: {
     flex: 1,
-  },
-  accountNameRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-  },
-  accountName: {
+    textAlign: 'center',
     fontSize: 13,
     fontWeight: 600,
-    color: 'var(--text-primary)',
+    color: 'var(--text-secondary)',
+    padding: '8px 0',
+    borderRadius: 6,
+    transition: 'all 0.15s ease',
   },
-  accountDir: {
+  toggleOptionActive: {
+    background: 'rgba(74, 186, 106, 0.2)',
+    color: '#4aba6a',
+    boxShadow: '0 1px 3px rgba(0, 0, 0, 0.2)',
+  },
+  statusRow: {
+    marginTop: 8,
+    minHeight: 18,
+  },
+  statusText: {
     fontSize: 11,
     color: 'var(--text-secondary)',
-    fontFamily: 'monospace',
   },
-  accountEmail: {
+  statusTextOk: {
     fontSize: 11,
-    color: 'var(--text-secondary)',
-    marginTop: 2,
-  },
-  accountActions: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 6,
-  },
-  activePill: {
-    fontSize: 10,
-    fontWeight: 700,
     color: '#4aba6a',
-    background: 'rgba(74, 186, 106, 0.15)',
-    borderRadius: 10,
-    padding: '2px 8px',
-    whiteSpace: 'nowrap',
   },
-  // Status pills
-  statusPillChecking: {
-    fontSize: 10,
-    fontWeight: 600,
-    color: '#999',
-    background: 'rgba(255, 255, 255, 0.08)',
-    borderRadius: 10,
-    padding: '2px 8px',
-    whiteSpace: 'nowrap',
-  },
-  statusPillLoggedIn: {
-    fontSize: 10,
-    fontWeight: 600,
-    color: '#4aba6a',
-    background: 'rgba(74, 186, 106, 0.12)',
-    borderRadius: 10,
-    padding: '2px 8px',
-    whiteSpace: 'nowrap',
-  },
-  statusPillNotLoggedIn: {
-    fontSize: 10,
-    fontWeight: 600,
+  statusTextErr: {
+    fontSize: 11,
     color: '#ef6461',
-    background: 'rgba(239, 100, 97, 0.12)',
-    borderRadius: 10,
-    padding: '2px 8px',
-    whiteSpace: 'nowrap',
-  },
-  // Action row (login/logout buttons)
-  actionRow: {
-    display: 'flex',
-    justifyContent: 'flex-end',
-    padding: '0 12px 8px',
-  },
-  loginBtn: {
-    fontSize: 11,
-    fontWeight: 600,
-    color: '#4aba6a',
-    background: 'rgba(74, 186, 106, 0.12)',
-    border: '1px solid rgba(74, 186, 106, 0.3)',
-    borderRadius: 4,
-    padding: '3px 10px',
-    cursor: 'pointer',
-  },
-  logoutBtn: {
-    fontSize: 11,
-    fontWeight: 600,
-    color: '#ef6461',
-    background: 'rgba(239, 100, 97, 0.08)',
-    border: '1px solid rgba(239, 100, 97, 0.2)',
-    borderRadius: 4,
-    padding: '3px 10px',
-    cursor: 'pointer',
   },
   loading: {
     fontSize: 13,
@@ -399,37 +238,27 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 11,
     color: 'var(--text-secondary)',
     lineHeight: 1.5,
-    marginBottom: 8,
+    marginBottom: 16,
     fontStyle: 'italic',
   },
-  hint: {
-    fontSize: 11,
-    color: 'var(--text-secondary)',
-    lineHeight: 1.5,
-    borderTop: '1px solid rgba(255, 255, 255, 0.06)',
-    paddingTop: 12,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 6,
-  },
-  hintItem: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 3,
-  },
-  hintLabel: {
-    fontSize: 11,
-    color: 'var(--text-secondary)',
-    fontWeight: 600,
-  },
-  code: {
+  restartBtn: {
     display: 'block',
-    background: 'rgba(0,0,0,0.3)',
-    borderRadius: 4,
-    padding: '6px 8px',
-    fontFamily: 'monospace',
+    width: '100%',
+    padding: '9px 0',
+    fontSize: 13,
+    fontWeight: 600,
+    color: 'var(--text-primary)',
+    background: 'rgba(255, 255, 255, 0.08)',
+    border: '1px solid rgba(255, 255, 255, 0.12)',
+    borderRadius: 6,
+    cursor: 'pointer',
+    textAlign: 'center',
+  },
+  restartHint: {
     fontSize: 10,
-    color: '#4aba6a',
-    wordBreak: 'break-all',
+    color: 'var(--text-secondary)',
+    textAlign: 'center',
+    marginTop: 6,
+    opacity: 0.7,
   },
 };
