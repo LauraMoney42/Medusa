@@ -1,3 +1,16 @@
+## 2026-02-22 20:15
+- P0 bot visibility fix: startup announce + heartbeat + stale detection
+- Server now posts "bots online" System message to Hub on every restart
+- Heartbeat tracking: records last activity per bot, flags stale bots (10min silence) in Hub
+- Files modified: server/src/index.ts, server/src/hub/poll-scheduler.ts
+
+## 2026-02-22 20:00
+- TC-7: Added comprehensive unit tests for CLI token compressor (139 tests across 6 files)
+- Added vitest test framework with config to exclude dist/
+- Full coverage: whitespace, dedup, boilerplate strategies + engine integration + config loader + security content protection
+- Files created: server/src/compressor/__tests__/*.test.ts, server/vitest.config.ts
+- Files modified: server/package.json
+
 ## 2026-02-21 12:00
 - Simplified Settings modal: replaced complex account cards with a single toggle button to switch between Account 1 and Account 2
 - Removed per-account login/logout buttons, status pills, refresh button, and terminal command hints
