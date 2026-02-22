@@ -45,8 +45,10 @@ router.post(
       return;
     }
 
-    const filePath = path.resolve(req.file.path);
-    res.json({ filePath });
+    // Return a URL path the browser can fetch, not a filesystem path.
+    // The server serves /uploads/* as a static route in index.ts.
+    const urlPath = `/uploads/${req.file.filename}`;
+    res.json({ filePath: urlPath });
   }
 );
 

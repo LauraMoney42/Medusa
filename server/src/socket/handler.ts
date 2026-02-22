@@ -6,20 +6,25 @@ import { v4 as uuidv4 } from "uuid";
 import config from "../config.js";
 
 // P2-9: Validate that every image path is within the uploads directory.
-// Rejects any path that escapes via traversal (../../etc/passwd) or points
-// to an arbitrary location on disk. Filters silently — invalid paths are
-// dropped rather than aborting the whole message.
+// Accepts URL paths (/uploads/filename) and converts them to filesystem paths
+// before validation. path.basename() strips any traversal attempts before join.
+// Rejects anything that resolves outside uploadsDir. Filters silently.
 function sanitizeImagePaths(images: string[] | undefined): string[] {
   if (!images || images.length === 0) return [];
   const uploadsDir = path.resolve(config.uploadsDir);
-  return images.filter((img) => {
-    if (typeof img !== "string" || !img.trim()) return false;
-    const resolved = path.resolve(img);
+  return images.flatMap((img) => {
+    if (typeof img !== "string" || !img.trim()) return [];
+    // Convert URL path (/uploads/filename.png) → filesystem path.
+    // path.basename() neutralises any traversal before we join.
+    const fsPath = img.startsWith("/uploads/")
+      ? path.join(uploadsDir, path.basename(img))
+      : img;
+    const resolved = path.resolve(fsPath);
     if (!resolved.startsWith(uploadsDir + path.sep) && resolved !== uploadsDir) {
       console.warn(`[handler] Rejected image path outside uploads dir: ${img}`);
-      return false;
+      return [];
     }
-    return true;
+    return [resolved];
   });
 }
 

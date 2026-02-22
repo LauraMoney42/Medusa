@@ -235,6 +235,10 @@ async function gracefulShutdown(signal: string) {
   process.exit(0);
 }
 
+// Serve uploaded images. authMiddleware (applied globally above) protects this.
+// Must come before express.static(publicDir) so /uploads/* isn't shadowed.
+app.use("/uploads", express.static(config.uploadsDir));
+
 // In production, serve the built client as static files
 const publicDir = path.resolve(__dirname, "public");
 app.use(express.static(publicDir));
