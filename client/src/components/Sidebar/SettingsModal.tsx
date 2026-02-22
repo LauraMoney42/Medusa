@@ -21,14 +21,20 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
       .catch(() => setLoginStatuses({}));
   }, []);
 
-  // Single-click toggle: switch to the other account
+  // Toggle: switch account, log out the old one, and restart the server
   const handleToggle = async () => {
     if (!settings || switching) return;
-    const target: 1 | 2 = settings.activeAccount === 1 ? 2 : 1;
+    const previous: 1 | 2 = settings.activeAccount;
+    const target: 1 | 2 = previous === 1 ? 2 : 1;
     setSwitching(true);
     try {
+      // Switch to the new account
       const updated = await api.setAccount(target);
       setSettings(updated);
+      // Log out the account we just toggled off
+      await api.logoutClaudeAccount(previous).catch(() => {});
+      // Restart the server so everything picks up the new account cleanly
+      await api.restartApp().catch(() => {});
     } catch (err) {
       console.error('Failed to switch account:', err);
     } finally {
@@ -63,7 +69,7 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
 
           {settings ? (
             <>
-              {/* Toggle switch */}
+              {/* Toggle switch — shows email when logged in, fallback to account name */}
               <button
                 onClick={handleToggle}
                 disabled={switching}
@@ -75,16 +81,18 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
                       ...styles.toggleOption,
                       ...(settings.activeAccount === 1 ? styles.toggleOptionActive : {}),
                     }}
+                    title={loginStatuses[1]?.email || settings.accounts[0]?.name || 'Account 1'}
                   >
-                    {settings.accounts[0]?.name || 'Account 1'}
+                    {loginStatuses[1]?.email || settings.accounts[0]?.name || 'Account 1'}
                   </span>
                   <span
                     style={{
                       ...styles.toggleOption,
                       ...(settings.activeAccount === 2 ? styles.toggleOptionActive : {}),
                     }}
+                    title={loginStatuses[2]?.email || settings.accounts[1]?.name || 'Account 2'}
                   >
-                    {settings.accounts[1]?.name || 'Account 2'}
+                    {loginStatuses[2]?.email || settings.accounts[1]?.name || 'Account 2'}
                   </span>
                 </div>
               </button>
@@ -109,7 +117,7 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
         </div>
 
         <div style={styles.note}>
-          Switching accounts affects new messages only.
+          Toggling accounts logs out the current account and restarts the server.
         </div>
 
         {/* Restart button — always visible for quick access */}
@@ -201,12 +209,15 @@ const styles: Record<string, React.CSSProperties> = {
   toggleOption: {
     flex: 1,
     textAlign: 'center',
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: 600,
     color: 'var(--text-secondary)',
-    padding: '8px 0',
+    padding: '8px 4px',
     borderRadius: 6,
     transition: 'all 0.15s ease',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
   },
   toggleOptionActive: {
     background: 'rgba(74, 186, 106, 0.2)',

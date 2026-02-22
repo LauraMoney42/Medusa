@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import { z } from "zod";
+import type { Server as IOServer } from "socket.io";
 import {
   getActiveAccount,
   setActiveAccount,
@@ -11,6 +12,7 @@ import {
   logoutAccount,
   getConfigDirForAccount,
 } from "../settings/store.js";
+import type { ProcessManager } from "../claude/process-manager.js";
 
 // Schema for PATCH /api/settings body — partial update, both fields optional
 const PatchSettingsSchema = z.object({
@@ -19,7 +21,7 @@ const PatchSettingsSchema = z.object({
   llmApiKey: z.string().min(10, "API key must be at least 10 characters").optional(),
 });
 
-export function createSettingsRouter(): Router {
+export function createSettingsRouter(processManager: ProcessManager, io: IOServer): Router {
   const router = Router();
 
   // GET /api/settings — returns current settings with masked API key
@@ -55,12 +57,39 @@ export function createSettingsRouter(): Router {
     }
   });
 
-  // POST /api/settings/account — switch active Claude account (preserved for compat)
+  // POST /api/settings/account — switch active Claude account.
+  // Kills all active Claude CLI sessions before switching so the old account's
+  // processes don't continue running and producing "out of usage" errors.
   router.post("/account", (req: Request, res: Response) => {
     const { account } = req.body as { account: unknown };
     if (account !== 1 && account !== 2) {
       return res.status(400).json({ error: "account must be 1 or 2" });
     }
+
+    const previousAccount = getActiveAccount();
+    if (account === previousAccount) {
+      return res.json(buildSettingsResponse());
+    }
+
+    // Kill all active Claude sessions before switching — they're using the old
+    // account's CLAUDE_CONFIG_DIR. New messages will spawn with the new config.
+    const busySessions = processManager.getBusySessions();
+    if (busySessions.length > 0) {
+      console.log(
+        `[settings] Switching account ${previousAccount} → ${account}: ` +
+        `aborting ${busySessions.length} active session(s)`
+      );
+      for (const sessionId of busySessions) {
+        processManager.abort(sessionId);
+      }
+      // Notify connected clients so UI can show the sessions were stopped
+      io.emit("account:switched", {
+        from: previousAccount,
+        to: account,
+        abortedSessions: busySessions,
+      });
+    }
+
     setActiveAccount(account);
     return res.json(buildSettingsResponse());
   });

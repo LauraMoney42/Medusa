@@ -29,6 +29,7 @@ export interface Config {
   skillsCacheDir: string;
   hubFile: string;
   projectsFile: string;
+  quickTasksFile: string;
   /** Path to persist interrupted session state for auto-resume on next startup */
   interruptedSessionsFile: string;
   /** Enable background Hub polling for idle bots (default: false) */
@@ -51,6 +52,10 @@ export interface Config {
   compressionLevel: "conservative" | "moderate" | "aggressive";
   /** Emit compression audit log to console (default: false) */
   compressionAudit: boolean;
+  /** Path to compressor config file with exclusion patterns + safety limits (default: ~/.claude-chat/compressor.json) */
+  compressorConfigFile: string;
+  /** Path to token usage log file (JSONL format, default: ~/.claude-chat/token-usage.jsonl) */
+  tokenUsageLogFile: string;
   /** Display name for account 1 */
   account1Name: string;
   /** CLAUDE_CONFIG_DIR path for account 1 (default: ~/.claude) */
@@ -89,6 +94,11 @@ const config: Config = {
     ".claude-chat",
     "projects.json"
   ),
+  quickTasksFile: path.join(
+    process.env.HOME || process.env.USERPROFILE || "~",
+    ".claude-chat",
+    "quick-tasks.json"
+  ),
   interruptedSessionsFile: path.join(
     process.env.HOME || process.env.USERPROFILE || "~",
     ".claude-chat",
@@ -104,6 +114,16 @@ const config: Config = {
   compressionEnabled: process.env.COMPRESSION_ENABLED !== "false",
   compressionLevel: (process.env.COMPRESSION_LEVEL || "moderate") as "conservative" | "moderate" | "aggressive",
   compressionAudit: process.env.COMPRESSION_AUDIT === "true",
+  compressorConfigFile: process.env.COMPRESSOR_CONFIG_FILE || path.join(
+    process.env.HOME || process.env.USERPROFILE || "~",
+    ".claude-chat",
+    "compressor.json"
+  ),
+  tokenUsageLogFile: process.env.TOKEN_USAGE_LOG_FILE || path.join(
+    process.env.HOME || process.env.USERPROFILE || "~",
+    ".claude-chat",
+    "token-usage.jsonl"
+  ),
   account1Name: process.env.ACCOUNT_1_NAME || "Account 1",
   account1ConfigDir: process.env.ACCOUNT_1_CONFIG_DIR || "~/.claude",
   account2Name: process.env.ACCOUNT_2_NAME || "Account 2",
