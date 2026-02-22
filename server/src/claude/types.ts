@@ -147,6 +147,8 @@ export interface ParsedResult {
   error?: string;
   totalCostUsd?: number;
   durationMs?: number;
+  durationApiMs?: number;
+  numTurns?: number;
   sessionId: string;
 }
 

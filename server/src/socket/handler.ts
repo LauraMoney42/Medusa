@@ -5,6 +5,7 @@ import path from "path";
 import { v4 as uuidv4 } from "uuid";
 import config from "../config.js";
 import { compress } from "../compressor/engine.js";
+import { loadCompressorConfig } from "../compressor/config.js";
 
 // P2-9: Validate that every image path is within the uploads directory.
 // Accepts URL paths (/uploads/filename) and converts them to filesystem paths
@@ -79,9 +80,11 @@ import { ChatStore } from "../chat/store.js";
 import { HubStore } from "../hub/store.js";
 import { MentionRouter } from "../hub/mention-router.js";
 import type { ParsedEvent } from "../claude/types.js";
+import type { TokenLogger } from "../metrics/token-logger.js";
 import { selectModel, NEXT_TIER, type ModelTier } from "../claude/model-router.js";
 import { summarizeConversation } from "../chat/conversation-summarizer.js";
 import { processHubPosts } from "../hub/post-processor.js";
+import { summarizingSessionIds } from "../chat/summarization-guard.js";
 
 // ---- Hub Post Detection ----
 
@@ -233,14 +236,32 @@ export function buildHubPromptSection(
   sessionStore: SessionStore,
   forSessionId?: string,
   forSessionName?: string,
-  compactMode = false
+  compactMode = false,
+  /** TC-5: Last message ID the bot already saw. Enables delta mode — only new messages
+   *  are included as full context, with a summary anchor for previously seen messages. */
+  sinceMessageId?: string
 ): string {
   // Compact mode: fewer messages to reduce input tokens
   const messageLimit = compactMode ? 5 : 20;
-  // If session context provided, filter to only relevant messages
-  const recentMessages = forSessionId && forSessionName
-    ? hubStore.getRecentForSession(messageLimit, forSessionId, forSessionName)
-    : hubStore.getRecent(messageLimit);
+
+  // TC-5: Use delta-based message fetching when sinceMessageId is provided
+  let recentMessages: ReturnType<typeof hubStore.getRecent>;
+  let deltaAnchor = "";
+
+  if (sinceMessageId && forSessionId && forSessionName) {
+    const delta = hubStore.getRecentForSessionDelta(
+      messageLimit, forSessionId, forSessionName, sinceMessageId
+    );
+    recentMessages = delta.newMessages;
+    if (delta.previousCount > 0) {
+      deltaAnchor = `\n[Context: ${delta.previousCount} previous message(s) already reviewed. ${recentMessages.length} new message(s) below.]`;
+    }
+  } else if (forSessionId && forSessionName) {
+    recentMessages = hubStore.getRecentForSession(messageLimit, forSessionId, forSessionName);
+  } else {
+    recentMessages = hubStore.getRecent(messageLimit);
+  }
+
   const allSessions = sessionStore.loadAll();
   const botNames = allSessions.map((s) => s.name).join(", ");
 
@@ -254,6 +275,8 @@ Post via [HUB-POST: ...]. Task completions: [TASK-DONE: description].
 Escalate: [HUB-POST: @You 🚨🚨🚨 APPROVAL NEEDED: <what>]
 For internal bot-to-bot coordination only, use [BOT-TASK: @BotName message] — NOT [HUB-POST: ...]. Routes directly, invisible to user.
 Active bots: ${botNames || "none"}`;
+
+    if (deltaAnchor) section += deltaAnchor;
 
     if (recentMessages.length > 0) {
       section += "\n";
@@ -300,6 +323,8 @@ IMPORTANT — Bot-to-Bot Coordination:
 
 Active bots: ${botNames || "none"}`;
 
+  if (deltaAnchor) section += deltaAnchor;
+
   if (recentMessages.length > 0) {
     section += "\n";
     for (const msg of recentMessages) {
@@ -314,7 +339,9 @@ Active bots: ${botNames || "none"}`;
   if (config.compressionEnabled) {
     const level = config.compressionLevel;
     const audit = config.compressionAudit;
-    const result = compress(section, level, { audit });
+    // TC-2: Load compressor config for exclusion patterns + safety limits
+    const compressorConfig = loadCompressorConfig(config.compressorConfigFile);
+    const result = compress(section, level, { audit }, compressorConfig);
 
     if (audit && result.audit) {
       console.log(
@@ -344,7 +371,9 @@ export function setupSocketHandler(
   skillCatalog: SkillCatalog,
   chatStore: ChatStore,
   hubStore: HubStore,
-  mentionRouter: MentionRouter
+  mentionRouter: MentionRouter,
+  tokenLogger?: TokenLogger,
+  quickTaskStore?: import("../projects/quick-task-store.js").QuickTaskStore
 ): void {
   // ---- Auth middleware (rate-limited + constant-time comparison) ----
   io.use((socket, next) => {
@@ -493,7 +522,7 @@ export function setupSocketHandler(
 
         // Helper: process extracted hub posts via shared post-processor
         const handleHubPosts = (posts: string[]) =>
-          processHubPosts(posts, { from: meta.name, sessionId, hubStore, mentionRouter, io });
+          processHubPosts(posts, { from: meta.name, sessionId, hubStore, mentionRouter, io, quickTaskStore });
 
         // Helper: route [BOT-TASK: ...] tokens directly to target bots (no Hub write)
         const handleBotTasks = (tasks: string[]) => {
@@ -598,6 +627,21 @@ export function setupSocketHandler(
                 messageId: assistantMsgId,
                 cost: event.totalCostUsd,
                 durationMs: event.durationMs,
+              });
+
+              // TC-2B: Log token usage metrics
+              tokenLogger?.log({
+                timestamp: new Date().toISOString(),
+                sessionId,
+                botName: meta.name,
+                claudeSessionId: event.sessionId,
+                messageId: assistantMsgId,
+                source: "user",
+                costUsd: event.totalCostUsd ?? 0,
+                durationMs: event.durationMs ?? 0,
+                durationApiMs: event.durationApiMs,
+                numTurns: event.numTurns,
+                success: event.success,
               });
               break;
             }
@@ -720,17 +764,23 @@ export function setupSocketHandler(
         });
 
         // Check if conversation needs summarization
-        if (config.summarizationEnabled) {
+        if (config.summarizationEnabled && !summarizingSessionIds.has(sessionId)) {
           const allMessages = chatStore.loadMessages(sessionId);
           if (allMessages.length >= config.summarizationThreshold) {
             console.log(
               `[summarization] Session ${sessionId} has ${allMessages.length} messages, triggering summarization`
             );
+            // Mark in-flight to prevent concurrent re-triggers
+            summarizingSessionIds.add(sessionId);
             // Async summarization — don't block the response
-            summarizeConversation(allMessages)
-              .then((summary) => {
+            summarizeConversation(allMessages, {
+              sessionId,
+              botName: meta.name,
+              tokenLogger,
+            })
+              .then((result) => {
                 // Save summary
-                chatStore.saveSummary(sessionId, summary);
+                chatStore.saveSummary(sessionId, result.summary);
                 // Keep only the most recent N messages (e.g., last 5)
                 const keepCount = 5;
                 const trimmed = allMessages.slice(-keepCount);
@@ -749,6 +799,9 @@ export function setupSocketHandler(
                   `[summarization] Failed for session ${sessionId}:`,
                   err
                 );
+              })
+              .finally(() => {
+                summarizingSessionIds.delete(sessionId);
               });
           }
         }
@@ -842,7 +895,7 @@ export function setupSocketHandler(
 
         // sessionId is optional — user posts from the Hub input may not have an active session.
         const meta = sessionId ? store.get(sessionId) : null;
-        const resolvedFrom = from || meta?.name || "You";
+        const resolvedFrom = from || meta?.name || "User";
         const resolvedSessionId = sessionId || "user";
 
         const hubMsg = hubStore.add({

@@ -138,6 +138,8 @@ export class StreamParser {
             result: ev.result,
             totalCostUsd: ev.total_cost_usd,
             durationMs: ev.duration_ms,
+            durationApiMs: ev.duration_api_ms,
+            numTurns: ev.num_turns,
             sessionId: ev.session_id,
           };
         }

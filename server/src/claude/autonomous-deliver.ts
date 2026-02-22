@@ -12,10 +12,13 @@ import type { ChatStore } from "../chat/store.js";
 import type { HubStore } from "../hub/store.js";
 import type { MentionRouter } from "../hub/mention-router.js";
 import type { ParsedEvent } from "./types.js";
+import type { TokenLogger } from "../metrics/token-logger.js";
 import { HubPostDetector, buildHubPromptSection } from "../socket/handler.js";
+import { getCompactPrompt } from "../sessions/compact-prompts.js";
 import { selectModel, NEXT_TIER, type ModelTier } from "./model-router.js";
 import { processHubPosts } from "../hub/post-processor.js";
 import { summarizeConversation } from "../chat/conversation-summarizer.js";
+import { summarizingSessionIds } from "../chat/summarization-guard.js";
 import config from "../config.js";
 import { compress } from "../compressor/engine.js";
 
@@ -36,6 +39,12 @@ export interface AutonomousDeliverParams {
    * Built once per poll tick in `HubPollScheduler.tick()`, passed to all bots polled that tick.
    */
   hubSectionOverride?: string;
+  tokenLogger?: TokenLogger;
+  /** TC-5: Last hub message ID this bot already saw. Enables delta-based context —
+   *  only new messages since this ID are included, with an anchor for older ones. */
+  sinceMessageId?: string;
+  /** Enables [QUICK-TASK:] pattern detection in hub posts */
+  quickTaskStore?: import("../projects/quick-task-store.js").QuickTaskStore;
 }
 
 /**
@@ -56,6 +65,9 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
     mentionRouter,
     chainDepth = 0,
     hubSectionOverride,
+    tokenLogger,
+    sinceMessageId,
+    quickTaskStore,
   } = params;
 
   // Determine behavior based on source
@@ -127,6 +139,7 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
       mentionRouter,
       io,
       chainDepth: nextChainDepth,
+      quickTaskStore,
     });
   };
 
@@ -251,6 +264,21 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
           cost: event.totalCostUsd,
           durationMs: event.durationMs,
         });
+
+        // TC-2B: Log token usage for autonomous interactions
+        tokenLogger?.log({
+          timestamp: new Date().toISOString(),
+          sessionId,
+          botName: meta.name,
+          claudeSessionId: event.sessionId,
+          messageId: assistantMsgId,
+          source: source === "bot-to-bot" ? "mention" : source,
+          costUsd: event.totalCostUsd ?? 0,
+          durationMs: event.durationMs ?? 0,
+          durationApiMs: event.durationApiMs,
+          numTurns: event.numTurns,
+          success: event.success,
+        });
         break;
       }
 
@@ -269,9 +297,16 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
   // otherwise build it fresh with per-session message filtering.
   const hubSection = hubSectionOverride !== undefined
     ? hubSectionOverride
-    : buildHubPromptSection(hubStore, sessionStore, sessionId, meta.name, compactMode);
+    : buildHubPromptSection(hubStore, sessionStore, sessionId, meta.name, compactMode, sinceMessageId);
 
-  let finalSystemPrompt = (meta.systemPrompt || "") + hubSection;
+  // TC-4B: Use compact system prompt for routine ops (polls, nudges, acks, bot-to-bot).
+  // Saves ~50% tokens on the system prompt portion — full role description not needed
+  // for simple Hub checks and acknowledgments.
+  const basePrompt = compactMode
+    ? getCompactPrompt(meta)
+    : (meta.systemPrompt || "");
+
+  let finalSystemPrompt = basePrompt + hubSection;
 
   // Inject conversation summary if available (TO4: conversation summarization)
   const conversationSummary = chatStore.loadSummary(sessionId);
@@ -400,17 +435,23 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
     }
 
     // Check if conversation needs summarization (async, don't block response)
-    if (config.summarizationEnabled && source !== "resume") {
+    if (config.summarizationEnabled && source !== "resume" && !summarizingSessionIds.has(sessionId)) {
       const allMessages = chatStore.loadMessages(sessionId);
       if (allMessages.length >= config.summarizationThreshold) {
         console.log(
           `[autonomous-deliver] Session ${sessionId} has ${allMessages.length} messages, triggering summarization`
         );
+        // Mark in-flight to prevent concurrent re-triggers
+        summarizingSessionIds.add(sessionId);
         // Async summarization — don't block the response
-        summarizeConversation(allMessages)
-          .then((summary) => {
+        summarizeConversation(allMessages, {
+          sessionId,
+          botName: meta.name,
+          tokenLogger,
+        })
+          .then((result) => {
             // Save summary
-            chatStore.saveSummary(sessionId, summary);
+            chatStore.saveSummary(sessionId, result.summary);
             // Keep only the most recent N messages (e.g., last 5)
             const keepCount = 5;
             const trimmed = allMessages.slice(-keepCount);
@@ -429,6 +470,9 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
               `[autonomous-deliver] Summarization failed for session ${sessionId}:`,
               err
             );
+          })
+          .finally(() => {
+            summarizingSessionIds.delete(sessionId);
           });
       }
     }

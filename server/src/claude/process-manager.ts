@@ -53,6 +53,22 @@ function findClaudeBinary(): string {
 
 const CLAUDE_BIN = findClaudeBinary();
 
+/**
+ * Detects Claude CLI usage/billing warnings on stderr.
+ * These are informational (e.g. "You're out of extra usage · resets 1pm")
+ * and should be logged, not forwarded as errors to the client.
+ */
+function isUsageWarning(text: string): boolean {
+  const lower = text.toLowerCase();
+  return (
+    lower.includes("out of extra usage") ||
+    lower.includes("out of usage") ||
+    lower.includes("usage resets") ||
+    lower.includes("rate limit") ||
+    (lower.includes("resets") && lower.includes("america/"))
+  );
+}
+
 export class ProcessManager {
   private sessions: Map<string, SessionEntry> = new Map();
 
@@ -178,12 +194,17 @@ export class ProcessManager {
       parser.feed(str);
     });
 
-    // Forward stderr lines as error events so the client knows something went wrong
+    // Forward stderr lines as error events so the client knows something went wrong.
+    // Filter out Claude CLI usage/billing warnings — they're informational, not errors,
+    // and pollute the response text when appended by the client's setError handler.
     child.stderr!.on("data", (chunk: Buffer) => {
       const errText = chunk.toString("utf-8").trim();
-      if (errText) {
-        onEvent({ kind: "error", message: errText });
+      if (!errText) return;
+      if (isUsageWarning(errText)) {
+        console.log(`[claude] Usage warning (session ${sessionId}): ${errText}`);
+        return;
       }
+      onEvent({ kind: "error", message: errText });
     });
 
     return new Promise<number | null>((resolve) => {
