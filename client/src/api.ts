@@ -2,7 +2,7 @@ import type { SessionMeta } from './types/session';
 import type { ChatMessage } from './types/message';
 import type { HubMessage } from './types/hub';
 import type { CompletedTask } from './types/task';
-import type { ProjectSummary, Project } from './types/project';
+import type { ProjectSummary, Project, QuickTask } from './types/project';
 
 // Auth is now handled via httpOnly cookie (set by /api/auth/login).
 // credentials: 'include' tells the browser to send that cookie automatically.
@@ -155,6 +155,36 @@ export function updateProject(
     method: 'PATCH',
     body: JSON.stringify(data),
   });
+}
+
+// ── Quick Tasks ──
+
+export function fetchQuickTasks(): Promise<QuickTask[]> {
+  return request<QuickTask[]>('/api/quick-tasks');
+}
+
+export function createQuickTask(data: {
+  title: string;
+  assignedTo: string;
+}): Promise<QuickTask> {
+  return request<QuickTask>('/api/quick-tasks', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export function updateQuickTask(
+  id: string,
+  data: Partial<Pick<QuickTask, 'title' | 'assignedTo' | 'status'>>,
+): Promise<QuickTask> {
+  return request<QuickTask>(`/api/quick-tasks/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteQuickTask(id: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/quick-tasks/${id}`, { method: 'DELETE' });
 }
 
 export function fetchSkills(): Promise<{ skills: SkillInfo[]; ready: boolean }> {

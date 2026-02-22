@@ -124,15 +124,16 @@ export function createSessionsRouter(
     res.json({ updated, skipped, sessions: results });
   });
 
-  // PATCH /:id -- update a session (name and/or systemPrompt)
+  // PATCH /:id -- update a session (name, systemPrompt, and/or compactSystemPrompt)
   router.patch("/:id", (req: Request, res: Response) => {
-    const { name, systemPrompt } = req.body as {
+    const { name, systemPrompt, compactSystemPrompt } = req.body as {
       name?: string;
       systemPrompt?: string;
+      compactSystemPrompt?: string;
     };
 
-    if (!name && systemPrompt === undefined) {
-      res.status(400).json({ error: "At least one of name or systemPrompt is required" });
+    if (!name && systemPrompt === undefined && compactSystemPrompt === undefined) {
+      res.status(400).json({ error: "At least one of name, systemPrompt, or compactSystemPrompt is required" });
       return;
     }
 
@@ -148,6 +149,10 @@ export function createSessionsRouter(
     }
     if (systemPrompt !== undefined) {
       session = store.updateSystemPrompt(id, systemPrompt) ?? session;
+    }
+    // TC-4B: Allow setting compact system prompt per session
+    if (compactSystemPrompt !== undefined) {
+      session = store.updateCompactSystemPrompt(id, compactSystemPrompt) ?? session;
     }
 
     res.json(session);

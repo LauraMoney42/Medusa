@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, type FormEvent } from 'react';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useProjectStore } from '../../stores/projectStore';
+import { useQuickTaskStore } from '../../stores/quickTaskStore';
 import { getSocket } from '../../socket';
 import SkillPicker from '../Chat/SkillPicker';
 
-type FormMode = 'none' | 'menu' | 'bot' | 'project';
+type FormMode = 'none' | 'menu' | 'bot' | 'project' | 'task';
 
 export default function NewSessionButton() {
   const [mode, setMode] = useState<FormMode>('none');
@@ -21,11 +22,16 @@ export default function NewSessionButton() {
   const [projSummary, setProjSummary] = useState('');
   const [projContent, setProjContent] = useState('');
 
+  // Quick Task form state
+  const [taskTitle, setTaskTitle] = useState('');
+  const [taskAssignee, setTaskAssignee] = useState('');
+
   const [error, setError] = useState('');
 
   const createSession = useSessionStore((s) => s.createSession);
   const setActiveSession = useSessionStore((s) => s.setActiveSession);
   const createProject = useProjectStore((s) => s.createProject);
+  const createTask = useQuickTaskStore((s) => s.createTask);
   const setActiveView = useSessionStore((s) => s.setActiveView);
 
   // Close dropdown on outside click
@@ -45,6 +51,8 @@ export default function NewSessionButton() {
     setProjTitle('');
     setProjSummary('');
     setProjContent('');
+    setTaskTitle('');
+    setTaskAssignee('');
     setError('');
   };
 
@@ -97,6 +105,50 @@ export default function NewSessionButton() {
       setError(err instanceof Error ? err.message : 'Failed to create project');
     }
   };
+
+  const handleTaskSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    const trimmed = taskTitle.trim();
+    if (!trimmed) return;
+
+    setError('');
+    try {
+      await createTask(trimmed, taskAssignee.trim());
+      setActiveView('project');
+      resetAll();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to create task');
+    }
+  };
+
+  // Quick Task creation form
+  if (mode === 'task') {
+    return (
+      <div style={styles.formWrapper}>
+        <div style={styles.formLabel}>Quick Task</div>
+        <form onSubmit={handleTaskSubmit} style={styles.form}>
+          <input
+            placeholder="What needs to be done?"
+            value={taskTitle}
+            onChange={(e) => setTaskTitle(e.target.value)}
+            style={styles.input}
+            autoFocus
+          />
+          <input
+            placeholder="Assign to (dev name)"
+            value={taskAssignee}
+            onChange={(e) => setTaskAssignee(e.target.value)}
+            style={styles.input}
+          />
+          {error && <div style={styles.error}>{error}</div>}
+          <div style={styles.formActions}>
+            <button type="submit" style={styles.createBtn}>Create</button>
+            <button type="button" onClick={resetAll} style={styles.cancelBtn}>Cancel</button>
+          </div>
+        </form>
+      </div>
+    );
+  }
 
   // Bot creation form
   if (mode === 'bot') {
@@ -244,6 +296,18 @@ export default function NewSessionButton() {
               <path d="M9 12h6M9 16h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
             </svg>
             <span>New Project</span>
+          </button>
+          <button
+            style={styles.dropdownItem}
+            onClick={() => setMode('task')}
+            onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={styles.icon}>
+              <path d="M9 11l3 3L22 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            <span>Quick Task</span>
           </button>
         </div>
       )}

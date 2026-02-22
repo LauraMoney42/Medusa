@@ -7,7 +7,7 @@ interface SessionState {
   activeSessionId: string | null;
   statuses: Record<string, 'idle' | 'busy'>;
   pendingTasks: Record<string, boolean>;
-  activeView: 'chat' | 'hub' | 'project';
+  activeView: 'hub' | 'project';
   isServerShuttingDown: boolean;
   shuttingDownSessions: { id: string; name: string }[];
 }
@@ -25,7 +25,7 @@ interface SessionActions {
   setSessionSkills: (id: string, skills: string[]) => void;
   setSessionWorkingDir: (id: string, workingDir: string) => void;
   setPendingTask: (id: string, hasPending: boolean) => void;
-  setActiveView: (view: 'chat' | 'hub' | 'project') => void;
+  setActiveView: (view: 'hub' | 'project') => void;
   setServerShuttingDown: (busySessions: { id: string; name: string }[]) => void;
 }
 
@@ -35,7 +35,13 @@ export const useSessionStore = create<SessionState & SessionActions>(
     activeSessionId: null,
     statuses: {},
     pendingTasks: {},
-    activeView: (localStorage.getItem('medusa_active_view') as 'chat' | 'hub' | 'project') ?? 'chat',
+    // Default to hub — individual bot chat removed per user directive
+    activeView: (() => {
+      const stored = localStorage.getItem('medusa_active_view');
+      // Migrate stale 'chat' value to 'hub' (individual bot chat removed)
+      if (stored === 'project') return 'project';
+      return 'hub';
+    })(),
     isServerShuttingDown: false,
     shuttingDownSessions: [],
 
@@ -81,10 +87,9 @@ export const useSessionStore = create<SessionState & SessionActions>(
     },
 
     // Passing null clears the selection without forcing a view change (e.g. when switching to Hub)
+    // Individual bot chat removed — selecting a session no longer switches to chat view
     setActiveSession: (id) =>
-      id === null
-        ? set({ activeSessionId: null })
-        : set({ activeSessionId: id, activeView: 'chat' }),
+      set({ activeSessionId: id }),
 
     setSessionStatus: (id, status) =>
       set((s) => ({ statuses: { ...s.statuses, [id]: status } })),

@@ -17,6 +17,9 @@ const SessionMetaSchema = z.object({
   lastActiveAt: z.string(),
   yoloMode: z.boolean().optional(),
   systemPrompt: z.string().optional(),
+  /** TC-4B: Compact system prompt for routine ops (polls, nudges, acks).
+   *  ~50% shorter than full systemPrompt. Auto-generated from role if not set. */
+  compactSystemPrompt: z.string().optional(),
   skills: z.array(z.string()).optional(),
 });
 
@@ -178,6 +181,15 @@ export class SessionStore {
     const session = this.sessions.find((s) => s.id === id);
     if (!session) return undefined;
     session.systemPrompt = systemPrompt || undefined;
+    this.persist();
+    return session;
+  }
+
+  /** Update compact system prompt for a session. */
+  updateCompactSystemPrompt(id: string, compactSystemPrompt: string): SessionMeta | undefined {
+    const session = this.sessions.find((s) => s.id === id);
+    if (!session) return undefined;
+    session.compactSystemPrompt = compactSystemPrompt || undefined;
     this.persist();
     return session;
   }

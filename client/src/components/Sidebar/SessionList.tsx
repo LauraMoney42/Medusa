@@ -66,13 +66,11 @@ const statusStyles: Record<string, React.CSSProperties> = {
 
 export default function SessionList() {
   const sessions = useSessionStore((s) => s.sessions);
-  const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const statuses = useSessionStore((s) => s.statuses);
   const pendingTasks = useSessionStore((s) => s.pendingTasks);
   const completedTasks = useTaskStore((s) => s.completedTasks);
   // DM5: Draft indicator — subscribe to drafts so dot updates reactively
   const drafts = useDraftStore((s) => s.drafts);
-  const setActiveSession = useSessionStore((s) => s.setActiveSession);
   const renameSession = useSessionStore((s) => s.renameSession);
   const deleteSession = useSessionStore((s) => s.deleteSession);
   const reorderSessions = useSessionStore((s) => s.reorderSessions);
@@ -191,7 +189,6 @@ export default function SessionList() {
       )}
 
       {sessions.map((session) => {
-        const isActive = session.id === activeSessionId;
         const status = statuses[session.id] ?? 'idle';
         const isDragOver = dragOverId === session.id && dragId !== session.id;
 
@@ -203,22 +200,18 @@ export default function SessionList() {
             onDragEnd={handleDragEnd}
             onDragOver={(e) => handleDragOver(e, session.id)}
             onDrop={(e) => handleDrop(e, session.id)}
-            onClick={() => setActiveSession(session.id)}
             onContextMenu={(e) => handleContextMenu(e, session.id)}
             style={{
               ...styles.item,
-              background: isActive ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
               borderTop: isDragOver ? '2px solid var(--accent)' : '2px solid transparent',
             }}
             onMouseEnter={(e) => {
-              if (!isActive)
-                (e.currentTarget as HTMLElement).style.background =
-                  'rgba(255,255,255,0.05)';
+              (e.currentTarget as HTMLElement).style.background =
+                'rgba(255,255,255,0.03)';
             }}
             onMouseLeave={(e) => {
-              if (!isActive)
-                (e.currentTarget as HTMLElement).style.background =
-                  'transparent';
+              (e.currentTarget as HTMLElement).style.background =
+                'transparent';
             }}
           >
             <StatusIcon
@@ -324,7 +317,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: 8,
     padding: '9px 14px',
-    cursor: 'grab',
+    cursor: 'default',
     borderRadius: 'var(--radius-sm)',
     margin: '0 10px',
     transition: 'background 0.1s',

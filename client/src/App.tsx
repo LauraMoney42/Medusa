@@ -7,7 +7,6 @@ import { useProjectStore } from './stores/projectStore';
 import { useImageDropStore } from './stores/imageDropStore';
 import LoginScreen from './components/Auth/LoginScreen';
 import Sidebar from './components/Sidebar/Sidebar';
-import ChatPane from './components/Chat/ChatPane';
 import HubFeed from './components/Hub/HubFeed';
 import ProjectPane from './components/Project/ProjectPane';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -160,17 +159,13 @@ function AuthenticatedApp() {
           open={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
         />
-        {activeView === 'hub' ? (
-          <ErrorBoundary>
-            <HubFeed onMenuToggle={() => setSidebarOpen((o) => !o)} />
-          </ErrorBoundary>
-        ) : activeView === 'project' ? (
+        {activeView === 'project' ? (
           <ErrorBoundary>
             <ProjectPane onMenuToggle={() => setSidebarOpen((o) => !o)} />
           </ErrorBoundary>
         ) : (
           <ErrorBoundary>
-            <ChatPane onMenuToggle={() => setSidebarOpen((o) => !o)} />
+            <HubFeed onMenuToggle={() => setSidebarOpen((o) => !o)} />
           </ErrorBoundary>
         )}
       </div>

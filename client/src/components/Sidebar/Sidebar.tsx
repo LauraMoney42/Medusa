@@ -24,7 +24,8 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
 
   const handleProjectsClick = () => {
     if (activeView === 'project') {
-      setActiveView('chat');
+      // Toggle back to Hub (individual bot chat removed)
+      setActiveView('hub');
     } else {
       setActiveSession(null);
       setActiveView('project');
@@ -33,13 +34,12 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
 
   const handleHubClick = () => {
     if (activeView === 'hub') {
-      // Toggle back to chat — don't force a session, just switch view
-      setActiveView('chat');
-    } else {
-      // Switching to Hub — clear active session so no chat stays highlighted
-      setActiveSession(null);
-      setActiveView('hub');
+      // Already on Hub — no-op (individual bot chat removed)
+      return;
     }
+    // Switching to Hub — clear active session
+    setActiveSession(null);
+    setActiveView('hub');
   };
 
   const handleShutdown = useCallback(async () => {
@@ -141,6 +141,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
           <span>Projects</span>
         </button>
 
+        {/* Bot list — view-only (name, status, edit). No click-to-chat. */}
         <SessionList />
         <NewSessionButton />
 
