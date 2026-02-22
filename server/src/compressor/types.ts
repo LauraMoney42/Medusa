@@ -29,6 +29,80 @@ export interface AuditReport {
   ratio: number;
 }
 
+// ---- Compressor Config File ----
+
+/**
+ * User-facing config file schema (~/.claude-chat/compressor.json).
+ * Read-only by the tool — spec: "Config file MUST NOT be writable by tool itself."
+ */
+export interface CompressorConfig {
+  /** Default compression level. Overridden by --level CLI flag. */
+  level: CompressionLevel;
+
+  /**
+   * Regex patterns for content that must NEVER be compressed.
+   * Merged with built-in security patterns. Evaluated per-line.
+   * Example: ["^IMPORTANT:", "\\[PINNED\\]", "DO NOT COMPRESS"]
+   */
+  exclusionPatterns: string[];
+
+  /** Safety limits to prevent over-compression. */
+  safetyLimits: SafetyLimits;
+
+  /** Per-strategy overrides. */
+  strategies: {
+    dedup: { enabled: boolean; minLength?: number };
+    whitespace: { enabled: boolean; maxConsecutiveNewlines?: number };
+    boilerplate: {
+      enabled: boolean;
+      extraPhrases?: string[];
+      protectedPhrases?: string[];
+    };
+  };
+}
+
+export interface SafetyLimits {
+  /**
+   * Maximum allowed compression ratio (0-1). If compression exceeds this,
+   * the engine returns the original text uncompressed.
+   * Default: 0.8 (80% reduction max). Prevents pathological over-compression.
+   */
+  maxCompressionRatio: number;
+
+  /**
+   * Minimum output length in characters. If compressed output would be
+   * shorter than this, the engine returns original text.
+   * Default: 50. Prevents near-empty results.
+   */
+  minOutputChars: number;
+
+  /**
+   * Maximum input length in characters. Inputs exceeding this are
+   * truncated (with marker) before compression to prevent OOM.
+   * Default: 500000 (500KB). 0 = unlimited.
+   */
+  maxInputChars: number;
+}
+
+/** Default safety limits — conservative to prevent data loss. */
+export const DEFAULT_SAFETY_LIMITS: SafetyLimits = {
+  maxCompressionRatio: 0.8,
+  minOutputChars: 50,
+  maxInputChars: 500_000,
+};
+
+/** Full default config — used when no config file exists. */
+export const DEFAULT_COMPRESSOR_CONFIG: CompressorConfig = {
+  level: "moderate",
+  exclusionPatterns: [],
+  safetyLimits: { ...DEFAULT_SAFETY_LIMITS },
+  strategies: {
+    dedup: { enabled: true },
+    whitespace: { enabled: true },
+    boilerplate: { enabled: true },
+  },
+};
+
 // ---- Configuration ----
 
 export interface DedupOptions {

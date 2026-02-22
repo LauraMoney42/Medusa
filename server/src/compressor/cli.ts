@@ -30,6 +30,7 @@ import { spawn } from "child_process";
 import fs from "fs";
 import { compress, estimateTokens } from "./engine.js";
 import type { CompressionLevel } from "./types.js";
+import { loadCompressorConfig } from "./config.js";
 
 // ---- Argument parsing (no deps — manual argv walk) --------------------------
 
@@ -38,6 +39,7 @@ interface CliArgs {
   raw: boolean;
   audit: boolean;
   inputFile: string | null;
+  configFile: string | null;
   command: string[];
   help: boolean;
 }
@@ -50,6 +52,7 @@ function parseArgs(argv: string[]): CliArgs {
     raw: false,
     audit: false,
     inputFile: null,
+    configFile: null,
     command: [],
     help: false,
   };
@@ -85,6 +88,14 @@ function parseArgs(argv: string[]): CliArgs {
       }
       args.inputFile = next;
       i += 2;
+    } else if (arg === "--config") {
+      const next = argv[i + 1];
+      if (!next) {
+        process.stderr.write(`Error: --config requires a file path\n`);
+        process.exit(1);
+      }
+      args.configFile = next;
+      i += 2;
     } else if (arg.startsWith("--")) {
       process.stderr.write(`Error: Unknown flag: ${arg}\n`);
       process.exit(1);
@@ -111,7 +122,8 @@ USAGE:
 
 FLAGS:
   --level <level>   Compression level: conservative, moderate, aggressive
-                    (default: moderate)
+                    (default: moderate, or from config file)
+  --config <file>   Load config from file (default: ~/.claude-chat/compressor.json)
   --raw             Bypass compression — pass output through unchanged
   --audit           Show detailed report of what was removed
   --input <file>    Read from file instead of wrapping a command
@@ -280,8 +292,14 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  // Compress
-  const result = compress(input, args.level, { audit: args.audit });
+  // TC-2: Load config for exclusion patterns + safety limits
+  const compressorConfig = loadCompressorConfig(args.configFile ?? undefined);
+
+  // CLI --level flag overrides config file level
+  const effectiveLevel = args.level !== "moderate" ? args.level : compressorConfig.level;
+
+  // Compress with config-driven exclusion patterns and safety limits
+  const result = compress(input, effectiveLevel, { audit: args.audit }, compressorConfig);
 
   // Output compressed text
   process.stdout.write(result.compressed);
@@ -292,7 +310,7 @@ async function main(): Promise<void> {
       result.audit,
       input.length,
       result.compressed.length,
-      args.level
+      effectiveLevel
     );
     process.stderr.write("\n" + report + "\n");
   }
