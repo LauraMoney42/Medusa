@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useProjectStore } from '../../stores/projectStore';
 import type { Project, Assignment, ProjectSummary } from '../../types/project';
 import ProjectDetailCard from './ProjectDetailCard';
+import QuickTaskSection from './QuickTaskSection';
 
 interface ProjectPaneProps {
   onMenuToggle?: () => void;
@@ -110,6 +111,9 @@ function ProjectDashboard({
             </p>
           </div>
         )}
+
+        {/* Quick Tasks — lightweight alternative to full projects */}
+        <QuickTaskSection />
 
         {/* Project cards */}
         {sorted.map((project) => (

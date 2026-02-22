@@ -19,3 +19,13 @@ export interface ProjectSummary {
 export interface Project extends ProjectSummary {
   content: string; // full markdown plan body
 }
+
+/** Lightweight task — alternative to full projects for quick one-off tracking */
+export interface QuickTask {
+  id: string;
+  title: string;
+  assignedTo: string;
+  status: 'pending' | 'in_progress' | 'done';
+  createdAt: string;
+  updatedAt: string;
+}
