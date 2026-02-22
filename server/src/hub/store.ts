@@ -154,6 +154,49 @@ export class HubStore {
     return relevant;
   }
 
+  /**
+   * TC-5: Delta hub context — return recent relevant messages split into
+   * "previously seen" and "new since last check" for a specific session.
+   * Enables sending only new messages as full context with a summary anchor
+   * for previously seen messages, cutting token usage 40-60%.
+   *
+   * @param n Max messages to return total
+   * @param sessionId Bot's session ID
+   * @param sessionName Bot's display name
+   * @param sinceMessageId Last message ID the bot already saw
+   * @returns { previousCount, newMessages } in chronological order
+   */
+  getRecentForSessionDelta(
+    n: number,
+    sessionId: string,
+    sessionName: string,
+    sinceMessageId?: string
+  ): { previousCount: number; newMessages: HubMessage[] } {
+    const allRelevant = this.getRecentForSession(n, sessionId, sessionName);
+
+    if (!sinceMessageId) {
+      return { previousCount: 0, newMessages: allRelevant };
+    }
+
+    const sinceIdx = allRelevant.findIndex((m) => m.id === sinceMessageId);
+    if (sinceIdx === -1) {
+      // sinceMessageId trimmed — fall back to full context
+      return { previousCount: 0, newMessages: allRelevant };
+    }
+
+    const newMessages = allRelevant.slice(sinceIdx + 1);
+    const previousCount = sinceIdx + 1;
+
+    // Safety: always include at least 3 recent context messages even if "old"
+    const MIN_CONTEXT = 3;
+    if (newMessages.length < MIN_CONTEXT && allRelevant.length > newMessages.length) {
+      const contextStart = Math.max(0, allRelevant.length - Math.max(newMessages.length, MIN_CONTEXT));
+      return { previousCount: contextStart, newMessages: allRelevant.slice(contextStart) };
+    }
+
+    return { previousCount, newMessages };
+  }
+
   /** Add a new message. Trims to FIFO limit and persists. */
   add(msg: Omit<HubMessage, "id" | "timestamp">): HubMessage {
     const hubMessage: HubMessage = {

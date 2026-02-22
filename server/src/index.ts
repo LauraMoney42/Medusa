@@ -26,12 +26,16 @@ import { MentionRouter } from "./hub/mention-router.js";
 import { createHubRouter } from "./routes/hub.js";
 import { ProjectStore } from "./projects/store.js";
 import { createProjectsRouter } from "./routes/projects.js";
+import { QuickTaskStore } from "./projects/quick-task-store.js";
+import { createQuickTasksRouter } from "./routes/quick-tasks.js";
 import { createCaffeineRouter, shutdownCaffeine } from "./routes/caffeine.js";
 import { createSettingsRouter } from "./routes/settings.js";
 import { TaskSyncManager } from "./projects/task-sync.js";
 import { HubPollScheduler } from "./hub/poll-scheduler.js";
 import { paginateDevlogs } from "./utils/devlog-paginator.js";
 import { autonomousDeliver } from "./claude/autonomous-deliver.js";
+import { TokenLogger } from "./metrics/token-logger.js";
+import { createMetricsRouter } from "./routes/metrics.js";
 import { z } from "zod";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -45,6 +49,8 @@ skillCatalog.initialize().catch(console.error);
 const chatStore = new ChatStore(path.dirname(config.sessionsFile));
 const hubStore = new HubStore(config.hubFile);
 const projectStore = new ProjectStore(config.projectsFile);
+const quickTaskStore = new QuickTaskStore(config.quickTasksFile);
+const tokenLogger = new TokenLogger(config.tokenUsageLogFile);
 
 // Pre-load existing sessions into the process manager so that
 // resumed conversations work after a server restart.
@@ -85,13 +91,13 @@ const io = new IOServer(server, {
 });
 
 // MentionRouter needs io for streaming responses to session rooms
-const mentionRouter = new MentionRouter(processManager, sessionStore, hubStore, chatStore, io);
+const mentionRouter = new MentionRouter(processManager, sessionStore, hubStore, chatStore, io, tokenLogger, quickTaskStore);
 
-setupSocketHandler(io, processManager, sessionStore, skillCatalog, chatStore, hubStore, mentionRouter);
+setupSocketHandler(io, processManager, sessionStore, skillCatalog, chatStore, hubStore, mentionRouter, tokenLogger, quickTaskStore);
 
 // ---- Background hub polling + stale assignment tracking ----
 const pollScheduler = new HubPollScheduler(
-  processManager, sessionStore, hubStore, mentionRouter, io, chatStore
+  processManager, sessionStore, hubStore, mentionRouter, io, chatStore, tokenLogger, quickTaskStore
 );
 
 // ---- P2-2: HTTP rate limiting ----
@@ -130,8 +136,10 @@ app.use("/api/skills", generalLimiter, createSkillsRouter(skillCatalog));
 app.use("/api/chat", generalLimiter, createChatRouter(chatStore));
 app.use("/api/hub", generalLimiter, createHubRouter(hubStore, io, mentionRouter, sessionStore));
 app.use("/api/projects", generalLimiter, createProjectsRouter(projectStore));
+app.use("/api/quick-tasks", generalLimiter, createQuickTasksRouter(quickTaskStore));
+app.use("/api/metrics", generalLimiter, createMetricsRouter(tokenLogger));
 app.use("/api/caffeine", generalLimiter, createCaffeineRouter());
-app.use("/api/settings", generalLimiter, createSettingsRouter());
+app.use("/api/settings", generalLimiter, createSettingsRouter(processManager, io));
 
 // ---- Graceful shutdown function (defined before routes so we can use it) ----
 let isShuttingDown = false;
@@ -402,6 +410,8 @@ async function resumeInterruptedSessions(): Promise<InterruptedSession[]> {
       sessionStore,
       hubStore,
       chatStore,
+      tokenLogger,
+      quickTaskStore,
     }).catch((err) => {
       console.error(`[medusa] AR2: autonomousDeliver failed for ${botName} (${sessionId}):`, err);
     });
@@ -428,6 +438,35 @@ server.listen(config.port, config.host, () => {
   projectStore.watchFile((projects) => {
     io.emit("projects:updated", projects);
   });
+
+  // Hot-reload quick-tasks.json for real-time sync
+  quickTaskStore.watchFile((tasks) => {
+    io.emit("quick-tasks:updated", tasks);
+  });
+
+  // ---- BOT-ANNOUNCE: Post startup announcement for all bot sessions ----
+  // Fixes visibility gap: after server restart / session compaction, bots appear
+  // "dead" to PM because they don't auto-announce. This ensures every bot session
+  // posts a "back online" message to Hub on every server start.
+  setTimeout(() => {
+    const sessions = sessionStore.loadAll();
+    const botSessions = sessions.filter((s) => s.name !== "You" && s.name !== "System");
+    if (botSessions.length > 0) {
+      const botNames = botSessions.map((s) => s.name).join(", ");
+      const announceMsg = hubStore.add({
+        from: "System",
+        text: `🟢 Server restarted. ${botSessions.length} bot(s) online: ${botNames}. All sessions restored.`,
+        sessionId: "",
+      });
+      io.emit("hub:message", announceMsg);
+      console.log(`[medusa] BOT-ANNOUNCE: Posted startup announcement for ${botSessions.length} bot(s)`);
+
+      // Initialize heartbeat tracking for all bot sessions
+      for (const session of botSessions) {
+        pollScheduler.recordHeartbeat(session.id);
+      }
+    }
+  }, 500);
 
   // AR2 + AR3: Check for interrupted sessions, auto-resume them, then post Hub
   // notifications for each resumed bot. Small delay to let socket handlers settle.

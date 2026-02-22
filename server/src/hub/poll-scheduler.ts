@@ -4,13 +4,19 @@ import type { SessionStore } from "../sessions/store.js";
 import type { ChatStore } from "../chat/store.js";
 import type { HubStore } from "./store.js";
 import type { MentionRouter } from "./mention-router.js";
+import type { TokenLogger } from "../metrics/token-logger.js";
+import type { QuickTaskStore } from "../projects/quick-task-store.js";
 import { autonomousDeliver } from "../claude/autonomous-deliver.js";
 import config from "../config.js";
 
-/** Per-bot cooldown: 10 minutes between polls */
-const PER_BOT_COOLDOWN_MS = 10 * 60 * 1000;
+/** Per-bot cooldown: 2 minutes between polls (reduced from 10min to keep bots active) */
+const PER_BOT_COOLDOWN_MS = 2 * 60 * 1000;
 /** Max bots polled per tick to prevent stampede */
 const MAX_BOTS_PER_TICK = 4;
+/** Heartbeat stale threshold: if a bot hasn't responded in 10 min, flag as stale */
+const HEARTBEAT_STALE_MS = 10 * 60 * 1000;
+/** Only warn about a stale bot once per this cooldown to avoid Hub spam */
+const STALE_WARN_COOLDOWN_MS = 15 * 60 * 1000;
 
 interface StaleEntry {
   sessionId: string;
@@ -34,6 +40,8 @@ export class HubPollScheduler {
   private mentionRouter: MentionRouter;
   private io: IOServer;
   private chatStore: ChatStore;
+  private tokenLogger?: TokenLogger;
+  private quickTaskStore?: QuickTaskStore;
 
   /** sessionId -> last poll timestamp */
   private lastPollTime = new Map<string, number>();
@@ -41,6 +49,10 @@ export class HubPollScheduler {
   private lastSeenMessageId = new Map<string, string>();
   /** sessionId -> stale assignment tracking */
   private staleAssignments = new Map<string, StaleEntry>();
+  /** sessionId -> last activity timestamp (heartbeat tracking) */
+  private lastHeartbeat = new Map<string, number>();
+  /** sessionId -> last time we warned about this bot being stale */
+  private lastStaleWarning = new Map<string, number>();
   private intervalHandle: ReturnType<typeof setInterval> | null = null;
 
   constructor(
@@ -49,7 +61,9 @@ export class HubPollScheduler {
     hubStore: HubStore,
     mentionRouter: MentionRouter,
     io: IOServer,
-    chatStore: ChatStore
+    chatStore: ChatStore,
+    tokenLogger?: TokenLogger,
+    quickTaskStore?: QuickTaskStore
   ) {
     this.processManager = processManager;
     this.sessionStore = sessionStore;
@@ -57,6 +71,8 @@ export class HubPollScheduler {
     this.mentionRouter = mentionRouter;
     this.io = io;
     this.chatStore = chatStore;
+    this.tokenLogger = tokenLogger;
+    this.quickTaskStore = quickTaskStore;
   }
 
   start(): void {
@@ -96,6 +112,66 @@ export class HubPollScheduler {
     this.lastPollTime.delete(sessionId);
     this.lastSeenMessageId.delete(sessionId);
     this.staleAssignments.delete(sessionId);
+    this.lastHeartbeat.delete(sessionId);
+    this.lastStaleWarning.delete(sessionId);
+  }
+
+  /**
+   * Record a heartbeat for a bot session. Call whenever a bot shows activity:
+   * - After autonomousDeliver completes (poll, mention, nudge, bot-to-bot)
+   * - On server startup for all registered sessions
+   * - When a bot posts a Hub message
+   */
+  recordHeartbeat(sessionId: string): void {
+    this.lastHeartbeat.set(sessionId, Date.now());
+  }
+
+  /**
+   * Check all bot sessions for heartbeat staleness.
+   * If a bot hasn't had activity in HEARTBEAT_STALE_MS and isn't currently busy,
+   * post a warning to Hub (once per STALE_WARN_COOLDOWN_MS).
+   */
+  private checkBotHeartbeats(): void {
+    const now = Date.now();
+    const allSessions = this.sessionStore.loadAll();
+
+    for (const session of allSessions) {
+      // Skip non-bot sessions
+      if (session.name === "You" || session.name === "System") continue;
+
+      // Skip if bot is currently busy (it's working, not stale)
+      if (this.processManager.isSessionBusy(session.id)) {
+        // Busy = active, update heartbeat
+        this.lastHeartbeat.set(session.id, now);
+        continue;
+      }
+
+      const lastBeat = this.lastHeartbeat.get(session.id);
+      if (!lastBeat) {
+        // No heartbeat recorded yet — initialize and skip
+        this.lastHeartbeat.set(session.id, now);
+        continue;
+      }
+
+      const silentMs = now - lastBeat;
+      if (silentMs < HEARTBEAT_STALE_MS) continue;
+
+      // Check stale warning cooldown — don't spam Hub
+      const lastWarning = this.lastStaleWarning.get(session.id) ?? 0;
+      if (now - lastWarning < STALE_WARN_COOLDOWN_MS) continue;
+
+      // Bot is stale — post warning to Hub
+      const minutesSilent = Math.round(silentMs / 60_000);
+      this.lastStaleWarning.set(session.id, now);
+
+      const warningMsg = this.hubStore.add({
+        from: "System",
+        text: `⚠️ ${session.name} has been silent for ${minutesSilent} min. May need attention. @You`,
+        sessionId: "",
+      });
+      this.io.emit("hub:message", warningMsg);
+      console.log(`[poll-scheduler] Heartbeat stale: ${session.name} silent for ${minutesSilent}m`);
+    }
   }
 
   /**
@@ -170,6 +246,10 @@ export class HubPollScheduler {
       hubStore: this.hubStore,
       chatStore: this.chatStore,
       mentionRouter: this.mentionRouter,
+      tokenLogger: this.tokenLogger,
+      quickTaskStore: this.quickTaskStore,
+    }).then(() => {
+      this.recordHeartbeat(sessionId);
     }).catch((err) => {
       console.error(`[poll-scheduler] nudgeBot autonomousDeliver failed:`, err);
     });
@@ -178,6 +258,9 @@ export class HubPollScheduler {
   private tick(): void {
     // Check for stale assignments on every tick, even if no new hub messages
     this.checkStaleAssignments();
+
+    // Check bot heartbeats — flag bots that haven't responded recently
+    this.checkBotHeartbeats();
 
     const recentMessages = this.hubStore.getRecent(20);
     if (recentMessages.length === 0) return;
@@ -242,13 +325,14 @@ export class HubPollScheduler {
         continue;
       }
 
-      // Update last-seen before polling
+      // TC-5: Capture previous last-seen ID for delta context, then update
+      const previousLastSeenId = this.lastSeenMessageId.get(session.id);
       this.lastSeenMessageId.set(
         session.id,
         recentMessages[recentMessages.length - 1].id
       );
 
-      this.pollBot(session.id, relevantNew.length);
+      this.pollBot(session.id, relevantNew.length, previousLastSeenId);
       polledCount++;
     }
   }
@@ -257,8 +341,11 @@ export class HubPollScheduler {
    * Send a "check the Hub" prompt to a single bot.
    * autonomousDeliver builds the hub section per-session (filtered to relevant messages only)
    * so each bot only sees what @mentions them, system messages, @You, and broadcasts.
+   *
+   * TC-5: sinceMessageId enables delta context — only new messages since this ID
+   * are included in the hub prompt, with an anchor for previously seen messages.
    */
-  private pollBot(sessionId: string, newMessageCount: number): void {
+  private pollBot(sessionId: string, newMessageCount: number, sinceMessageId?: string): void {
     const meta = this.sessionStore.get(sessionId);
     if (!meta) return;
 
@@ -276,8 +363,12 @@ export class HubPollScheduler {
       hubStore: this.hubStore,
       chatStore: this.chatStore,
       mentionRouter: this.mentionRouter,
-      // No hubSectionOverride — autonomousDeliver builds a per-session filtered
-      // hub section so each bot only receives messages relevant to them (TO2).
+      tokenLogger: this.tokenLogger,
+      quickTaskStore: this.quickTaskStore,
+      // TC-5: Pass last-seen message ID for delta hub context
+      sinceMessageId,
+    }).then(() => {
+      this.recordHeartbeat(sessionId);
     }).catch((err) => {
       console.error(`[poll-scheduler] pollBot autonomousDeliver failed:`, err);
     });
