@@ -1,6 +1,7 @@
 import { spawn } from "child_process";
 import { execSync } from "child_process";
 import fs from "fs";
+import type { TokenLogger } from "../metrics/token-logger.js";
 
 /**
  * Find the Claude CLI binary.
@@ -49,16 +50,30 @@ export interface ChatMessage {
   durationMs?: number;
 }
 
+export interface SummarizationResult {
+  summary: string;
+  costUsd: number;
+  durationMs: number;
+}
+
 /**
  * Summarize a conversation using a one-shot Claude CLI call.
  * Uses Haiku for cheap summarization.
- * Returns the summary text.
+ * Returns summary text + cost metrics for token logging.
+ *
+ * Uses stream-json output format to capture the result event with cost data.
+ * The old json format only returned the response text with no metrics.
  */
 export async function summarizeConversation(
-  messages: ChatMessage[]
-): Promise<string> {
+  messages: ChatMessage[],
+  opts?: {
+    sessionId?: string;
+    botName?: string;
+    tokenLogger?: TokenLogger;
+  }
+): Promise<SummarizationResult> {
   if (messages.length === 0) {
-    return "No messages to summarize.";
+    return { summary: "No messages to summarize.", costUsd: 0, durationMs: 0 };
   }
 
   // Build a transcript for the summarizer
@@ -80,12 +95,12 @@ ${transcript}
 
 Provide a concise summary (under 200 words):`;
 
-  return new Promise<string>((resolve, reject) => {
+  return new Promise<SummarizationResult>((resolve, reject) => {
     const args = [
       "-p",
       prompt,
       "--output-format",
-      "json",
+      "stream-json",
       "--model",
       "haiku",
     ];
@@ -113,17 +128,63 @@ Provide a concise summary (under 200 words):`;
         );
       }
 
-      try {
-        const parsed = JSON.parse(stdout);
-        // Extract text from the JSON response
-        const text =
-          parsed.content?.[0]?.text ||
-          parsed.text ||
-          "Summary unavailable.";
-        resolve(text);
-      } catch (err) {
-        reject(new Error(`Failed to parse summarization output: ${err}`));
+      // Parse NDJSON stream to extract text deltas and the result event
+      let summaryText = "";
+      let costUsd = 0;
+      let durationMs = 0;
+      let durationApiMs: number | undefined;
+      let numTurns: number | undefined;
+      let claudeSessionId = "";
+
+      for (const line of stdout.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          const event = JSON.parse(trimmed);
+
+          // Accumulate text from deltas
+          if (
+            event.type === "content_block_delta" &&
+            event.delta?.type === "text_delta"
+          ) {
+            summaryText += event.delta.text;
+          }
+
+          // Extract cost from result event
+          if (event.type === "result" && event.subtype === "success") {
+            costUsd = event.total_cost_usd ?? 0;
+            durationMs = event.duration_ms ?? 0;
+            durationApiMs = event.duration_api_ms;
+            numTurns = event.num_turns;
+            claudeSessionId = event.session_id ?? "";
+          }
+        } catch {
+          // Skip non-JSON lines
+        }
       }
+
+      if (!summaryText) {
+        summaryText = "Summary unavailable.";
+      }
+
+      // TC-2B: Log summarization cost
+      if (opts?.tokenLogger) {
+        opts.tokenLogger.log({
+          timestamp: new Date().toISOString(),
+          sessionId: opts.sessionId ?? "",
+          botName: opts.botName ?? "summarizer",
+          claudeSessionId,
+          messageId: "",
+          source: "summarizer",
+          costUsd,
+          durationMs,
+          durationApiMs,
+          numTurns,
+          success: true,
+        });
+      }
+
+      resolve({ summary: summaryText, costUsd, durationMs });
     });
 
     child.on("error", (err) => {
