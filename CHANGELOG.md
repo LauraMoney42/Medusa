@@ -1,3 +1,38 @@
+## 2026-02-25 11:45
+- Fix: Medusa not responding to unaddressed Hub messages from user
+- Root cause: bot [HUB-POST] messages without @mentions were also default-routed to Medusa, burning the 60s cooldown before user messages arrived
+- Fix: restrict default-Medusa routing to user-originated messages only (from === "User" or "You")
+- Files modified: server/src/hub/mention-router.ts
+
+## 2026-02-25 11:30
+- Bot status indicator redesign: swap busy/pending visuals for more intuitive mapping
+- Busy state now shows blinking green dot (was spinning cog) — clearer "thinking" feedback
+- Pending task state now shows spinning green cog (was pulsing dot) — indicates queued work
+- Added statusBlink keyframe animation (fast 0.8s on/off blink)
+- Files modified: client/src/components/Sidebar/SessionList.tsx, client/src/styles/global.css
+
+## 2026-02-25 09:00
+- Medusa as default Hub responder: unaddressed Hub messages (no @mention) auto-route to Medusa bot
+- System messages and Medusa's own messages are excluded from auto-routing
+- Files modified: server/src/hub/mention-router.ts
+
+## 2026-02-24 12:00
+- File drag-and-drop support: accept any file type (not just images) via drag-and-drop
+- New fileDropStore replaces imageDropStore with FileEntry type (file, preview, isImage)
+- New AttachmentPreview component: thumbnails for images, file icon + name for non-images
+- New server route /api/files for uploading any file type (20MB limit, no extension filter)
+- ChatInput splits uploads into images[] and files[] arrays for socket emit
+- process-manager prepends "Please read this file: <path>" for non-image attachments
+- Fix: Hub @mention routing now passes images to bots (was previously text-only)
+- autonomousDeliver accepts images param, sanitizes paths, forwards to sendMessage
+- Exported sanitizeImagePaths from handler.ts for reuse
+- HubFeed now accepts all file types (not just images) via drop/paste/send
+- Hub posts carry both `images` and `files` arrays through socket → HubStore → mention-router → autonomousDeliver → sendMessage
+- Drop overlay updated: generic file icon + "Drop files here" text
+- Files created: client/src/stores/fileDropStore.ts, client/src/components/Input/AttachmentPreview.tsx, server/src/routes/files.ts
+- Files modified: client/src/App.tsx, client/src/components/Input/ChatInput.tsx, client/src/components/Hub/HubFeed.tsx, client/src/api.ts, client/src/types/message.ts, server/src/index.ts, server/src/socket/handler.ts, server/src/claude/process-manager.ts, server/src/claude/autonomous-deliver.ts, server/src/hub/mention-router.ts
+- Files deleted: client/src/stores/imageDropStore.ts, client/src/components/Input/ImagePreview.tsx
+
 ## 2026-02-22 20:15
 - P0 bot visibility fix: startup announce + heartbeat + stale detection
 - Server now posts "bots online" System message to Hub on every restart

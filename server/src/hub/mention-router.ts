@@ -81,9 +81,25 @@ export class MentionRouter {
     }
 
     const mentions = this.extractMentions(hubMessage.text, hubMessage.sessionId);
-    if (mentions.length === 0) return;
 
     const allSessions = this.sessionStore.loadAll();
+
+    // If no @mentions, default to Medusa as the responder — but ONLY for
+    // user-originated messages. Bot hub posts without @mentions should not
+    // auto-route to Medusa (they'd burn the cooldown and block real user requests).
+    if (mentions.length === 0) {
+      const isUserMessage = hubMessage.from === "User" || hubMessage.from === "You";
+      if (!isUserMessage) return;
+      const medusa = allSessions.find(
+        (s) => s.name.toLowerCase() === "medusa"
+      );
+      if (medusa) {
+        console.log(`[mention-router] No @mentions in "${hubMessage.text.slice(0, 60)}" — routing to Medusa`);
+        mentions.push(medusa.name);
+      } else {
+        return;
+      }
+    }
 
     for (const mentionName of mentions) {
       const target = allSessions.find(
@@ -91,8 +107,11 @@ export class MentionRouter {
       );
       if (!target) continue;
 
-      // Self-mention guard
-      if (target.id === hubMessage.sessionId) continue;
+      // Self-mention guard: prevent bots from pinging themselves.
+      // Skip this check for user-originated messages — their sessionId is just
+      // the active sidebar session, not the sender's own session.
+      const isUserMessage = hubMessage.from === "User" || hubMessage.from === "You";
+      if (!isUserMessage && target.id === hubMessage.sessionId) continue;
 
       // Cooldown guard
       const lastTime = this.lastMentionTime.get(target.id) ?? 0;
@@ -317,6 +336,14 @@ export class MentionRouter {
 
     const prompt = `[Hub Request] A teammate tagged you in the Hub: "${hubMessage.text}" (from ${hubMessage.from}). Please review and respond. If you have something to share back, use [HUB-POST: your response].`;
 
+    // Pass hub message images and files to the Claude process
+    const images = hubMessage.images && hubMessage.images.length > 0
+      ? hubMessage.images
+      : undefined;
+    const files = hubMessage.files && hubMessage.files.length > 0
+      ? hubMessage.files
+      : undefined;
+
     autonomousDeliver({
       sessionId,
       prompt,
@@ -330,6 +357,8 @@ export class MentionRouter {
       chainDepth,
       tokenLogger: this.tokenLogger,
       quickTaskStore: this.quickTaskStore,
+      images,
+      files,
     }).catch((err) => {
       console.error(`[mention-router] autonomousDeliver failed for ${sessionId}:`, err);
     });

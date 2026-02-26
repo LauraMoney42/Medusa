@@ -4,14 +4,21 @@ import { useTaskStore, hasCompletedTask } from '../../stores/taskStore';
 import { useDraftStore } from '../../stores/draftStore';
 import SessionEditor from './SessionEditor';
 
-/** 4-state status icon: busy (spinning cog) > complete (checkmark) > pending (pulsing) > idle (gray dot) */
+/** 4-state status icon: busy (blinking dot) > complete (checkmark) > pending (spinning cog) > idle (gray dot) */
 function StatusIcon({ status, hasPendingTask, hasCompleted }: {
   status: 'idle' | 'busy';
   hasPendingTask: boolean;
   hasCompleted: boolean;
 }) {
-  // Busy MUST take priority — when a bot is actively streaming, always show the cog
+  // Busy MUST take priority — when a bot is actively processing, show blinking dot
   if (status === 'busy') {
+    return <span style={statusStyles.blinkingDot} />;
+  }
+  if (hasCompleted) {
+    return <span style={statusStyles.checkmark}>✓</span>;
+  }
+  // Pending tasks → spinning cog to indicate queued work
+  if (hasPendingTask) {
     return (
       <span style={statusStyles.spinningCog}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -20,12 +27,6 @@ function StatusIcon({ status, hasPendingTask, hasCompleted }: {
         </svg>
       </span>
     );
-  }
-  if (hasCompleted) {
-    return <span style={statusStyles.checkmark}>✓</span>;
-  }
-  if (hasPendingTask) {
-    return <span style={statusStyles.pulsingDot} />;
   }
   return <span style={statusStyles.idleDot} />;
 }
@@ -36,10 +37,10 @@ const statusStyles: Record<string, React.CSSProperties> = {
     background: 'var(--text-muted)',
     flexShrink: 0,
   },
-  pulsingDot: {
+  blinkingDot: {
     width: 8, height: 8, borderRadius: '50%',
     background: 'var(--success)',
-    animation: 'pendingPulse 2s ease-in-out infinite',
+    animation: 'statusBlink 0.8s ease-in-out infinite',
     flexShrink: 0,
   },
   spinningCog: {
