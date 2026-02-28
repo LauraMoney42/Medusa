@@ -1,3 +1,20 @@
+## 2026-02-28
+- Remove Medusa chat icon/button from sidebar; clicking Medusa bot name in session list now opens Medusa chat
+- Medusa session row highlights green when active, name turns accent green
+- Auto-scroll Medusa chat to most recent messages on open and when new messages arrive
+- Files modified: client/src/components/Sidebar/Sidebar.tsx, client/src/components/Sidebar/SessionList.tsx, client/src/components/Hub/MedusaChat.tsx
+
+- Add bash-style input history navigation (Up/Down arrow keys) to Hub and ChatInput textareas
+- Up arrow at cursor start recalls previous sent messages; Down arrow moves forward or restores unsent draft
+- History persisted to localStorage (50 entries per scope), scoped per session and Hub
+- Files added: client/src/stores/inputHistoryStore.ts, docs/INPUT_HISTORY_IMPLEMENTATION.md
+- Files modified: client/src/components/Hub/HubFeed.tsx, client/src/components/Input/ChatInput.tsx
+
+## 2026-02-26
+- Add TicTalk proxy endpoint: POST /api/tictalk forwards iOS app messages to Anthropic Claude API
+- Auth: Bearer token (AUTH_TOKEN), rate limit: 20 req/min per IP, error codes: 401/429/500
+- Files modified: server/src/routes/tictalk.ts (new), server/src/index.ts
+
 ## 2026-02-25 11:45
 - Fix: Medusa not responding to unaddressed Hub messages from user
 - Root cause: bot [HUB-POST] messages without @mentions were also default-routed to Medusa, burning the 60s cooldown before user messages arrived

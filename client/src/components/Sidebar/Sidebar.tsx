@@ -42,6 +42,13 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
     setActiveView('hub');
   };
 
+  const handleUsageClick = () => {
+    if (activeView === 'usage') {
+      return;
+    }
+    setActiveView('usage');
+  };
+
   const handleShutdown = useCallback(async () => {
     setShutdownLoading(true);
     try {
@@ -122,6 +129,27 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
           <span>Stop All</span>
         </button>
 
+        {/* Token Usage button — above Projects per UX spec */}
+        <button
+          onClick={handleUsageClick}
+          style={{
+            ...styles.hubBtn,
+            background: activeView === 'usage'
+              ? 'rgba(26, 122, 60, 0.15)'
+              : 'transparent',
+            color: activeView === 'usage'
+              ? '#4aba6a'
+              : 'var(--text-secondary)',
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="18" y1="20" x2="18" y2="10" />
+            <line x1="12" y1="20" x2="12" y2="4" />
+            <line x1="6" y1="20" x2="6" y2="14" />
+          </svg>
+          <span>Usage</span>
+        </button>
+
         {/* Projects button */}
         <button
           onClick={handleProjectsClick}
@@ -141,7 +169,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
           <span>Projects</span>
         </button>
 
-        {/* Bot list — view-only (name, status, edit). No click-to-chat. */}
+        {/* Bot list — click Medusa bot name to open Medusa chat */}
         <SessionList />
         <NewSessionButton />
 

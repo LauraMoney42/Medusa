@@ -4,21 +4,18 @@ import { useTaskStore, hasCompletedTask } from '../../stores/taskStore';
 import { useDraftStore } from '../../stores/draftStore';
 import SessionEditor from './SessionEditor';
 
-/** 4-state status icon: busy (blinking dot) > complete (checkmark) > pending (spinning cog) > idle (gray dot) */
+/** Check if a session is the Medusa bot (case-insensitive name match) */
+function isMedusaSession(name: string): boolean {
+  return name.toLowerCase() === 'medusa';
+}
+
+/** 4-state status icon: busy (spinning cog) > complete (checkmark) > pending (pulsing) > idle (gray dot) */
 function StatusIcon({ status, hasPendingTask, hasCompleted }: {
   status: 'idle' | 'busy';
   hasPendingTask: boolean;
   hasCompleted: boolean;
 }) {
-  // Busy MUST take priority — when a bot is actively processing, show blinking dot
   if (status === 'busy') {
-    return <span style={statusStyles.blinkingDot} />;
-  }
-  if (hasCompleted) {
-    return <span style={statusStyles.checkmark}>✓</span>;
-  }
-  // Pending tasks → spinning cog to indicate queued work
-  if (hasPendingTask) {
     return (
       <span style={statusStyles.spinningCog}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -27,6 +24,12 @@ function StatusIcon({ status, hasPendingTask, hasCompleted }: {
         </svg>
       </span>
     );
+  }
+  if (hasCompleted) {
+    return <span style={statusStyles.checkmark}>&#10003;</span>;
+  }
+  if (hasPendingTask) {
+    return <span style={statusStyles.pulsingDot} />;
   }
   return <span style={statusStyles.idleDot} />;
 }
@@ -37,10 +40,10 @@ const statusStyles: Record<string, React.CSSProperties> = {
     background: 'var(--text-muted)',
     flexShrink: 0,
   },
-  blinkingDot: {
+  pulsingDot: {
     width: 8, height: 8, borderRadius: '50%',
     background: 'var(--success)',
-    animation: 'statusBlink 0.8s ease-in-out infinite',
+    animation: 'pendingPulse 2s ease-in-out infinite',
     flexShrink: 0,
   },
   spinningCog: {
@@ -72,6 +75,8 @@ export default function SessionList() {
   const completedTasks = useTaskStore((s) => s.completedTasks);
   // DM5: Draft indicator — subscribe to drafts so dot updates reactively
   const drafts = useDraftStore((s) => s.drafts);
+  const activeView = useSessionStore((s) => s.activeView);
+  const setActiveView = useSessionStore((s) => s.setActiveView);
   const renameSession = useSessionStore((s) => s.renameSession);
   const deleteSession = useSessionStore((s) => s.deleteSession);
   const reorderSessions = useSessionStore((s) => s.reorderSessions);
@@ -190,8 +195,10 @@ export default function SessionList() {
       )}
 
       {sessions.map((session) => {
-        const status = statuses[session.id] ?? 'idle';
+        const status = (statuses[session.id] ?? 'idle') as 'idle' | 'busy';
         const isDragOver = dragOverId === session.id && dragId !== session.id;
+        const isMedusa = isMedusaSession(session.name);
+        const isMedusaActive = isMedusa && activeView === 'medusa';
 
         return (
           <div
@@ -202,17 +209,24 @@ export default function SessionList() {
             onDragOver={(e) => handleDragOver(e, session.id)}
             onDrop={(e) => handleDrop(e, session.id)}
             onContextMenu={(e) => handleContextMenu(e, session.id)}
+            onClick={() => {
+              if (isMedusa && activeView !== 'medusa') {
+                setActiveView('medusa');
+              }
+            }}
             style={{
               ...styles.item,
               borderTop: isDragOver ? '2px solid var(--accent)' : '2px solid transparent',
+              cursor: isMedusa ? 'pointer' : 'default',
+              background: isMedusaActive ? 'rgba(26, 122, 60, 0.12)' : 'transparent',
             }}
             onMouseEnter={(e) => {
               (e.currentTarget as HTMLElement).style.background =
-                'rgba(255,255,255,0.03)';
+                isMedusaActive ? 'rgba(26, 122, 60, 0.18)' : 'rgba(255,255,255,0.03)';
             }}
             onMouseLeave={(e) => {
               (e.currentTarget as HTMLElement).style.background =
-                'transparent';
+                isMedusaActive ? 'rgba(26, 122, 60, 0.12)' : 'transparent';
             }}
           >
             <StatusIcon
@@ -236,7 +250,10 @@ export default function SessionList() {
               />
             ) : (
               <>
-                <span style={styles.name}>{session.name}</span>
+                <span style={{
+                  ...styles.name,
+                  ...(isMedusa ? { color: isMedusaActive ? '#4aba6a' : 'var(--text-secondary)' } : {}),
+                }}>{session.name}</span>
                 {/* DM5: Draft indicator dot — subtle, only when unsent draft exists */}
                 {drafts[session.id] && (
                   <span style={statusStyles.draftDot} title="Unsent draft" />
