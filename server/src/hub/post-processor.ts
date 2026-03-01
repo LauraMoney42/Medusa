@@ -49,6 +49,39 @@ export interface HubPostProcessorOptions {
 }
 
 /**
+ * Returns true if a hub post text contains no @mention (no @BotName or @all).
+ * Used to decide whether to auto-append @all so hibernating bots wake up.
+ */
+function hasNoMentions(text: string): boolean {
+  return !/@\w/.test(text);
+}
+
+/**
+ * Returns true if the post is a terminal/internal marker that should NOT
+ * broadcast to all bots (completions, no-ops, internal routing).
+ */
+function isSilentPost(text: string): boolean {
+  const upper = text.toUpperCase();
+  return (
+    upper.includes("[TASK-DONE:") ||
+    upper.includes("[NO-ACTION]") ||
+    upper.includes("[BOT-TASK:")
+  );
+}
+
+/**
+ * Fix A: If a hub post has no @mentions and is not a silent/terminal marker,
+ * append @all so every hibernating bot wakes and can self-assign the task.
+ * This runs before the post is stored, so the @all appears in the record.
+ */
+function ensureMentions(text: string): string {
+  if (hasNoMentions(text) && !isSilentPost(text)) {
+    return `${text} @all`;
+  }
+  return text;
+}
+
+/**
  * Process a batch of hub post strings extracted from a bot's streaming response.
  * Adds each post to the hub store, broadcasts it, routes @mentions,
  * and detects [TASK-DONE:] markers.
@@ -59,7 +92,9 @@ export function processHubPosts(
 ): void {
   const { from, sessionId, hubStore, mentionRouter, io, chainDepth = 0 } = opts;
 
-  for (const postText of posts) {
+  for (const rawText of posts) {
+    // Fix A: auto-append @all on unassigned posts so hibernating bots wake up
+    const postText = ensureMentions(rawText);
     const hubMsg = hubStore.add({ from, text: postText, sessionId });
 
     // Broadcast to all connected clients
@@ -78,7 +113,8 @@ export function processHubPosts(
         sessionId,
       });
       io.emit("task:done", task);
-      io.emit("session:pending-task", { sessionId, hasPendingTask: false });
+      // Clear pending-task tracking — returns bot to hibernation mode per coordination spec
+      io.emit("bot:task-cleared", { sessionId });
     }
 
     // Detect [QUICK-TASK: title | assignee] and auto-create quick tasks
