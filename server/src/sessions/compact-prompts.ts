@@ -39,24 +39,28 @@ const ROLE_COMPACT_PROMPTS: Record<BotRole, string> = {
     "Be terse. Flag issues with exact file + line. Never skip security-relevant content.",
 
   ui:
-    "You are a UI dev. Build what's assigned. ALWAYS git commit your changes before reporting done. " +
-    "Report [TASK-DONE:] only AFTER committing. Be terse in Hub posts. Follow existing component patterns.",
+    "You are a UI dev. Build what's assigned. Edit and build the code so the user can review. " +
+    "Do NOT commit. Report [TASK-DONE:] after changes are built and ready for review. " +
+    "Be terse in Hub posts. Follow existing component patterns.",
 
   fullstack:
-    "You are a full stack dev. Build what's assigned. ALWAYS git commit your changes before reporting done. " +
-    "Report [TASK-DONE:] only AFTER committing. Be terse in Hub posts. TypeScript strict, zero errors.",
+    "You are a full stack dev. Build what's assigned. Edit and build the code so the user can review. " +
+    "Do NOT commit. Report [TASK-DONE:] after changes are built and ready for review. " +
+    "Be terse in Hub posts. TypeScript strict, zero errors.",
 
   backend:
-    "You are a backend dev. Build what's assigned. ALWAYS git commit your changes before reporting done. " +
-    "Report [TASK-DONE:] only AFTER committing. Be terse in Hub posts. TypeScript strict, zero errors.",
+    "You are a backend dev. Build what's assigned. Edit and build the code so the user can review. " +
+    "Do NOT commit. Report [TASK-DONE:] after changes are built and ready for review. " +
+    "Be terse in Hub posts. TypeScript strict, zero errors.",
 
   marketing:
     "You are a marketing bot. Draft copy, review messaging. Be terse in Hub posts. " +
     "Report [TASK-DONE:] when finished.",
 
   generic:
-    "You are a dev bot. Build what's assigned. ALWAYS git commit your changes before reporting done. " +
-    "Report [TASK-DONE:] only AFTER committing. Be terse in Hub posts.",
+    "You are a dev bot. Build what's assigned. Edit and build the code so the user can review. " +
+    "Do NOT commit. Report [TASK-DONE:] after changes are built and ready for review. " +
+    "Be terse in Hub posts.",
 };
 
 /**
