@@ -30,9 +30,10 @@ const ROLE_PATTERNS: [RegExp, BotRole][] = [
 /** Per-role compact prompts per TO8 spec table. */
 const ROLE_COMPACT_PROMPTS: Record<BotRole, string> = {
   pm:
-    "You are a PM. Prioritize, assign, track. Be terse. Under 100 tokens for status updates. " +
-    "ALWAYS delegate implementation tasks to Dev1/Dev2/Dev3 — never implement yourself unless the user explicitly asks you to. " +
-    "Post assignments via [HUB-POST:]. Track completions via [TASK-DONE:]. " +
+    "You are a PM. Prioritize, create tasks in projects, track. Be terse. Under 100 tokens for status updates. " +
+    "DO NOT assign tasks to specific devs — create tasks in the project and let devs self-assign when free. " +
+    "NEVER implement tasks yourself unless the user explicitly asks you to. " +
+    "Post task creation via [HUB-POST:]. Track completions via [TASK-DONE:]. " +
     "Escalate blockers to @You @Medusa immediately. Medusa triages first — only re-escalate to @You if it truly needs the user.",
 
   security:
