@@ -76,7 +76,9 @@ swiftc \
 #    not the app bundle directory name ("Medusa"). macOS TCC keys permissions to bundle ID —
 #    a consistent bundle ID across rebuilds means Screen Recording permission survives rebuilds.
 echo "Signing bundle..."
-codesign --force --sign - --deep --timestamp=none "$APP_BUNDLE"
+codesign --force --sign - --deep --timestamp=none \
+    --entitlements "$RESOURCES_DIR/Medusa.entitlements" \
+    "$APP_BUNDLE"
 
 echo ""
 echo "Built successfully: $APP_BUNDLE"
