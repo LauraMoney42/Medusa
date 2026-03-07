@@ -5,9 +5,9 @@ import * as api from '../api';
 interface SessionState {
   sessions: SessionMeta[];
   activeSessionId: string | null;
+  activeView: 'hub' | 'project' | 'usage' | 'medusa';
   statuses: Record<string, 'idle' | 'busy'>;
   pendingTasks: Record<string, boolean>;
-  activeView: 'hub' | 'project';
   isServerShuttingDown: boolean;
   shuttingDownSessions: { id: string; name: string }[];
 }
@@ -19,13 +19,13 @@ interface SessionActions {
   deleteSession: (id: string) => Promise<void>;
   reorderSessions: (order: string[]) => void;
   setActiveSession: (id: string | null) => void;
-  setSessionStatus: (id: string, status: 'idle' | 'busy') => void;
   setSessionYolo: (id: string, yoloMode: boolean) => void;
   setSessionSystemPrompt: (id: string, systemPrompt: string) => void;
   setSessionSkills: (id: string, skills: string[]) => void;
   setSessionWorkingDir: (id: string, workingDir: string) => void;
+  setSessionStatus: (id: string, status: 'idle' | 'busy') => void;
   setPendingTask: (id: string, hasPending: boolean) => void;
-  setActiveView: (view: 'hub' | 'project') => void;
+  setActiveView: (view: 'hub' | 'project' | 'usage' | 'medusa') => void;
   setServerShuttingDown: (busySessions: { id: string; name: string }[]) => void;
 }
 
@@ -91,9 +91,6 @@ export const useSessionStore = create<SessionState & SessionActions>(
     setActiveSession: (id) =>
       set({ activeSessionId: id }),
 
-    setSessionStatus: (id, status) =>
-      set((s) => ({ statuses: { ...s.statuses, [id]: status } })),
-
     setSessionYolo: (id, yoloMode) =>
       set((s) => ({
         sessions: s.sessions.map((sess) =>
@@ -120,6 +117,11 @@ export const useSessionStore = create<SessionState & SessionActions>(
         sessions: s.sessions.map((sess) =>
           sess.id === id ? { ...sess, workingDir } : sess,
         ),
+      })),
+
+    setSessionStatus: (id, status) =>
+      set((s) => ({
+        statuses: { ...s.statuses, [id]: status },
       })),
 
     setPendingTask: (id, hasPending) =>

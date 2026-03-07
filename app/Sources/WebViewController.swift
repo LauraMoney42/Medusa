@@ -134,9 +134,26 @@ class WebViewController: NSWindowController, WKNavigationDelegate, WKUIDelegate,
         let baseURL = URL(string: "http://localhost:\(port)")!
         let token = serverManager.authToken
 
-        // Call the login API endpoint first — the server's Set-Cookie response
-        // header properly sets the httpOnly cookie in WKWebView's cookie store.
-        // This is more reliable than manually injecting cookies.
+        // Clear JS/CSS disk + memory cache before loading so updated bundles
+        // are always fetched fresh (fixes stale status symbols after rebuilds).
+        let cacheTypes: Set<String> = [
+            WKWebsiteDataTypeDiskCache,
+            WKWebsiteDataTypeMemoryCache,
+        ]
+        WKWebsiteDataStore.default().removeData(ofTypes: cacheTypes, modifiedSince: .distantPast) { [weak self] in
+            guard let self = self else { return }
+            self.doLoadWebApp(port: port, baseURL: baseURL, token: token)
+        }
+    }
+
+    /// Internal load after cache is cleared.
+    private func doLoadWebApp(port: Int, baseURL: URL, token: String) {
+        // Use cache-ignoring request so WKWebView always fetches the latest bundle
+        let baseRequest = URLRequest(url: baseURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 60)
+
+        // Authenticate via URLSession (not WKWebView) to avoid rendering the
+        // JSON login response in the WebView. Extract the Set-Cookie header and
+        // inject the cookie into WKWebView's cookie store before navigating.
         if !token.isEmpty {
             let loginURL = URL(string: "http://localhost:\(port)/api/auth/login")!
             var request = URLRequest(url: loginURL)
@@ -144,17 +161,36 @@ class WebViewController: NSWindowController, WKNavigationDelegate, WKUIDelegate,
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try? JSONSerialization.data(withJSONObject: ["token": token])
 
-            webView.load(request)
+            URLSession.shared.dataTask(with: request) { [weak self] _, response, _ in
+                guard let self = self else { return }
 
-            // After the login POST completes, navigate to the main page.
-            // We use a short delay to let the Set-Cookie header be processed.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                self.webView.load(URLRequest(url: baseURL))
-            }
+                // Extract Set-Cookie from the login response and inject into WKWebView
+                if let httpResponse = response as? HTTPURLResponse,
+                   let setCookie = httpResponse.allHeaderFields["Set-Cookie"] as? String {
+                    let cookies = HTTPCookie.cookies(
+                        withResponseHeaderFields: ["Set-Cookie": setCookie],
+                        for: loginURL
+                    )
+                    let store = self.webView.configuration.websiteDataStore.httpCookieStore
+                    let group = DispatchGroup()
+                    for cookie in cookies {
+                        group.enter()
+                        store.setCookie(cookie) { group.leave() }
+                    }
+                    group.notify(queue: .main) {
+                        self.webView.load(baseRequest)
+                    }
+                } else {
+                    // Login failed or no cookie — navigate anyway (will show login screen)
+                    DispatchQueue.main.async {
+                        self.webView.load(baseRequest)
+                    }
+                }
+            }.resume()
             return
         }
 
-        webView.load(URLRequest(url: baseURL))
+        webView.load(baseRequest)
     }
 
     /// Show an error message on the loading overlay.
@@ -165,9 +201,9 @@ class WebViewController: NSWindowController, WKNavigationDelegate, WKUIDelegate,
         loadingLabel.textColor = NSColor.systemRed
     }
 
-    /// Reload the current page (called from View → Reload menu).
+    /// Reload the current page bypassing cache (called from View → Reload menu).
     @objc func reloadPage(_ sender: Any?) {
-        webView.reload()
+        webView.reloadFromOrigin()
     }
 
     // MARK: - WKScriptMessageHandler (SC4 — native screen capture)

@@ -10,6 +10,7 @@ const HubMessageSchema = z.object({
   timestamp: z.string(),
   sessionId: z.string(),
   images: z.array(z.string()).optional(),
+  files: z.array(z.string()).optional(),
 });
 
 const CompletedTaskSchema = z.object({
@@ -206,6 +207,7 @@ export class HubStore {
       timestamp: new Date().toISOString(),
       sessionId: msg.sessionId,
       ...(msg.images && msg.images.length > 0 ? { images: msg.images } : {}),
+      ...(msg.files && msg.files.length > 0 ? { files: msg.files } : {}),
     };
     this.messages.push(hubMessage);
 

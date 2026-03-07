@@ -24,14 +24,16 @@ export function useSocket() {
   const finishStreaming = useChatStore((s) => s.finishStreaming);
   const setError = useChatStore((s) => s.setError);
   const setSessionStatus = useSessionStore((s) => s.setSessionStatus);
+  const setPendingTask = useSessionStore((s) => s.setPendingTask);
   const setSessionYolo = useSessionStore((s) => s.setSessionYolo);
   const setSessionSystemPrompt = useSessionStore((s) => s.setSessionSystemPrompt);
   const setSessionSkills = useSessionStore((s) => s.setSessionSkills);
   const setSessionWorkingDir = useSessionStore((s) => s.setSessionWorkingDir);
   const addHubMessage = useHubStore((s) => s.addMessage);
   const addTask = useTaskStore((s) => s.addTask);
-  const setPendingTask = useSessionStore((s) => s.setPendingTask);
   const setServerShuttingDown = useSessionStore((s) => s.setServerShuttingDown);
+  // Subscribe to sessions so we can join rooms after fetchSessions() resolves
+  const sessions = useSessionStore((s) => s.sessions);
 
   useEffect(() => {
     const socket = getSocket();
@@ -118,12 +120,20 @@ export function useSocket() {
       addTask(task);
     };
 
+    const handleTasksAcknowledged = () => {
+      useTaskStore.getState().clearAll();
+    };
+
     const handlePendingTask = (data: { sessionId: string; hasPendingTask: boolean }) => {
       setPendingTask(data.sessionId, data.hasPendingTask);
     };
 
-    const handleTasksAcknowledged = () => {
-      useTaskStore.getState().clearAll();
+    const handleTaskAssigned = (data: { sessionId: string }) => {
+      setPendingTask(data.sessionId, true);
+    };
+
+    const handleTaskCleared = (data: { sessionId: string }) => {
+      setPendingTask(data.sessionId, false);
     };
 
     const handleServerShuttingDown = (data: { busySessions: { id: string; name: string }[] }) => {
@@ -147,8 +157,10 @@ export function useSocket() {
     socket.on('session:working-dir-changed', handleWorkingDirChanged);
     socket.on('hub:message', handleHubMessage);
     socket.on('task:done', handleTaskDone);
-    socket.on('session:pending-task', handlePendingTask);
     socket.on('tasks:acknowledged', handleTasksAcknowledged);
+    socket.on('session:pending-task', handlePendingTask);
+    socket.on('bot:task-assigned', handleTaskAssigned);
+    socket.on('bot:task-cleared', handleTaskCleared);
     socket.on('server:shutting-down', handleServerShuttingDown);
 
     return () => {
@@ -168,8 +180,10 @@ export function useSocket() {
       socket.off('session:working-dir-changed', handleWorkingDirChanged);
       socket.off('hub:message', handleHubMessage);
       socket.off('task:done', handleTaskDone);
-      socket.off('session:pending-task', handlePendingTask);
       socket.off('tasks:acknowledged', handleTasksAcknowledged);
+      socket.off('session:pending-task', handlePendingTask);
+      socket.off('bot:task-assigned', handleTaskAssigned);
+      socket.off('bot:task-cleared', handleTaskCleared);
       socket.off('server:shutting-down', handleServerShuttingDown);
 
       disconnectSocket();
@@ -179,6 +193,17 @@ export function useSocket() {
     // Only run on mount/unmount -- store actions are stable references
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Fix race condition: handleConnect fires before fetchSessions() resolves,
+  // leaving session rooms unjoined. Re-emit session:join whenever sessions
+  // populate OR connection is re-established so io.to(sessionId) events reach us.
+  useEffect(() => {
+    const socket = socketRef.current;
+    if (!socket || !connected || sessions.length === 0) return;
+    for (const s of sessions) {
+      socket.emit('session:join', { sessionId: s.id });
+    }
+  }, [sessions, connected]);
 
   return { socket: socketRef.current, connected };
 }

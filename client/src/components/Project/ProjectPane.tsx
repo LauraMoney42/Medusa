@@ -55,6 +55,9 @@ function ProjectDashboard({
   const projectsLoaded = useProjectStore((s) => s.projectsLoaded);
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
 
+  // Completed section collapsed by default — keeps view clean when there are many done projects
+  const [completedExpanded, setCompletedExpanded] = useState(false);
+
   // Refs per card so we can scroll the highlighted project into view
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
@@ -68,15 +71,21 @@ function ProjectDashboard({
     }
   }, [activeProjectId]);
 
-  // Sort: active before complete, then by priority (P0 first), then by updatedAt desc
-  const sorted = [...projects].sort((a, b) => {
-    if (a.status === 'complete' && b.status !== 'complete') return 1;
-    if (a.status !== 'complete' && b.status === 'complete') return -1;
+  // Split into active and complete; each group sorted by priority then updatedAt desc
+  const byPriorityThenDate = (a: ProjectSummary, b: ProjectSummary) => {
     const pa = priorityNum(a.priority);
     const pb = priorityNum(b.priority);
     if (pa !== pb) return pa - pb;
     return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
-  });
+  };
+
+  const activeProjects = projects
+    .filter((p) => p.status !== 'complete')
+    .sort(byPriorityThenDate);
+
+  const completedProjects = projects
+    .filter((p) => p.status === 'complete')
+    .sort(byPriorityThenDate);
 
   return (
     <div style={styles.container}>
@@ -88,7 +97,8 @@ function ProjectDashboard({
         <span style={styles.topTitle}>Projects</span>
         {projectsLoaded && projects.length > 0 && (
           <span style={styles.projectCount}>
-            {projects.length} project{projects.length !== 1 ? 's' : ''}
+            {activeProjects.length} active
+            {completedProjects.length > 0 && ` · ${completedProjects.length} done`}
           </span>
         )}
       </div>
@@ -115,8 +125,8 @@ function ProjectDashboard({
         {/* Quick Tasks — lightweight alternative to full projects */}
         <QuickTaskSection />
 
-        {/* Project cards */}
-        {sorted.map((project) => (
+        {/* Active project cards */}
+        {activeProjects.map((project) => (
           <div
             key={project.id}
             ref={(el) => { cardRefs.current[project.id] = el; }}
@@ -128,6 +138,53 @@ function ProjectDashboard({
             />
           </div>
         ))}
+
+        {/* Completed projects — collapsible section */}
+        {completedProjects.length > 0 && (
+          <div style={styles.completedSection}>
+            <button
+              onClick={() => setCompletedExpanded((v) => !v)}
+              style={styles.completedToggle}
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                style={{
+                  transform: completedExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                  transition: 'transform 0.15s ease',
+                  flexShrink: 0,
+                }}
+              >
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
+              <span>Completed</span>
+              <span style={styles.completedBadge}>{completedProjects.length}</span>
+            </button>
+
+            {completedExpanded && (
+              <div style={styles.completedList}>
+                {completedProjects.map((project) => (
+                  <div
+                    key={project.id}
+                    ref={(el) => { cardRefs.current[project.id] = el; }}
+                  >
+                    <ProjectDetailCard
+                      project={project}
+                      isHighlighted={project.id === activeProjectId}
+                      onEdit={() => onEdit(project.id)}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -392,7 +449,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: 10,
-    padding: '10px 16px',
+    padding: '10px 130px 10px 16px', // paddingRight 130px clears fixed CaffeineToggle (top:12, right:14)
     borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
     background: 'rgba(26, 26, 28, 0.75)',
     backdropFilter: 'blur(20px) saturate(1.2)',
@@ -579,5 +636,46 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 500,
     cursor: 'pointer',
   },
+  // Completed section
+  completedSection: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+    marginTop: 4,
+  } as React.CSSProperties,
+  completedToggle: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    padding: '4px 2px',
+    color: 'var(--text-muted)',
+    fontSize: 12,
+    fontWeight: 600,
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
+    alignSelf: 'flex-start',
+  } as React.CSSProperties,
+  completedBadge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'rgba(255, 255, 255, 0.08)',
+    borderRadius: 10,
+    fontSize: 11,
+    fontWeight: 600,
+    padding: '1px 7px',
+    color: 'var(--text-muted)',
+    letterSpacing: 0,
+    textTransform: 'none',
+  } as React.CSSProperties,
+  completedList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 10,
+    opacity: 0.75,
+  } as React.CSSProperties,
 };
 

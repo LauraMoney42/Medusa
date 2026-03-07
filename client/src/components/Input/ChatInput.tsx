@@ -7,11 +7,12 @@ import {
   type ClipboardEvent,
 } from 'react';
 import { getSocket } from '../../socket';
-import { uploadImage } from '../../api';
+import { uploadImage, uploadFile } from '../../api';
 import { useSessionStore } from '../../stores/sessionStore';
-import { useImageDropStore } from '../../stores/imageDropStore';
+import { useFileDropStore, type FileEntry } from '../../stores/fileDropStore';
 import { useDraftStore } from '../../stores/draftStore';
-import ImagePreview from './ImagePreview';
+import { useInputHistoryStore } from '../../stores/inputHistoryStore';
+import AttachmentPreview from './AttachmentPreview';
 import ScreenshotButton from './ScreenshotButton';
 
 interface ChatInputProps {
@@ -24,9 +25,14 @@ export default function ChatInput({ sessionId, botName }: ChatInputProps) {
   const setDraft = useDraftStore((s) => s.setDraft);
   const clearDraft = useDraftStore((s) => s.clearDraft);
 
+  const historyUp = useInputHistoryStore((s) => s.up);
+  const historyDown = useInputHistoryStore((s) => s.down);
+  const historyPush = useInputHistoryStore((s) => s.push);
+  const historyReset = useInputHistoryStore((s) => s.resetNav);
+
   // DM3: Restore draft when switching sessions
   const [text, setText] = useState(() => getDraft(sessionId));
-  const [images, setImages] = useState<{ file: File; preview: string }[]>([]);
+  const [attachments, setAttachments] = useState<FileEntry[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -44,34 +50,40 @@ export default function ChatInput({ sessionId, botName }: ChatInputProps) {
   const status = useSessionStore((s) => s.statuses[sessionId] ?? 'idle');
   const isBusy = status === 'busy';
 
-  // Consume images dropped via global drag-and-drop
-  const pendingImages = useImageDropStore((s) => s.pendingImages);
-  const consumeImages = useImageDropStore((s) => s.consumeImages);
+  // Consume files dropped via global drag-and-drop
+  const pendingFiles = useFileDropStore((s) => s.pendingFiles);
+  const consumeFiles = useFileDropStore((s) => s.consumeFiles);
 
   useEffect(() => {
-    if (pendingImages.length === 0) return;
-    const consumed = consumeImages();
+    if (pendingFiles.length === 0) return;
+    const consumed = consumeFiles();
     if (consumed.length > 0) {
-      setImages((prev) => [...prev, ...consumed]);
+      setAttachments((prev) => [...prev, ...consumed]);
     }
-  }, [pendingImages, consumeImages]);
+  }, [pendingFiles, consumeFiles]);
 
   const handleScreenshot = useCallback((file: File, preview: string) => {
-    setImages((prev) => [...prev, { file, preview }]);
+    setAttachments((prev) => [...prev, { file, preview, isImage: true }]);
   }, []);
 
   const send = useCallback(async () => {
     const trimmed = text.trim();
-    if (!trimmed && images.length === 0) return;
+    if (!trimmed && attachments.length === 0) return;
 
-    // Upload images first
-    const uploadedPaths: string[] = [];
-    for (const img of images) {
+    // Split attachments into images and files, upload accordingly
+    const imagePaths: string[] = [];
+    const filePaths: string[] = [];
+    for (const att of attachments) {
       try {
-        const { filePath } = await uploadImage(img.file);
-        uploadedPaths.push(filePath);
+        if (att.isImage) {
+          const { filePath } = await uploadImage(att.file);
+          imagePaths.push(filePath);
+        } else {
+          const { filePath } = await uploadFile(att.file);
+          filePaths.push(filePath);
+        }
       } catch (err) {
-        console.error('Image upload failed:', err);
+        console.error('Upload failed:', err);
       }
     }
 
@@ -79,7 +91,8 @@ export default function ChatInput({ sessionId, botName }: ChatInputProps) {
     socket.emit('message:send', {
       sessionId,
       text: trimmed,
-      images: uploadedPaths.length > 0 ? uploadedPaths : undefined,
+      images: imagePaths.length > 0 ? imagePaths : undefined,
+      files: filePaths.length > 0 ? filePaths : undefined,
     });
 
     // Cancel any pending debounced setDraft — must happen before clearDraft
@@ -91,17 +104,21 @@ export default function ChatInput({ sessionId, botName }: ChatInputProps) {
 
     // Clear the draft after successful emit
     clearDraft(sessionId);
+    historyPush(sessionId, trimmed);
+    historyReset(sessionId);
 
     setText('');
     // Revoke blob URLs to prevent memory leaks
-    images.forEach((img) => URL.revokeObjectURL(img.preview));
-    setImages([]);
+    attachments.forEach((att) => {
+      if (att.preview) URL.revokeObjectURL(att.preview);
+    });
+    setAttachments([]);
 
     // Reset textarea height
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
-  }, [text, images, sessionId, clearDraft]);
+  }, [text, attachments, sessionId, clearDraft]);
 
   const handleAbort = useCallback(() => {
     const socket = getSocket();
@@ -109,6 +126,40 @@ export default function ChatInput({ sessionId, botName }: ChatInputProps) {
   }, [sessionId]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // Input history navigation (bash-style up/down arrow)
+    if (e.key === 'ArrowUp' && !e.shiftKey) {
+      const el = e.currentTarget;
+      if (el.selectionStart === 0 && el.selectionEnd === 0) {
+        const prev = historyUp(sessionId, text);
+        if (prev !== null) {
+          e.preventDefault();
+          setText(prev);
+          // Place cursor at start so next Up press works immediately
+          requestAnimationFrame(() => {
+            el.selectionStart = 0;
+            el.selectionEnd = 0;
+          });
+        }
+      }
+      return;
+    }
+    if (e.key === 'ArrowDown' && !e.shiftKey) {
+      const el = e.currentTarget;
+      if (el.selectionStart === el.value.length) {
+        const next = historyDown(sessionId);
+        if (next !== null) {
+          e.preventDefault();
+          setText(next);
+          // Place cursor at end so next Down press works immediately
+          requestAnimationFrame(() => {
+            el.selectionStart = el.value.length;
+            el.selectionEnd = el.value.length;
+          });
+        }
+      }
+      return;
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       if (!isBusy) send();
@@ -128,18 +179,19 @@ export default function ChatInput({ sessionId, botName }: ChatInputProps) {
 
     if (imageFiles.length > 0) {
       e.preventDefault();
-      const newImages = imageFiles.map((file) => ({
+      const newEntries: FileEntry[] = imageFiles.map((file) => ({
         file,
         preview: URL.createObjectURL(file),
+        isImage: true,
       }));
-      setImages((prev) => [...prev, ...newImages]);
+      setAttachments((prev) => [...prev, ...newEntries]);
     }
   };
 
-  const removeImage = (index: number) => {
-    setImages((prev) => {
+  const removeAttachment = (index: number) => {
+    setAttachments((prev) => {
       const removed = prev[index];
-      URL.revokeObjectURL(removed.preview);
+      if (removed.preview) URL.revokeObjectURL(removed.preview);
       return prev.filter((_, i) => i !== index);
     });
   };
@@ -168,14 +220,14 @@ export default function ChatInput({ sessionId, botName }: ChatInputProps) {
 
   return (
     <div style={styles.wrapper}>
-      {/* Image previews */}
-      {images.length > 0 && (
+      {/* Attachment previews */}
+      {attachments.length > 0 && (
         <div style={styles.imageRow}>
-          {images.map((img, i) => (
-            <ImagePreview
+          {attachments.map((att, i) => (
+            <AttachmentPreview
               key={i}
-              src={img.preview}
-              onRemove={() => removeImage(i)}
+              entry={att}
+              onRemove={() => removeAttachment(i)}
             />
           ))}
         </div>
@@ -188,6 +240,7 @@ export default function ChatInput({ sessionId, botName }: ChatInputProps) {
           onChange={(e) => {
             const val = e.target.value;
             setText(val);
+            historyReset(sessionId);
             // DM2: Debounced draft save (300ms) — clear draft if input emptied
             if (debounceRef.current) clearTimeout(debounceRef.current);
             debounceRef.current = setTimeout(() => {
@@ -220,10 +273,10 @@ export default function ChatInput({ sessionId, botName }: ChatInputProps) {
         ) : (
           <button
             onClick={send}
-            disabled={!text.trim() && images.length === 0}
+            disabled={!text.trim() && attachments.length === 0}
             style={{
               ...styles.sendBtn,
-              opacity: text.trim() || images.length > 0 ? 1 : 0.4,
+              opacity: text.trim() || attachments.length > 0 ? 1 : 0.4,
             }}
             title="Send"
           >

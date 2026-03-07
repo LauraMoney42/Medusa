@@ -17,6 +17,8 @@ const MAX_BOTS_PER_TICK = 4;
 const HEARTBEAT_STALE_MS = 10 * 60 * 1000;
 /** Only warn about a stale bot once per this cooldown to avoid Hub spam */
 const STALE_WARN_COOLDOWN_MS = 15 * 60 * 1000;
+/** How often to prompt all bots for a proactive project status update (default: 30 min) */
+const STATUS_UPDATE_INTERVAL_MS = parseInt(process.env.STATUS_UPDATE_INTERVAL_MS || "1800000", 10);
 
 interface StaleEntry {
   sessionId: string;
@@ -53,6 +55,8 @@ export class HubPollScheduler {
   private lastHeartbeat = new Map<string, number>();
   /** sessionId -> last time we warned about this bot being stale */
   private lastStaleWarning = new Map<string, number>();
+  /** sessionId -> last time we sent a proactive status update prompt */
+  private lastStatusUpdatePrompt = new Map<string, number>();
   private intervalHandle: ReturnType<typeof setInterval> | null = null;
 
   constructor(
@@ -89,20 +93,6 @@ export class HubPollScheduler {
     }
   }
 
-  /**
-   * Track a pending task assignment for stale detection.
-   * Call when session:pending-task fires with hasPendingTask: true.
-   */
-  trackPendingTask(sessionId: string): void {
-    if (!this.staleAssignments.has(sessionId)) {
-      this.staleAssignments.set(sessionId, {
-        sessionId,
-        assignedAt: Date.now(),
-        nudged: false,
-      });
-      console.log(`[poll-scheduler] Tracking pending task for session ${sessionId}`);
-    }
-  }
 
   /**
    * Remove all state for a deleted session to prevent Map growth over time.
@@ -114,6 +104,7 @@ export class HubPollScheduler {
     this.staleAssignments.delete(sessionId);
     this.lastHeartbeat.delete(sessionId);
     this.lastStaleWarning.delete(sessionId);
+    this.lastStatusUpdatePrompt.delete(sessionId);
   }
 
   /**
@@ -174,15 +165,6 @@ export class HubPollScheduler {
     }
   }
 
-  /**
-   * Clear a pending task assignment.
-   * Call when session:pending-task fires with hasPendingTask: false, or TASK-DONE detected.
-   */
-  clearPendingTask(sessionId: string): void {
-    if (this.staleAssignments.delete(sessionId)) {
-      console.log(`[poll-scheduler] Cleared pending task for session ${sessionId}`);
-    }
-  }
 
   /**
    * Check for stale assignments and auto-nudge bots that haven't reported progress.
@@ -255,12 +237,61 @@ export class HubPollScheduler {
     });
   }
 
+  /**
+   * Proactively prompt all idle bots to post a project status update
+   * if they haven't done so in STATUS_UPDATE_INTERVAL_MS.
+   * This prevents bots from going silent after completing tasks.
+   */
+  private checkStatusUpdates(): void {
+    const now = Date.now();
+    const allSessions = this.sessionStore.loadAll();
+
+    for (const session of allSessions) {
+      // Skip non-bot sessions
+      if (session.name === "You" || session.name === "System") continue;
+
+      // Skip busy bots — they're already working
+      if (this.processManager.isSessionBusy(session.id)) continue;
+
+      const lastPrompt = this.lastStatusUpdatePrompt.get(session.id) ?? 0;
+      if (now - lastPrompt < STATUS_UPDATE_INTERVAL_MS) continue;
+
+      // Mark before sending to prevent re-trigger on next tick
+      this.lastStatusUpdatePrompt.set(session.id, now);
+
+      const prompt = `[Status Check] It's been a while since your last update. Please post a brief project status update to the Hub covering: what you completed, what's in progress, and any blockers. Use [HUB-POST: your status]. If you have nothing to report, respond with [NO-ACTION].`;
+
+      autonomousDeliver({
+        sessionId: session.id,
+        prompt,
+        source: "status-check",
+        io: this.io,
+        processManager: this.processManager,
+        sessionStore: this.sessionStore,
+        hubStore: this.hubStore,
+        chatStore: this.chatStore,
+        mentionRouter: this.mentionRouter,
+        tokenLogger: this.tokenLogger,
+        quickTaskStore: this.quickTaskStore,
+      }).then(() => {
+        this.recordHeartbeat(session.id);
+      }).catch((err) => {
+        console.error(`[poll-scheduler] checkStatusUpdates autonomousDeliver failed for ${session.name}:`, err);
+      });
+
+      console.log(`[poll-scheduler] Status update prompt sent to ${session.name}`);
+    }
+  }
+
   private tick(): void {
     // Check for stale assignments on every tick, even if no new hub messages
     this.checkStaleAssignments();
 
     // Check bot heartbeats — flag bots that haven't responded recently
     this.checkBotHeartbeats();
+
+    // Proactively prompt idle bots for status updates
+    this.checkStatusUpdates();
 
     const recentMessages = this.hubStore.getRecent(20);
     if (recentMessages.length === 0) return;

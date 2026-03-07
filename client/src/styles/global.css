@@ -253,23 +253,7 @@ textarea {
   to { opacity: 1; }
 }
 
-/* Bot status: spinning cog for busy state */
-@keyframes cogSpin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
 
-/* Bot status: pulsing dot for pending task */
-@keyframes pendingPulse {
-  0%, 100% { opacity: 0.4; transform: scale(1); }
-  50% { opacity: 1; transform: scale(1.3); }
-}
-
-/* Bot status: fast blinking dot for busy/thinking state */
-@keyframes statusBlink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.15; }
-}
 
 /* iOS-style typing dots bounce */
 @keyframes typingBounce {
@@ -277,7 +261,19 @@ textarea {
   30% { transform: translateY(-4px); opacity: 1; }
 }
 
+/* Status indicator animations */
+@keyframes cogSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pendingPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.85); }
+}
+
 /* Session edit button: show on hover */
+.sidebar div[style*="cursor: default"]:hover .session-edit-btn,
 .sidebar div[style*="cursor: grab"]:hover .session-edit-btn,
 .sidebar div[style*="cursor: pointer"]:hover .session-edit-btn {
   opacity: 1 !important;

@@ -119,7 +119,6 @@ export class TaskSyncManager {
 
     const overlap = intersection.size / union.size;
 
-    // Boost score if there's high overlap
     return overlap;
   }
 

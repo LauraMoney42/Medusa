@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSessionStore } from '../../stores/sessionStore';
 import { getSocket } from '../../socket';
 import SkillPicker from '../Chat/SkillPicker';
@@ -19,55 +19,110 @@ export default function SessionEditor({ session, onClose }: SessionEditorProps) 
   const [yolo, setYolo] = useState(session.yoloMode ?? false);
   const [skills, setSkills] = useState(session.skills ?? []);
   const [showSkillPicker, setShowSkillPicker] = useState(false);
+  // isSaving: true while ACKs from server are pending — blocks accidental close mid-save.
+  const [isSaving, setIsSaving] = useState(false);
 
-  // Sync if the session changes externally
+  // isEditing: true when any field differs from the original session snapshot.
+  // Blocks ALL non-explicit close triggers (Escape, ✕) to prevent accidental loss of edits.
+  // Only explicit user actions (Save, Cancel) can close when isEditing is true.
+  const isEditing = useMemo(() => (
+    name.trim() !== session.name.trim() ||
+    instructions.trim() !== (session.systemPrompt ?? '') ||
+    workingDir.trim() !== session.workingDir.trim() ||
+    yolo !== (session.yoloMode ?? false) ||
+    JSON.stringify(skills) !== JSON.stringify(session.skills ?? [])
+  ), [name, instructions, workingDir, yolo, skills, session]);
+
+  // Only reset form when opening a DIFFERENT session — never on socket-driven prop updates.
+  // If we depended on session.name/systemPrompt etc., any socket event updating the session
+  // would fire this effect and silently wipe whatever the user was typing.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     setName(session.name);
     setInstructions(session.systemPrompt ?? '');
     setWorkingDir(session.workingDir);
     setYolo(session.yoloMode ?? false);
     setSkills(session.skills ?? []);
-  }, [session.name, session.systemPrompt, session.workingDir, session.yoloMode, session.skills]);
+  }, [session.id]);
 
   const handleSave = useCallback(() => {
     const socket = getSocket();
 
-    // Rename if changed
+    // Rename if changed (local store update — no ACK needed)
     const trimmedName = name.trim();
     if (trimmedName && trimmedName !== session.name) {
       renameSession(session.id, trimmedName);
     }
 
-    // Emit updates for each changed field
+    // Collect which fields need server persistence
+    const emits: Array<() => Promise<void>> = [];
+
     if (instructions.trim() !== (session.systemPrompt ?? '')) {
-      socket.emit('session:update-system-prompt', {
-        sessionId: session.id,
-        systemPrompt: instructions.trim(),
-      });
+      emits.push(
+        () =>
+          new Promise<void>((resolve) => {
+            socket.emit(
+              'session:update-system-prompt',
+              { sessionId: session.id, systemPrompt: instructions.trim() },
+              () => resolve()
+            );
+          })
+      );
     }
 
     if (workingDir.trim() !== session.workingDir) {
-      socket.emit('session:update-working-dir', {
-        sessionId: session.id,
-        workingDir: workingDir.trim(),
-      });
+      emits.push(
+        () =>
+          new Promise<void>((resolve) => {
+            socket.emit(
+              'session:update-working-dir',
+              { sessionId: session.id, workingDir: workingDir.trim() },
+              () => resolve()
+            );
+          })
+      );
     }
 
     if (yolo !== (session.yoloMode ?? false)) {
-      socket.emit('session:set-yolo', {
-        sessionId: session.id,
-        yoloMode: yolo,
-      });
+      emits.push(
+        () =>
+          new Promise<void>((resolve) => {
+            socket.emit(
+              'session:set-yolo',
+              { sessionId: session.id, yoloMode: yolo },
+              () => resolve()
+            );
+          })
+      );
     }
 
     if (JSON.stringify(skills) !== JSON.stringify(session.skills ?? [])) {
-      socket.emit('session:update-skills', {
-        sessionId: session.id,
-        skills,
-      });
+      emits.push(
+        () =>
+          new Promise<void>((resolve) => {
+            socket.emit(
+              'session:update-skills',
+              { sessionId: session.id, skills },
+              () => resolve()
+            );
+          })
+      );
     }
 
-    onClose();
+    if (emits.length === 0) {
+      // Nothing changed — close immediately
+      onClose();
+      return;
+    }
+
+    // Wait for all server ACKs before closing.
+    // 3-second timeout fallback in case a socket ACK is never received.
+    setIsSaving(true);
+    const timeout = setTimeout(onClose, 3000);
+    Promise.all(emits.map((fn) => fn())).then(() => {
+      clearTimeout(timeout);
+      onClose();
+    });
   }, [session, name, instructions, workingDir, yolo, skills, renameSession, onClose]);
 
   const handleToggleSkill = useCallback(
@@ -88,17 +143,31 @@ export default function SessionEditor({ session, onClose }: SessionEditorProps) 
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      // Block Escape while editing OR saving — prevents accidental close with unsaved changes
+      // or before server ACKs arrive. Only Cancel/Save buttons can close in these states.
+      if (e.key === 'Escape' && !isEditing && !isSaving) onClose();
     },
-    [onClose],
+    [onClose, isEditing, isSaving],
   );
 
   return (
-    <div style={styles.overlay} onClick={onClose} onKeyDown={handleKeyDown}>
+    // Backdrop: no onClick — removing click-to-close prevents accidental dismissal
+    // mid-edit (was the primary cause of the "window randomly closes" bug).
+    // Users close via ✕ button, Cancel, or Escape.
+    <div style={styles.overlay} onKeyDown={handleKeyDown}>
       <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
         <div style={styles.header}>
           <h3 style={styles.title}>Edit Bot</h3>
-          <button onClick={onClose} style={styles.closeBtn}>&times;</button>
+          {/* ✕ blocked when editing or saving — require explicit Cancel/Save.
+              When blocked, show a subtle "unsaved" hint so the user knows why. */}
+          {isEditing && !isSaving && (
+            <span style={styles.unsavedHint}>unsaved</span>
+          )}
+          <button onClick={(isEditing || isSaving) ? undefined : onClose} style={{
+            ...styles.closeBtn,
+            opacity: (isEditing || isSaving) ? 0.3 : 1,
+            cursor: (isEditing || isSaving) ? 'not-allowed' : 'pointer',
+          }} title={(isEditing || isSaving) ? 'Use Save or Cancel to close' : 'Close'}>&times;</button>
         </div>
 
         <div style={styles.body}>
@@ -181,8 +250,20 @@ export default function SessionEditor({ session, onClose }: SessionEditorProps) 
 
         <div style={styles.footer}>
           <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
-            <button onClick={onClose} style={styles.cancelBtn}>Cancel</button>
-            <button onClick={handleSave} style={styles.saveBtn}>Save</button>
+            <button
+              onClick={isSaving ? undefined : onClose}
+              disabled={isSaving}
+              style={{ ...styles.cancelBtn, opacity: isSaving ? 0.4 : 1, cursor: isSaving ? 'not-allowed' : 'pointer' }}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={isSaving ? undefined : handleSave}
+              disabled={isSaving}
+              style={{ ...styles.saveBtn, opacity: isSaving ? 0.7 : 1, cursor: isSaving ? 'not-allowed' : 'pointer' }}
+            >
+              {isSaving ? 'Saving…' : 'Save'}
+            </button>
           </div>
         </div>
 
@@ -253,6 +334,15 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     padding: '0 4px',
     lineHeight: 1,
+  },
+  unsavedHint: {
+    fontSize: 10,
+    fontWeight: 600,
+    color: 'var(--warning, #f59e0b)',
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.05em',
+    opacity: 0.8,
+    marginRight: 4,
   },
   body: {
     padding: '16px',

@@ -14,6 +14,7 @@ import { createHealthRouter } from "./routes/health.js";
 import { createAuthRouter } from "./routes/auth.js";
 import { createSessionsRouter } from "./routes/sessions.js";
 import imagesRouter from "./routes/images.js";
+import filesRouter from "./routes/files.js";
 import { createSkillsRouter } from "./routes/skills.js";
 import { setupSocketHandler } from "./socket/handler.js";
 import { ProcessManager } from "./claude/process-manager.js";
@@ -30,6 +31,7 @@ import { QuickTaskStore } from "./projects/quick-task-store.js";
 import { createQuickTasksRouter } from "./routes/quick-tasks.js";
 import { createCaffeineRouter, shutdownCaffeine } from "./routes/caffeine.js";
 import { createSettingsRouter } from "./routes/settings.js";
+import { createTicTalkRouter } from "./routes/tictalk.js";
 import { TaskSyncManager } from "./projects/task-sync.js";
 import { HubPollScheduler } from "./hub/poll-scheduler.js";
 import { paginateDevlogs } from "./utils/devlog-paginator.js";
@@ -132,14 +134,21 @@ app.use("/api/auth", createAuthRouter());
 app.use("/api/health", generalLimiter, createHealthRouter(processManager, pollScheduler, io));
 app.use("/api/sessions", sessionCreateLimiter, createSessionsRouter(sessionStore, processManager, chatStore, mentionRouter, pollScheduler));
 app.use("/api/images", uploadLimiter, imagesRouter);
+app.use("/api/files", uploadLimiter, filesRouter);
 app.use("/api/skills", generalLimiter, createSkillsRouter(skillCatalog));
 app.use("/api/chat", generalLimiter, createChatRouter(chatStore));
 app.use("/api/hub", generalLimiter, createHubRouter(hubStore, io, mentionRouter, sessionStore));
 app.use("/api/projects", generalLimiter, createProjectsRouter(projectStore));
 app.use("/api/quick-tasks", generalLimiter, createQuickTasksRouter(quickTaskStore));
-app.use("/api/metrics", generalLimiter, createMetricsRouter(tokenLogger));
+const { metricsRouter, tokenUsageHandler } = createMetricsRouter(tokenLogger);
+app.use("/api/metrics", generalLimiter, metricsRouter);
+// Clean alias: GET /api/token-usage?period=day|week|month (for Token Usage Dashboard)
+app.get("/api/token-usage", generalLimiter, tokenUsageHandler);
 app.use("/api/caffeine", generalLimiter, createCaffeineRouter());
 app.use("/api/settings", generalLimiter, createSettingsRouter(processManager, io));
+// TicTalk proxy — forwards TicBuddy/TicTamer iOS app messages to Anthropic Claude API.
+// Has its own stricter rate limiter (20 req/min) since each call hits the paid API.
+app.use("/api/tictalk", createTicTalkRouter());
 
 // ---- Graceful shutdown function (defined before routes so we can use it) ----
 let isShuttingDown = false;
@@ -266,20 +275,13 @@ if (config.hubPolling) {
 // ---- Project/Devlog Hygiene: Auto-update projects on [TASK-DONE:] ----
 const taskSyncManager = new TaskSyncManager(projectStore);
 
-// Wire session:pending-task and task:done events.
-// Intercept io.emit() calls without modifying callsites.
+// Intercept task:done events to auto-update project assignment statuses.
+// Note: bot:pending-task events are emitted for coordination but not yet hooked
+// to the poll scheduler (trackPendingTask/clearPendingTask don't exist yet).
+// This keeps concerns cleanly separated and is ready for future hibernation features.
 const originalEmit = io.emit.bind(io);
 io.emit = ((event: string, ...args: unknown[]) => {
-  if (event === "session:pending-task") {
-    const data = args[0] as { sessionId: string; hasPendingTask: boolean } | undefined;
-    if (data) {
-      if (data.hasPendingTask) {
-        pollScheduler.trackPendingTask(data.sessionId);
-      } else {
-        pollScheduler.clearPendingTask(data.sessionId);
-      }
-    }
-  } else if (event === "task:done") {
+  if (event === "task:done") {
     const task = args[0] as any;
     if (task) {
       taskSyncManager.handleTaskDone(task);

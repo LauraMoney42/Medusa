@@ -13,6 +13,13 @@ interface MentionAutocompleteProps {
   onDismiss: () => void;
   /** Whether the popup is visible */
   visible: boolean;
+  /**
+   * Selected index driven by parent (HubFeed keyboard handler).
+   * Lifted up so arrow-key navigation in HubFeed actually moves the highlight.
+   */
+  selectedIndex?: number;
+  /** Called when mouse hover changes selection — keeps parent state in sync */
+  onSelectedIndexChange?: (i: number) => void;
 }
 
 /**
@@ -26,18 +33,28 @@ export default function MentionAutocomplete({
   onSelect,
   onDismiss: _onDismiss,
   visible,
+  selectedIndex: controlledIndex,
+  onSelectedIndexChange,
 }: MentionAutocompleteProps) {
   // _onDismiss is handled by the parent (HubFeed) via keyboard events
   void _onDismiss;
   const sessions = useSessionStore((s) => s.sessions);
-  const [selectedIndex, setSelectedIndex] = useState(0);
+  // Internal state is the fallback when parent doesn't control selectedIndex.
+  // When controlledIndex is provided (HubFeed drives it via keyboard), we use that.
+  const [internalIndex, setInternalIndex] = useState(0);
+  const selectedIndex = controlledIndex ?? internalIndex;
+  const setSelectedIndex = (i: number) => {
+    setInternalIndex(i);
+    onSelectedIndexChange?.(i);
+  };
   const listRef = useRef<HTMLDivElement>(null);
 
-  // Build mention candidates: all bot names + "You" + "all"
+  // Build mention candidates: all bot names + macros (@all, @devs) + "You"
   const candidates = [
     ...sessions.map((s) => s.name),
     'You',
     'all',
+    'devs',   // @devs macro — expands to all sessions with "dev" in name server-side
   ];
 
   // Extract the @query from the current cursor position

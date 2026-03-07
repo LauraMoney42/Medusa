@@ -3,6 +3,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useTaskStore, hasCompletedTask } from '../../stores/taskStore';
 import { useDraftStore } from '../../stores/draftStore';
 import SessionEditor from './SessionEditor';
+import type { SessionMeta } from '../../types/session';
 
 /** Check if a session is the Medusa bot (case-insensitive name match) */
 function isMedusaSession(name: string): boolean {
@@ -88,8 +89,15 @@ export default function SessionList() {
     sessionId: string;
   } | null>(null);
 
-  // Editor state
-  const [editingId, setEditingId] = useState<string | null>(null);
+  // Editor state — snapshot the session at open time so socket-driven store updates
+  // can't cause the editor to close (session briefly missing from store) or reset form fields.
+  const [editingSession, setEditingSession] = useState<SessionMeta | null>(null);
+
+  // Stable close handler — useCallback with empty deps ensures SessionEditor never receives
+  // a new onClose reference due to SessionList re-renders (status changes, hub messages, etc.).
+  // A new onClose reference would cause handleSave/handleKeyDown inside SessionEditor to
+  // be recreated via their own useCallbacks, risking race conditions mid-save.
+  const handleEditorClose = useCallback(() => setEditingSession(null), []);
 
   // Rename state
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -262,7 +270,7 @@ export default function SessionList() {
                   className="session-edit-btn"
                   onClick={(e) => {
                     e.stopPropagation();
-                    setEditingId(session.id);
+                    setEditingSession(session); // snapshot — immune to store updates while editing
                   }}
                   title="Edit session settings"
                   style={styles.editBtn}
@@ -278,17 +286,14 @@ export default function SessionList() {
         );
       })}
 
-      {/* Session editor modal */}
-      {editingId && (() => {
-        const editSession = sessions.find((s) => s.id === editingId);
-        if (!editSession) return null;
-        return (
-          <SessionEditor
-            session={editSession}
-            onClose={() => setEditingId(null)}
-          />
-        );
-      })()}
+      {/* Session editor modal — uses snapshotted session, not live store lookup,
+          so the editor can't be closed by socket-driven session list updates */}
+      {editingSession && (
+        <SessionEditor
+          session={editingSession}
+          onClose={handleEditorClose}
+        />
+      )}
 
       {/* Context menu */}
       {contextMenu && (

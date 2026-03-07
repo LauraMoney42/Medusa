@@ -4,11 +4,13 @@ import { useSessionStore } from './stores/sessionStore';
 import { useHubStore } from './stores/hubStore';
 import { useTaskStore } from './stores/taskStore';
 import { useProjectStore } from './stores/projectStore';
-import { useImageDropStore } from './stores/imageDropStore';
+import { useFileDropStore } from './stores/fileDropStore';
 import LoginScreen from './components/Auth/LoginScreen';
 import Sidebar from './components/Sidebar/Sidebar';
 import HubFeed from './components/Hub/HubFeed';
 import ProjectPane from './components/Project/ProjectPane';
+import MedusaChat from './components/Hub/MedusaChat';
+import UsagePane from './components/Usage/UsagePane';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import CaffeineToggle from './components/Caffeine/CaffeineToggle';
 import OnboardingView from './components/Onboarding/OnboardingView';
@@ -61,9 +63,9 @@ function AuthenticatedApp() {
   const fetchTasks = useTaskStore((s) => s.fetchTasks);
   const fetchProjects = useProjectStore((s) => s.fetchProjects);
 
-  const isDragging = useImageDropStore((s) => s.isDragging);
-  const setDragging = useImageDropStore((s) => s.setDragging);
-  const addImages = useImageDropStore((s) => s.addImages);
+  const isDragging = useFileDropStore((s) => s.isDragging);
+  const setDragging = useFileDropStore((s) => s.setDragging);
+  const addFiles = useFileDropStore((s) => s.addFiles);
 
   // Track drag enter/leave depth so nested elements don't flicker the overlay
   const dragCounterRef = useRef(0);
@@ -118,24 +120,26 @@ function AuthenticatedApp() {
     dragCounterRef.current = 0;
     setDragging(false);
 
-    const files = Array.from(e.dataTransfer.files);
-    const imageFiles = files.filter((f) => f.type.startsWith('image/'));
-
-    if (imageFiles.length === 0) return;
+    const droppedFiles = Array.from(e.dataTransfer.files);
+    if (droppedFiles.length === 0) return;
 
     // Enforce 20MB per-file limit (match server)
     const MAX_SIZE = 20 * 1024 * 1024;
-    const validFiles = imageFiles.filter((f) => f.size <= MAX_SIZE);
+    const validFiles = droppedFiles.filter((f) => f.size <= MAX_SIZE);
 
     if (validFiles.length === 0) return;
 
-    const entries = validFiles.map((file) => ({
-      file,
-      preview: URL.createObjectURL(file),
-    }));
+    const entries = validFiles.map((file) => {
+      const isImage = file.type.startsWith('image/');
+      return {
+        file,
+        preview: isImage ? URL.createObjectURL(file) : '',
+        isImage,
+      };
+    });
 
-    addImages(entries);
-  }, [setDragging, addImages]);
+    addFiles(entries);
+  }, [setDragging, addFiles]);
 
   return (
     <ErrorBoundary>
@@ -163,6 +167,14 @@ function AuthenticatedApp() {
           <ErrorBoundary>
             <ProjectPane onMenuToggle={() => setSidebarOpen((o) => !o)} />
           </ErrorBoundary>
+        ) : activeView === 'medusa' ? (
+          <ErrorBoundary>
+            <MedusaChat onMenuToggle={() => setSidebarOpen((o) => !o)} />
+          </ErrorBoundary>
+        ) : activeView === 'usage' ? (
+          <ErrorBoundary>
+            <UsagePane />
+          </ErrorBoundary>
         ) : (
           <ErrorBoundary>
             <HubFeed onMenuToggle={() => setSidebarOpen((o) => !o)} />
@@ -173,17 +185,19 @@ function AuthenticatedApp() {
   );
 }
 
-/** Full-viewport overlay shown while dragging an image over the app */
+/** Full-viewport overlay shown while dragging files over the app */
 function DropOverlay() {
   return (
     <div style={dropStyles.overlay}>
       <div style={dropStyles.inner}>
         <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="rgba(26, 122, 60, 0.6)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-          <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-          <circle cx="8.5" cy="8.5" r="1.5" />
-          <polyline points="21 15 16 10 5 21" />
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <polyline points="14 2 14 8 20 8" />
+          <line x1="12" y1="18" x2="12" y2="12" />
+          <line x1="9" y1="15" x2="12" y2="12" />
+          <line x1="15" y1="15" x2="12" y2="12" />
         </svg>
-        <span style={dropStyles.text}>Drop image here</span>
+        <span style={dropStyles.text}>Drop files here</span>
       </div>
     </div>
   );

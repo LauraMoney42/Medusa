@@ -211,6 +211,26 @@ export async function uploadImage(
   return res.json() as Promise<{ filePath: string }>;
 }
 
+export async function uploadFile(
+  file: File,
+): Promise<{ filePath: string }> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const res = await fetch('/api/files', {
+    method: 'POST',
+    credentials: 'include',
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`File upload failed ${res.status}: ${body}`);
+  }
+
+  return res.json() as Promise<{ filePath: string }>;
+}
+
 export function shutdown(): Promise<void> {
   return request<void>('/api/health/shutdown', { method: 'POST' });
 }
@@ -266,4 +286,41 @@ export function logoutClaudeAccount(accountId: 1 | 2): Promise<{ success: boolea
   return request<{ success: boolean; loginStatus: AccountLoginStatus }>(`/api/settings/account/${accountId}/logout`, {
     method: 'POST',
   });
+}
+
+// ---- Token Usage Dashboard ----
+
+export interface TokenUsagePeriod {
+  period: 'day' | 'week' | 'month';
+  from: string;
+  to: string;
+  totalCostUsd: number;
+  totalMessages: number;
+  totalDurationMs: number;
+  byBot: Record<string, { costUsd: number; messages: number }>;
+  bySource: Record<string, { costUsd: number; messages: number }>;
+}
+
+export function fetchTokenUsage(period: 'day' | 'week' | 'month'): Promise<TokenUsagePeriod> {
+  return request<TokenUsagePeriod>(`/api/token-usage?period=${period}`);
+}
+
+export type ComparePeriod = 'today' | 'yesterday' | 'this_week' | 'last_week' | 'this_month' | 'last_month';
+
+export interface ComparePeriodSummary {
+  label: string;
+  from: string;
+  to: string;
+  totalCostUsd: number;
+  totalMessages: number;
+  byBot: Record<string, { costUsd: number; messages: number }>;
+}
+
+export interface CompareResult {
+  a: ComparePeriodSummary;
+  b: ComparePeriodSummary;
+}
+
+export function fetchCompare(a: ComparePeriod, b: ComparePeriod): Promise<CompareResult> {
+  return request<CompareResult>(`/api/metrics/compare?a=${a}&b=${b}`);
 }

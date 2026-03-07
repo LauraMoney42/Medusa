@@ -11,7 +11,7 @@ import { loadCompressorConfig } from "../compressor/config.js";
 // Accepts URL paths (/uploads/filename) and converts them to filesystem paths
 // before validation. path.basename() strips any traversal attempts before join.
 // Rejects anything that resolves outside uploadsDir. Filters silently.
-function sanitizeImagePaths(images: string[] | undefined): string[] {
+export function sanitizeImagePaths(images: string[] | undefined): string[] {
   if (!images || images.length === 0) return [];
   const uploadsDir = path.resolve(config.uploadsDir);
   return images.flatMap((img) => {
@@ -272,7 +272,7 @@ You are in COMPACT MODE. Respond in under 100 tokens unless the task requires mo
 Skip preamble, context-setting, and sign-offs. Do not restate the question or assignment.
 If no action needed: [NO-ACTION]. If action needed: do it immediately.
 Post via [HUB-POST: ...]. Task completions: [TASK-DONE: description].
-Escalate: [HUB-POST: @You 🚨🚨🚨 APPROVAL NEEDED: <what>]
+Escalate: [HUB-POST: @You @Medusa 🚨🚨🚨 APPROVAL NEEDED: <what>]
 For internal bot-to-bot coordination only, use [BOT-TASK: @BotName message] — NOT [HUB-POST: ...]. Routes directly, invisible to user.
 Active bots: ${botNames || "none"}`;
 
@@ -304,7 +304,8 @@ IMPORTANT — Auto-continuation:
 
 IMPORTANT — Escalation:
 - If you need human approval, a decision, or are blocked on something only the user can resolve, post to the Hub with this exact format:
-  [HUB-POST: @You 🚨🚨🚨 APPROVAL NEEDED: <description of what you need>]
+  [HUB-POST: @You @Medusa 🚨🚨🚨 APPROVAL NEEDED: <description of what you need>]
+- @Medusa will triage first — if it truly needs the user, Medusa will re-escalate to @You.
 - Do NOT silently wait. Always escalate visibly.
 
 IMPORTANT — Token Efficiency:
@@ -420,6 +421,362 @@ export function setupSocketHandler(
     return next(new Error("Authentication failed"));
   });
 
+  // ---- Core message send pipeline ----
+  // Extracted from the message:send socket handler so it can be called both
+  // directly (session idle) and via mentionRouter.queueDirectMessage (session was busy).
+  // All deps are closed over from setupSocketHandler scope — no `socket` needed here
+  // since every emission uses io.to(sessionId) (room broadcast).
+  async function handleMessageSend(
+    sessionId: string,
+    text: string,
+    images: string[] | undefined,
+    files: string[] | undefined
+  ): Promise<void> {
+    const meta = store.get(sessionId);
+    if (!meta) return; // session removed between queue and drain — skip silently
+
+    const now = new Date().toISOString();
+    const userMsgId = uuidv4();
+    const assistantMsgId = uuidv4();
+
+    // Sanitize file paths the same way as images
+    const sanitizedFiles = sanitizeImagePaths(files);
+
+    // Echo the user message with the shape the client expects (ChatMessage)
+    const userMsg = {
+      id: userMsgId,
+      sessionId,
+      role: "user" as const,
+      text,
+      images,
+      files: sanitizedFiles.length > 0 ? files : undefined,
+      timestamp: now,
+    };
+    io.to(sessionId).emit("message:user", userMsg);
+
+    // Persist user message
+    chatStore.appendMessage(userMsg);
+
+    // Immediately emit the assistant stream start so the client creates
+    // the accumulation buffer before any deltas arrive
+    io.to(sessionId).emit("message:stream:start", {
+      id: assistantMsgId,
+      sessionId,
+      role: "assistant",
+      text: "",
+      timestamp: now,
+    });
+
+    store.updateLastActive(sessionId);
+
+    // Track whether stream:end was sent so we can finalize on abort/crash
+    let streamEnded = false;
+    // Track whether any deltas were emitted (to avoid duplicating text
+    // from the assistant_complete event which always contains the full text)
+    let gotDeltas = false;
+
+    // Accumulate assistant response for persistence
+    let assistantText = "";
+    const assistantTools: { name: string; input?: unknown; output?: string }[] = [];
+    let assistantCost: number | undefined;
+    let assistantDurationMs: number | undefined;
+
+    // Hub post detector for this stream
+    const hubDetector = new HubPostDetector();
+
+    // Helper: process extracted hub posts via shared post-processor
+    const handleHubPosts = (posts: string[]) =>
+      processHubPosts(posts, { from: meta.name, sessionId, hubStore, mentionRouter, io, quickTaskStore });
+
+    // Helper: route [BOT-TASK: ...] tokens directly to target bots (no Hub write)
+    const handleBotTasks = (tasks: string[]) => {
+      if (tasks.length > 0) {
+        mentionRouter.processBotTaskContent(tasks, sessionId, meta.name, 0);
+      }
+    };
+
+    // Stream callback — translate ParsedEvents into client-expected shapes
+    const onEvent = (event: ParsedEvent) => {
+      switch (event.kind) {
+        case "init":
+          console.log(
+            `[stream] session=${sessionId} model=${event.model}`
+          );
+          break;
+
+        case "delta": {
+          gotDeltas = true;
+
+          // Run through hub post detector — strips [HUB-POST: ...] and [BOT-TASK: ...] markers
+          const { cleanDelta, hubPosts, botTasks } = hubDetector.feed(event.text);
+
+          if (cleanDelta) {
+            assistantText += cleanDelta;
+            io.to(sessionId).emit("message:stream:delta", {
+              sessionId,
+              messageId: assistantMsgId,
+              delta: cleanDelta,
+            });
+          }
+
+          handleHubPosts(hubPosts);
+          handleBotTasks(botTasks);
+          break;
+        }
+
+        case "tool_use_start":
+          assistantTools.push({ name: event.toolName, input: event.input });
+          io.to(sessionId).emit("message:stream:tool", {
+            sessionId,
+            messageId: assistantMsgId,
+            tool: {
+              name: event.toolName,
+              input: event.input,
+            },
+          });
+          break;
+
+        case "tool_result": {
+          const lastTool = assistantTools[assistantTools.length - 1];
+          if (lastTool) {
+            lastTool.output = event.content;
+          }
+          io.to(sessionId).emit("message:stream:tool_result", {
+            sessionId,
+            messageId: assistantMsgId,
+            toolName: event.toolUseId,
+            output: event.content,
+          });
+          break;
+        }
+
+        case "assistant_complete":
+          // Only send text if no deltas were streamed (avoids duplicating)
+          if (!gotDeltas) {
+            for (const block of event.content) {
+              if (block.type === "text" && block.text) {
+                const { cleanDelta, hubPosts, botTasks } = hubDetector.feed(block.text);
+                if (cleanDelta) {
+                  assistantText += cleanDelta;
+                  io.to(sessionId).emit("message:stream:delta", {
+                    sessionId,
+                    messageId: assistantMsgId,
+                    delta: cleanDelta,
+                  });
+                }
+                handleHubPosts(hubPosts);
+                handleBotTasks(botTasks);
+              }
+            }
+          }
+          break;
+
+        case "result": {
+          // Flush any remaining buffered text from the hub detector
+          const remaining = hubDetector.flush();
+          if (remaining) {
+            assistantText += remaining;
+            io.to(sessionId).emit("message:stream:delta", {
+              sessionId,
+              messageId: assistantMsgId,
+              delta: remaining,
+            });
+          }
+
+          streamEnded = true;
+          assistantCost = event.totalCostUsd;
+          assistantDurationMs = event.durationMs;
+          io.to(sessionId).emit("message:stream:end", {
+            sessionId,
+            messageId: assistantMsgId,
+            cost: event.totalCostUsd,
+            durationMs: event.durationMs,
+          });
+
+          // TC-2B: Log token usage metrics
+          tokenLogger?.log({
+            timestamp: new Date().toISOString(),
+            sessionId,
+            botName: meta.name,
+            claudeSessionId: event.sessionId,
+            messageId: assistantMsgId,
+            source: "user",
+            costUsd: event.totalCostUsd ?? 0,
+            durationMs: event.durationMs ?? 0,
+            durationApiMs: event.durationApiMs,
+            numTurns: event.numTurns,
+            success: event.success,
+          });
+          break;
+        }
+
+        case "error":
+          io.to(sessionId).emit("message:error", {
+            sessionId,
+            messageId: assistantMsgId,
+            error: event.message,
+          });
+          break;
+      }
+    };
+
+    // Build combined system prompt (custom instructions + skills + summary + hub context)
+    let finalSystemPrompt = meta.systemPrompt || "";
+    if (meta.skills && meta.skills.length > 0) {
+      const skillsPrompt = await skillCatalog.buildSkillsPrompt(meta.skills);
+      finalSystemPrompt = (finalSystemPrompt + skillsPrompt).trim();
+    }
+    // Inject conversation summary if available
+    const summary = chatStore.loadSummary(sessionId);
+    if (summary) {
+      finalSystemPrompt += `\n\n--- CONVERSATION SUMMARY (previous context) ---\n${summary}\n--- END SUMMARY ---`;
+    }
+    // Inject hub context filtered to this bot's relevant messages
+    finalSystemPrompt += buildHubPromptSection(hubStore, store, sessionId, meta.name);
+    finalSystemPrompt = finalSystemPrompt.trim();
+
+    // TC-4: Compress the assembled system prompt (hub context + summary + instructions).
+    // Uses moderate level — balances token savings with semantic preservation.
+    finalSystemPrompt = compress(finalSystemPrompt, "moderate").compressed;
+
+    try {
+      // Select model based on routing config
+      const routingEnabled = config.modelRoutingEnabled !== false;
+      let selectedModel: ModelTier = routingEnabled
+        ? selectModel({ prompt: text, source: "user" })
+        : "sonnet";
+
+      // Send message with tier escalation on failure
+      let exitCode: number | null = await processManager.sendMessage(
+        sessionId,
+        text,
+        sanitizeImagePaths(images),
+        onEvent,
+        meta.yoloMode === true,
+        finalSystemPrompt || undefined,
+        selectedModel,
+        sanitizedFiles
+      );
+
+      // Escalate to next tier if this tier failed with no output
+      if (exitCode !== 0 && !gotDeltas && NEXT_TIER[selectedModel]) {
+        const nextTier = NEXT_TIER[selectedModel];
+        if (nextTier) {
+          console.log(
+            `[handler] Model ${selectedModel} failed (exit ${exitCode}), escalating to ${nextTier}`
+          );
+          selectedModel = nextTier;
+          exitCode = await processManager.sendMessage(
+            sessionId,
+            text,
+            sanitizeImagePaths(images),
+            onEvent,
+            meta.yoloMode === true,
+            finalSystemPrompt || undefined,
+            nextTier,
+            sanitizedFiles
+          );
+        }
+      }
+
+      // Escalate to opus as final fallback if sonnet also failed
+      if (exitCode !== 0 && !gotDeltas && selectedModel === "sonnet") {
+        console.log(
+          `[handler] Model sonnet failed (exit ${exitCode}), escalating to opus (final)`
+        );
+        exitCode = await processManager.sendMessage(
+          sessionId,
+          text,
+          sanitizeImagePaths(images),
+          onEvent,
+          meta.yoloMode === true,
+          finalSystemPrompt || undefined,
+          "opus",
+          sanitizedFiles
+        );
+      }
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : "Unknown error";
+      io.to(sessionId).emit("message:error", {
+        sessionId,
+        messageId: assistantMsgId,
+        error: message,
+      });
+    }
+
+    // Always finalize the stream if the parser didn't emit a result event
+    if (!streamEnded) {
+      const remaining = hubDetector.flush();
+      if (remaining) {
+        assistantText += remaining;
+      }
+
+      io.to(sessionId).emit("message:stream:end", {
+        sessionId,
+        messageId: assistantMsgId,
+      });
+    }
+
+    // Persist the completed assistant message
+    chatStore.appendMessage({
+      id: assistantMsgId,
+      sessionId,
+      role: "assistant",
+      text: assistantText,
+      toolUses: assistantTools.length > 0 ? assistantTools : undefined,
+      timestamp: now,
+      cost: assistantCost,
+      durationMs: assistantDurationMs,
+    });
+
+    // Check if conversation needs summarization
+    if (config.summarizationEnabled && !summarizingSessionIds.has(sessionId)) {
+      const allMessages = chatStore.loadMessages(sessionId);
+      if (allMessages.length >= config.summarizationThreshold) {
+        console.log(
+          `[summarization] Session ${sessionId} has ${allMessages.length} messages, triggering summarization`
+        );
+        // Mark in-flight to prevent concurrent re-triggers
+        summarizingSessionIds.add(sessionId);
+        // Async summarization — don't block the response
+        summarizeConversation(allMessages, {
+          sessionId,
+          botName: meta.name,
+          tokenLogger,
+        })
+          .then((result) => {
+            // Save summary
+            chatStore.saveSummary(sessionId, result.summary);
+            // Keep only the most recent N messages (e.g., last 5)
+            const keepCount = 5;
+            const trimmed = allMessages.slice(-keepCount);
+            chatStore.deleteSession(sessionId);
+            for (const msg of trimmed) {
+              chatStore.appendMessage(msg);
+            }
+            console.log(
+              `[summarization] Session ${sessionId} summarized and trimmed to ${trimmed.length} messages`
+            );
+            // Reset the session to start fresh on next message
+            processManager.createSession(sessionId, meta.workingDir, true);
+          })
+          .catch((err) => {
+            console.error(
+              `[summarization] Failed for session ${sessionId}:`,
+              err
+            );
+          })
+          .finally(() => {
+            summarizingSessionIds.delete(sessionId);
+          });
+      }
+    }
+
+    // Deliver any pending @mentions (or queued direct messages) now that this session is idle
+    mentionRouter.onSessionIdle(sessionId);
+  }
+
   // ---- Connection handler ----
   io.on("connection", (socket: Socket) => {
     console.log(`[socket] connected: ${socket.id}`);
@@ -448,10 +805,12 @@ export function setupSocketHandler(
         sessionId,
         text,
         images,
+        files,
       }: {
         sessionId: string;
         text: string;
         images?: string[];
+        files?: string[];
       }) => {
         const meta = store.get(sessionId);
         if (!meta) {
@@ -469,351 +828,18 @@ export function setupSocketHandler(
           // Already exists -- that is fine
         }
 
-        const now = new Date().toISOString();
-        const userMsgId = uuidv4();
-        const assistantMsgId = uuidv4();
-
-        // Echo the user message with the shape the client expects (ChatMessage)
-        const userMsg = {
-          id: userMsgId,
-          sessionId,
-          role: "user" as const,
-          text,
-          images,
-          timestamp: now,
-        };
-        io.to(sessionId).emit("message:user", userMsg);
-
-        // Persist user message
-        chatStore.appendMessage(userMsg);
-
-        // Immediately emit the assistant stream start so the client creates
-        // the accumulation buffer before any deltas arrive
-        io.to(sessionId).emit("message:stream:start", {
-          id: assistantMsgId,
-          sessionId,
-          role: "assistant",
-          text: "",
-          timestamp: now,
-        });
-
-        // Notify busy status
-        io.to(sessionId).emit("session:status", {
-          sessionId,
-          status: "busy",
-        });
-
-        store.updateLastActive(sessionId);
-
-        // Track whether stream:end was sent so we can finalize on abort/crash
-        let streamEnded = false;
-        // Track whether any deltas were emitted (to avoid duplicating text
-        // from the assistant_complete event which always contains the full text)
-        let gotDeltas = false;
-
-        // Accumulate assistant response for persistence
-        let assistantText = "";
-        const assistantTools: { name: string; input?: unknown; output?: string }[] = [];
-        let assistantCost: number | undefined;
-        let assistantDurationMs: number | undefined;
-
-        // Hub post detector for this stream
-        const hubDetector = new HubPostDetector();
-
-        // Helper: process extracted hub posts via shared post-processor
-        const handleHubPosts = (posts: string[]) =>
-          processHubPosts(posts, { from: meta.name, sessionId, hubStore, mentionRouter, io, quickTaskStore });
-
-        // Helper: route [BOT-TASK: ...] tokens directly to target bots (no Hub write)
-        const handleBotTasks = (tasks: string[]) => {
-          if (tasks.length > 0) {
-            mentionRouter.processBotTaskContent(tasks, sessionId, meta.name, 0);
-          }
-        };
-
-        // Stream callback — translate ParsedEvents into client-expected shapes
-        const onEvent = (event: ParsedEvent) => {
-          switch (event.kind) {
-            case "init":
-              console.log(
-                `[stream] session=${sessionId} model=${event.model}`
-              );
-              break;
-
-            case "delta": {
-              gotDeltas = true;
-
-              // Run through hub post detector — strips [HUB-POST: ...] and [BOT-TASK: ...] markers
-              const { cleanDelta, hubPosts, botTasks } = hubDetector.feed(event.text);
-
-              if (cleanDelta) {
-                assistantText += cleanDelta;
-                io.to(sessionId).emit("message:stream:delta", {
-                  sessionId,
-                  messageId: assistantMsgId,
-                  delta: cleanDelta,
-                });
-              }
-
-              handleHubPosts(hubPosts);
-              handleBotTasks(botTasks);
-              break;
-            }
-
-            case "tool_use_start":
-              assistantTools.push({ name: event.toolName, input: event.input });
-              io.to(sessionId).emit("message:stream:tool", {
-                sessionId,
-                messageId: assistantMsgId,
-                tool: {
-                  name: event.toolName,
-                  input: event.input,
-                },
-              });
-              break;
-
-            case "tool_result": {
-              const lastTool = assistantTools[assistantTools.length - 1];
-              if (lastTool) {
-                lastTool.output = event.content;
-              }
-              io.to(sessionId).emit("message:stream:tool_result", {
-                sessionId,
-                messageId: assistantMsgId,
-                toolName: event.toolUseId,
-                output: event.content,
-              });
-              break;
-            }
-
-            case "assistant_complete":
-              // Only send text if no deltas were streamed (avoids duplicating)
-              if (!gotDeltas) {
-                for (const block of event.content) {
-                  if (block.type === "text" && block.text) {
-                    const { cleanDelta, hubPosts, botTasks } = hubDetector.feed(block.text);
-                    if (cleanDelta) {
-                      assistantText += cleanDelta;
-                      io.to(sessionId).emit("message:stream:delta", {
-                        sessionId,
-                        messageId: assistantMsgId,
-                        delta: cleanDelta,
-                      });
-                    }
-                    handleHubPosts(hubPosts);
-                    handleBotTasks(botTasks);
-                  }
-                }
-              }
-              break;
-
-            case "result": {
-              // Flush any remaining buffered text from the hub detector
-              const remaining = hubDetector.flush();
-              if (remaining) {
-                assistantText += remaining;
-                io.to(sessionId).emit("message:stream:delta", {
-                  sessionId,
-                  messageId: assistantMsgId,
-                  delta: remaining,
-                });
-              }
-
-              streamEnded = true;
-              assistantCost = event.totalCostUsd;
-              assistantDurationMs = event.durationMs;
-              io.to(sessionId).emit("message:stream:end", {
-                sessionId,
-                messageId: assistantMsgId,
-                cost: event.totalCostUsd,
-                durationMs: event.durationMs,
-              });
-
-              // TC-2B: Log token usage metrics
-              tokenLogger?.log({
-                timestamp: new Date().toISOString(),
-                sessionId,
-                botName: meta.name,
-                claudeSessionId: event.sessionId,
-                messageId: assistantMsgId,
-                source: "user",
-                costUsd: event.totalCostUsd ?? 0,
-                durationMs: event.durationMs ?? 0,
-                durationApiMs: event.durationApiMs,
-                numTurns: event.numTurns,
-                success: event.success,
-              });
-              break;
-            }
-
-            case "error":
-              io.to(sessionId).emit("message:error", {
-                sessionId,
-                messageId: assistantMsgId,
-                error: event.message,
-              });
-              break;
-          }
-        };
-
-        // Build combined system prompt (custom instructions + skills + summary + hub context)
-        let finalSystemPrompt = meta.systemPrompt || "";
-        if (meta.skills && meta.skills.length > 0) {
-          const skillsPrompt = await skillCatalog.buildSkillsPrompt(meta.skills);
-          finalSystemPrompt = (finalSystemPrompt + skillsPrompt).trim();
-        }
-        // Inject conversation summary if available
-        const summary = chatStore.loadSummary(sessionId);
-        if (summary) {
-          finalSystemPrompt += `\n\n--- CONVERSATION SUMMARY (previous context) ---\n${summary}\n--- END SUMMARY ---`;
-        }
-        // Inject hub context filtered to this bot's relevant messages
-        finalSystemPrompt += buildHubPromptSection(hubStore, store, sessionId, meta.name);
-        finalSystemPrompt = finalSystemPrompt.trim();
-
-        // TC-4: Compress the assembled system prompt (hub context + summary + instructions).
-        // Uses moderate level — balances token savings with semantic preservation.
-        finalSystemPrompt = compress(finalSystemPrompt, "moderate").compressed;
-
-        try {
-          // Select model based on routing config
-          const routingEnabled = config.modelRoutingEnabled !== false;
-          let selectedModel: ModelTier = routingEnabled
-            ? selectModel({ prompt: text, source: "user" })
-            : "sonnet";
-
-          // Send message with tier escalation on failure
-          let exitCode: number | null = await processManager.sendMessage(
-            sessionId,
-            text,
-            sanitizeImagePaths(images),
-            onEvent,
-            meta.yoloMode === true,
-            finalSystemPrompt || undefined,
-            selectedModel
-          );
-
-          // Escalate to next tier if this tier failed with no output
-          if (exitCode !== 0 && !gotDeltas && NEXT_TIER[selectedModel]) {
-            const nextTier = NEXT_TIER[selectedModel];
-            if (nextTier) {
-              console.log(
-                `[handler] Model ${selectedModel} failed (exit ${exitCode}), escalating to ${nextTier}`
-              );
-              selectedModel = nextTier;
-              exitCode = await processManager.sendMessage(
-                sessionId,
-                text,
-                sanitizeImagePaths(images),
-                onEvent,
-                meta.yoloMode === true,
-                finalSystemPrompt || undefined,
-                nextTier
-              );
-            }
-          }
-
-          // Escalate to opus as final fallback if sonnet also failed
-          if (exitCode !== 0 && !gotDeltas && selectedModel === "sonnet") {
-            console.log(
-              `[handler] Model sonnet failed (exit ${exitCode}), escalating to opus (final)`
-            );
-            exitCode = await processManager.sendMessage(
-              sessionId,
-              text,
-              sanitizeImagePaths(images),
-              onEvent,
-              meta.yoloMode === true,
-              finalSystemPrompt || undefined,
-              "opus"
-            );
-          }
-        } catch (err: unknown) {
-          const message =
-            err instanceof Error ? err.message : "Unknown error";
-          io.to(sessionId).emit("message:error", {
-            sessionId,
-            messageId: assistantMsgId,
-            error: message,
+        // Guard: if the session is already processing, queue the message rather
+        // than dropping it. MentionRouter drains the queue in onSessionIdle so
+        // the user's message is delivered as soon as the bot finishes its current turn.
+        if (processManager.isSessionBusy(sessionId)) {
+          mentionRouter.queueDirectMessage(sessionId, () => {
+            void handleMessageSend(sessionId, text, images, files);
           });
+          socket.emit("message:queued", { sessionId });
+          return;
         }
 
-        // Always finalize the stream if the parser didn't emit a result event
-        if (!streamEnded) {
-          const remaining = hubDetector.flush();
-          if (remaining) {
-            assistantText += remaining;
-          }
-
-          io.to(sessionId).emit("message:stream:end", {
-            sessionId,
-            messageId: assistantMsgId,
-          });
-        }
-
-        // Persist the completed assistant message
-        chatStore.appendMessage({
-          id: assistantMsgId,
-          sessionId,
-          role: "assistant",
-          text: assistantText,
-          toolUses: assistantTools.length > 0 ? assistantTools : undefined,
-          timestamp: now,
-          cost: assistantCost,
-          durationMs: assistantDurationMs,
-        });
-
-        // Check if conversation needs summarization
-        if (config.summarizationEnabled && !summarizingSessionIds.has(sessionId)) {
-          const allMessages = chatStore.loadMessages(sessionId);
-          if (allMessages.length >= config.summarizationThreshold) {
-            console.log(
-              `[summarization] Session ${sessionId} has ${allMessages.length} messages, triggering summarization`
-            );
-            // Mark in-flight to prevent concurrent re-triggers
-            summarizingSessionIds.add(sessionId);
-            // Async summarization — don't block the response
-            summarizeConversation(allMessages, {
-              sessionId,
-              botName: meta.name,
-              tokenLogger,
-            })
-              .then((result) => {
-                // Save summary
-                chatStore.saveSummary(sessionId, result.summary);
-                // Keep only the most recent N messages (e.g., last 5)
-                const keepCount = 5;
-                const trimmed = allMessages.slice(-keepCount);
-                chatStore.deleteSession(sessionId);
-                for (const msg of trimmed) {
-                  chatStore.appendMessage(msg);
-                }
-                console.log(
-                  `[summarization] Session ${sessionId} summarized and trimmed to ${trimmed.length} messages`
-                );
-                // Reset the session to start fresh on next message
-                processManager.createSession(sessionId, meta.workingDir, true);
-              })
-              .catch((err) => {
-                console.error(
-                  `[summarization] Failed for session ${sessionId}:`,
-                  err
-                );
-              })
-              .finally(() => {
-                summarizingSessionIds.delete(sessionId);
-              });
-          }
-        }
-
-        // Notify idle status
-        io.to(sessionId).emit("session:status", {
-          sessionId,
-          status: "idle",
-        });
-
-        // Deliver any pending @mentions now that this session is idle
-        mentionRouter.onSessionIdle(sessionId);
+        await handleMessageSend(sessionId, text, images, files);
       }
     );
 
@@ -832,15 +858,23 @@ export function setupSocketHandler(
     );
 
     // -- Update system prompt for a session --
+    // ACK callback fires once the update is persisted to sessions.json.
+    // Client waits for all ACKs before closing the editor modal.
     socket.on(
       "session:update-system-prompt",
-      ({ sessionId, systemPrompt }: { sessionId: string; systemPrompt: string }) => {
+      (
+        { sessionId, systemPrompt }: { sessionId: string; systemPrompt: string },
+        ack?: (result: { ok: boolean }) => void
+      ) => {
         const updated = store.updateSystemPrompt(sessionId, systemPrompt);
         if (updated) {
           io.to(sessionId).emit("session:system-prompt-changed", {
             sessionId,
             systemPrompt: updated.systemPrompt ?? "",
           });
+          ack?.({ ok: true });
+        } else {
+          ack?.({ ok: false });
         }
       }
     );
@@ -848,13 +882,19 @@ export function setupSocketHandler(
     // -- Update skills for a session --
     socket.on(
       "session:update-skills",
-      ({ sessionId, skills }: { sessionId: string; skills: string[] }) => {
+      (
+        { sessionId, skills }: { sessionId: string; skills: string[] },
+        ack?: (result: { ok: boolean }) => void
+      ) => {
         const updated = store.updateSkills(sessionId, skills);
         if (updated) {
           io.to(sessionId).emit("session:skills-changed", {
             sessionId,
             skills: updated.skills ?? [],
           });
+          ack?.({ ok: true });
+        } else {
+          ack?.({ ok: false });
         }
       }
     );
@@ -862,13 +902,19 @@ export function setupSocketHandler(
     // -- Set YOLO mode explicitly for a session --
     socket.on(
       "session:set-yolo",
-      ({ sessionId, yoloMode }: { sessionId: string; yoloMode: boolean }) => {
+      (
+        { sessionId, yoloMode }: { sessionId: string; yoloMode: boolean },
+        ack?: (result: { ok: boolean }) => void
+      ) => {
         const updated = store.setYolo(sessionId, yoloMode);
         if (updated) {
           io.to(sessionId).emit("session:yolo-changed", {
             sessionId,
             yoloMode: updated.yoloMode ?? false,
           });
+          ack?.({ ok: true });
+        } else {
+          ack?.({ ok: false });
         }
       }
     );
@@ -876,13 +922,19 @@ export function setupSocketHandler(
     // -- Update working directory for a session --
     socket.on(
       "session:update-working-dir",
-      ({ sessionId, workingDir }: { sessionId: string; workingDir: string }) => {
+      (
+        { sessionId, workingDir }: { sessionId: string; workingDir: string },
+        ack?: (result: { ok: boolean }) => void
+      ) => {
         const updated = store.updateWorkingDir(sessionId, workingDir);
         if (updated) {
           io.to(sessionId).emit("session:working-dir-changed", {
             sessionId,
             workingDir: updated.workingDir,
           });
+          ack?.({ ok: true });
+        } else {
+          ack?.({ ok: false });
         }
       }
     );
@@ -890,7 +942,7 @@ export function setupSocketHandler(
     // -- User posts to the hub --
     socket.on(
       "hub:post",
-      ({ sessionId, text, from, images }: { sessionId?: string; text: string; from?: string; images?: string[] }) => {
+      ({ sessionId, text, from, images, files }: { sessionId?: string; text: string; from?: string; images?: string[]; files?: string[] }) => {
         console.log(`[hub] post received: sessionId=${sessionId ?? "none"} text="${text.slice(0, 80)}"`);
 
         // sessionId is optional — user posts from the Hub input may not have an active session.
@@ -903,6 +955,7 @@ export function setupSocketHandler(
           text,
           sessionId: resolvedSessionId,
           ...(images && images.length > 0 ? { images } : {}),
+          ...(files && files.length > 0 ? { files } : {}),
         });
 
         // Broadcast to all connected clients

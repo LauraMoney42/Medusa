@@ -13,7 +13,7 @@ import type { HubStore } from "../hub/store.js";
 import type { MentionRouter } from "../hub/mention-router.js";
 import type { ParsedEvent } from "./types.js";
 import type { TokenLogger } from "../metrics/token-logger.js";
-import { HubPostDetector, buildHubPromptSection } from "../socket/handler.js";
+import { HubPostDetector, buildHubPromptSection, sanitizeImagePaths } from "../socket/handler.js";
 import { getCompactPrompt } from "../sessions/compact-prompts.js";
 import { selectModel, NEXT_TIER, type ModelTier } from "./model-router.js";
 import { processHubPosts } from "../hub/post-processor.js";
@@ -25,7 +25,7 @@ import { compress } from "../compressor/engine.js";
 export interface AutonomousDeliverParams {
   sessionId: string;
   prompt: string;
-  source: "mention" | "poll" | "nudge" | "resume" | "bot-to-bot";
+  source: "mention" | "poll" | "nudge" | "resume" | "bot-to-bot" | "status-check";
   io: IOServer;
   processManager: ProcessManager;
   sessionStore: SessionStore;
@@ -45,6 +45,10 @@ export interface AutonomousDeliverParams {
   sinceMessageId?: string;
   /** Enables [QUICK-TASK:] pattern detection in hub posts */
   quickTaskStore?: import("../projects/quick-task-store.js").QuickTaskStore;
+  /** Image paths to pass to the Claude process (e.g. from Hub messages with images) */
+  images?: string[];
+  /** Non-image file paths to pass to the Claude process */
+  files?: string[];
 }
 
 /**
@@ -68,14 +72,16 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
     tokenLogger,
     sinceMessageId,
     quickTaskStore,
+    images,
+    files,
   } = params;
 
   // Determine behavior based on source
   // bot-to-bot uses compact mode — internal task messages don't need full Hub history
-  const compactMode = source === "poll" || source === "nudge" || source === "mention" || source === "bot-to-bot";
+  const compactMode = source === "poll" || source === "nudge" || source === "mention" || source === "bot-to-bot" || source === "status-check";
   const detectHubPosts = source !== "resume"; // Resume doesn't route hub posts
-  const persistUserMessage = source !== "poll" && source !== "nudge"; // Poll/nudge defer persistence until NO-ACTION check
-  const checkNoAction = source === "poll"; // Only poll checks for [NO-ACTION] to skip persistence
+  const persistUserMessage = source !== "poll" && source !== "nudge" && source !== "status-check"; // Poll/nudge/status-check defer persistence until NO-ACTION check
+  const checkNoAction = source === "poll" || source === "status-check"; // Poll + status-check skip persistence on [NO-ACTION]
 
   const meta = sessionStore.get(sessionId);
   if (!meta) return;
@@ -105,7 +111,7 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
     chatStore.appendMessage(userMsg);
   }
 
-  // Emit stream start
+  // Emit stream start + broadcast busy status to all clients
   io.to(sessionId).emit("message:stream:start", {
     id: assistantMsgId,
     sessionId,
@@ -113,9 +119,8 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
     text: "",
     timestamp: now,
   });
+  io.emit("session:status", { sessionId, status: "busy" });
 
-  // Set busy status
-  io.to(sessionId).emit("session:status", { sessionId, status: "busy" });
   sessionStore.updateLastActive(sessionId);
 
   // Stream state
@@ -264,6 +269,7 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
           cost: event.totalCostUsd,
           durationMs: event.durationMs,
         });
+        io.emit("session:status", { sessionId, status: "idle" });
 
         // TC-2B: Log token usage for autonomous interactions
         tokenLogger?.log({
@@ -272,7 +278,7 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
           botName: meta.name,
           claudeSessionId: event.sessionId,
           messageId: assistantMsgId,
-          source: source === "bot-to-bot" ? "mention" : source,
+          source: (source === "bot-to-bot" || source === "status-check") ? "mention" : source,
           costUsd: event.totalCostUsd ?? 0,
           durationMs: event.durationMs ?? 0,
           durationApiMs: event.durationApiMs,
@@ -322,11 +328,15 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
   const compressLevel = compactMode ? "aggressive" as const : "moderate" as const;
   finalSystemPrompt = compress(finalSystemPrompt, compressLevel).compressed;
 
+  // Sanitize image and file paths (convert /uploads/... URL paths to filesystem paths)
+  const sanitizedImages = sanitizeImagePaths(images);
+  const sanitizedFiles = sanitizeImagePaths(files);
+
   // Send to bot with tier escalation on failure
   try {
     // Map source to selectModel's expected sources
     // "resume" and "bot-to-bot" use "mention" tier — re-triggered or internal tasks
-    const modelSource = source === "resume" || source === "bot-to-bot" ? "mention" : source;
+    const modelSource = source === "resume" || source === "bot-to-bot" || source === "status-check" ? "mention" : source;
 
     // Select model based on routing config
     const routingEnabled = config.modelRoutingEnabled !== false;
@@ -334,15 +344,19 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
       ? selectModel({ prompt, source: modelSource })
       : "sonnet";
 
+    const imageArgs = sanitizedImages.length > 0 ? sanitizedImages : undefined;
+    const fileArgs = sanitizedFiles.length > 0 ? sanitizedFiles : undefined;
+
     // Send message with tier escalation on failure
     let exitCode: number | null = await processManager.sendMessage(
       sessionId,
       prompt,
-      undefined,
+      imageArgs,
       onEvent,
       meta.yoloMode === true,
       finalSystemPrompt || undefined,
-      selectedModel
+      selectedModel,
+      fileArgs
     );
 
     // Escalate to next tier if this tier failed with no output
@@ -356,11 +370,12 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
         exitCode = await processManager.sendMessage(
           sessionId,
           prompt,
-          undefined,
+          imageArgs,
           onEvent,
           meta.yoloMode === true,
           finalSystemPrompt || undefined,
-          nextTier
+          nextTier,
+          fileArgs
         );
       }
     }
@@ -373,11 +388,12 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
       exitCode = await processManager.sendMessage(
         sessionId,
         prompt,
-        undefined,
+        imageArgs,
         onEvent,
         meta.yoloMode === true,
         finalSystemPrompt || undefined,
-        "opus"
+        "opus",
+        fileArgs
       );
     }
 
@@ -396,6 +412,7 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
         });
       }
       io.to(sessionId).emit("message:stream:end", { sessionId, messageId: assistantMsgId });
+      io.emit("session:status", { sessionId, status: "idle" });
     }
 
     // Check for NO-ACTION response (poll only)
@@ -477,26 +494,21 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
       }
     }
 
-    // Clear pending task and set idle (for mention/poll/nudge)
-    if (source !== "resume") {
-      io.emit("session:pending-task", { sessionId, hasPendingTask: false });
-    }
-    io.to(sessionId).emit("session:status", { sessionId, status: "idle" });
-
     // Deliver any pending mentions (mention/poll/nudge)
     if (mentionRouter && source !== "resume") {
       mentionRouter.onSessionIdle(sessionId);
     }
   } catch (err) {
     console.error(`[autonomous-deliver] Failed to deliver ${source} to ${meta.name}:`, err);
-    if (source !== "resume") {
-      io.emit("session:pending-task", { sessionId, hasPendingTask: false });
-    }
     io.to(sessionId).emit("message:error", {
       sessionId,
       messageId: assistantMsgId,
       error: err instanceof Error ? err.message : `${source} delivery failed`,
     });
-    io.to(sessionId).emit("session:status", { sessionId, status: "idle" });
+    // Ensure stream is closed and status reset so the client doesn't stay stuck on spinning cog
+    if (!streamEnded) {
+      io.to(sessionId).emit("message:stream:end", { sessionId, messageId: assistantMsgId });
+    }
+    io.emit("session:status", { sessionId, status: "idle" });
   }
 }

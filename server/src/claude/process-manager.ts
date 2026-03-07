@@ -100,7 +100,8 @@ export class ProcessManager {
     onEvent: (event: ParsedEvent) => void,
     yoloMode = false,
     systemPrompt?: string,
-    model?: string
+    model?: string,
+    files?: string[]
   ): Promise<number | null> {
     const entry = this.sessions.get(sessionId);
     if (!entry) {
@@ -114,7 +115,7 @@ export class ProcessManager {
     }
 
     // Claim the lock immediately before spawning
-    const spawnPromise = this.spawnClaude(sessionId, entry, text, images, onEvent, false, yoloMode, systemPrompt, model);
+    const spawnPromise = this.spawnClaude(sessionId, entry, text, images, onEvent, false, yoloMode, systemPrompt, model, files);
     entry.spawnLock = spawnPromise;
 
     // Clear the lock when done (success or failure)
@@ -134,15 +135,22 @@ export class ProcessManager {
     forceNew = false,
     yoloMode = false,
     systemPrompt?: string,
-    model?: string
+    model?: string,
+    files?: string[]
   ): Promise<number | null> {
-    // Build the prompt: prepend image references if any
+    // Build the prompt: prepend image and file references if any
     let prompt = text;
     if (images && images.length > 0) {
       const imageLines = images
         .map((p) => `Please read this image: ${p}`)
         .join("\n");
       prompt = `${imageLines}\n\n${prompt}`;
+    }
+    if (files && files.length > 0) {
+      const fileLines = files
+        .map((p) => `Please read this file: ${p}`)
+        .join("\n");
+      prompt = `${fileLines}\n\n${prompt}`;
     }
 
     const useSessionId = entry.isFirstMessage || forceNew;
@@ -224,7 +232,7 @@ export class ProcessManager {
           );
           entry.isFirstMessage = true;
           resolve(
-            this.spawnClaude(sessionId, entry, text, images, onEvent, true, yoloMode, systemPrompt, model)
+            this.spawnClaude(sessionId, entry, text, images, onEvent, true, yoloMode, systemPrompt, model, files)
           );
           return;
         }
@@ -256,7 +264,12 @@ export class ProcessManager {
   /** Send SIGTERM to the running process, escalate to SIGKILL after 5s if still alive. */
   abort(sessionId: string): void {
     const entry = this.sessions.get(sessionId);
-    if (!entry?.process) return;
+    if (!entry) return;
+
+    // Always clear spawnLock so the session is no longer considered busy
+    entry.spawnLock = null;
+
+    if (!entry.process) return;
 
     const child = entry.process;
     entry.process = null;

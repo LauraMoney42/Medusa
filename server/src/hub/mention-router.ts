@@ -17,6 +17,11 @@ interface PendingBotTask {
   chainDepth: number;
 }
 
+/** A user-sent message queued because the session was busy when it arrived. */
+interface PendingDirectMessage {
+  deliver: () => void;
+}
+
 export const MAX_CHAIN_DEPTH = 3;
 
 /**
@@ -26,7 +31,7 @@ export const MAX_CHAIN_DEPTH = 3;
  *
  * Guards:
  * - Self-mentions are ignored (prevents loops)
- * - Max 3 pending mentions per bot in FIFO queue (4th+ silently dropped)
+ * - Max 20 pending mentions per bot in FIFO queue (21st+ silently dropped)
  * - 60-second cooldown per bot (prevents spam)
  * - Max chain depth of 3 (prevents infinite back-and-forth)
  */
@@ -45,7 +50,13 @@ export class MentionRouter {
   /** sessionId -> FIFO queue of direct bot-to-bot tasks (max MAX_PENDING per bot) */
   private pendingBotTasks = new Map<string, PendingBotTask[]>();
 
-  private static MAX_PENDING = 3;
+  /**
+   * sessionId -> FIFO queue of user-sent messages that arrived while the session
+   * was busy. Drained before hub mentions so the user's next message is never lost.
+   */
+  private pendingDirectMessages = new Map<string, PendingDirectMessage[]>();
+
+  private static MAX_PENDING = 20; // raised from 3 — low cap caused silent drops when bots @mention each other mid-response
 
   /** sessionId -> last auto-prompt timestamp (for cooldown) */
   private lastMentionTime = new Map<string, number>();
@@ -123,11 +134,8 @@ export class MentionRouter {
         if (queue.length < MentionRouter.MAX_PENDING) {
           queue.push({ hubMessage, chainDepth });
           this.pendingMentions.set(target.id, queue);
-          this.io.emit("session:pending-task", { sessionId: target.id, hasPendingTask: true });
         }
       } else {
-        // Signal pending task before delivery starts
-        this.io.emit("session:pending-task", { sessionId: target.id, hasPendingTask: true });
         this.deliverMention(target.id, hubMessage, chainDepth);
       }
     }
@@ -147,8 +155,30 @@ export class MentionRouter {
    * Called when a session becomes idle. Delivers the next queued item (FIFO).
    * Hub mentions are drained first; bot tasks fill in after.
    */
+  /**
+   * Queue a user-sent message for delivery once the session becomes idle.
+   * Called by the socket handler when a message arrives while the session is busy.
+   * The `deliver` callback re-runs the full send pipeline with the original payload.
+   */
+  queueDirectMessage(sessionId: string, deliver: () => void): void {
+    const q = this.pendingDirectMessages.get(sessionId) ?? [];
+    q.push({ deliver });
+    this.pendingDirectMessages.set(sessionId, q);
+    console.log(`[mention-router] Queued direct message for ${sessionId} (queue depth: ${q.length})`);
+  }
+
   onSessionIdle(sessionId: string): void {
-    // Drain pending hub mentions first
+    // Drain pending direct (user-sent) messages FIRST — highest priority.
+    // These were sent while the session was busy and must not be skipped.
+    const directQueue = this.pendingDirectMessages.get(sessionId);
+    if (directQueue && directQueue.length > 0) {
+      const { deliver } = directQueue.shift()!;
+      if (directQueue.length === 0) this.pendingDirectMessages.delete(sessionId);
+      deliver();
+      return;
+    }
+
+    // Drain pending hub mentions next
     const mentionQueue = this.pendingMentions.get(sessionId);
     if (mentionQueue && mentionQueue.length > 0) {
       // Check cooldown BEFORE consuming from queue to prevent mention loss
@@ -214,17 +244,18 @@ export class MentionRouter {
         `[mention-router] [BOT-TASK] ${senderName} → ${target.targetName} (depth=${chainDepth}): "${message.slice(0, 60)}"`
       );
 
+      // Mark bot as having a pending task — enters active task mode per coordination spec
+      this.io.emit("bot:task-assigned", { sessionId: targetSessionId });
+
       if (this.processManager.isSessionBusy(targetSessionId)) {
         // Queue for delivery when target becomes idle (FIFO, max MAX_PENDING)
         const queue = this.pendingBotTasks.get(targetSessionId) ?? [];
         if (queue.length < MentionRouter.MAX_PENDING) {
           queue.push({ prompt: message, chainDepth });
           this.pendingBotTasks.set(targetSessionId, queue);
-          this.io.emit("session:pending-task", { sessionId: targetSessionId, hasPendingTask: true });
         }
         // Silently drop if queue is full — consistent with mention behavior
       } else {
-        this.io.emit("session:pending-task", { sessionId: targetSessionId, hasPendingTask: true });
         this.deliverBotTaskDirect(targetSessionId, message, chainDepth);
       }
     }
@@ -268,7 +299,6 @@ export class MentionRouter {
     if (queue.length < MentionRouter.MAX_PENDING) {
       queue.push({ prompt, chainDepth });
       this.pendingBotTasks.set(targetSessionId, queue);
-      this.io.emit("session:pending-task", { sessionId: targetSessionId, hasPendingTask: true });
     }
   }
 
@@ -308,6 +338,13 @@ export class MentionRouter {
     if (lowerText.includes("@all")) {
       return allSessions
         .filter((s) => s.id !== senderSessionId)
+        .map((s) => s.name);
+    }
+
+    // @devs pings every session whose name contains "dev" (case-insensitive), except the sender
+    if (lowerText.includes("@devs")) {
+      return allSessions
+        .filter((s) => s.id !== senderSessionId && s.name.toLowerCase().includes("dev"))
         .map((s) => s.name);
     }
 

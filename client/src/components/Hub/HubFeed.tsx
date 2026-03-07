@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useHubStore } from '../../stores/hubStore';
 import { useSessionStore } from '../../stores/sessionStore';
-import { useImageDropStore } from '../../stores/imageDropStore';
+import { useFileDropStore, type FileEntry } from '../../stores/fileDropStore';
+import { useDraftStore } from '../../stores/draftStore';
+import { useInputHistoryStore } from '../../stores/inputHistoryStore';
 import { getSocket } from '../../socket';
-import { uploadImage } from '../../api';
+import { uploadImage, uploadFile } from '../../api';
 import HubMessage from './HubMessage';
-import ImagePreview from '../Input/ImagePreview';
+import AttachmentPreview from '../Input/AttachmentPreview';
 import ScreenshotButton from '../Input/ScreenshotButton';
 import MentionAutocomplete from './MentionAutocomplete';
-
 const HUB_MAX_HEIGHT = 150;
 
 interface HubFeedProps {
@@ -35,33 +36,51 @@ function getMentionQuery(input: string, cursor: number): string | null {
   return query;
 }
 
+const HUB_DRAFT_KEY = 'hub'; // Special key in draftStore for Hub input persistence
+
 export default function HubFeed({ onMenuToggle }: HubFeedProps) {
   const messages = useHubStore((s) => s.messages);
   const markAllSeen = useHubStore((s) => s.markAllSeen);
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
-  const activeView = useSessionStore((s) => s.activeView);
   const sessions = useSessionStore((s) => s.sessions);
 
-  const [input, setInput] = useState('');
-  const [images, setImages] = useState<{ file: File; preview: string }[]>([]);
+  // Draft persistence via draftStore (uses 'hub' as special key)
+  const hubDraft = useDraftStore((s) => s.getDraft(HUB_DRAFT_KEY));
+  const setDraft = useDraftStore((s) => s.setDraft);
+  const clearDraft = useDraftStore((s) => s.clearDraft);
+
+  const historyUp = useInputHistoryStore((s) => s.up);
+  const historyDown = useInputHistoryStore((s) => s.down);
+  const historyPush = useInputHistoryStore((s) => s.push);
+  const historyReset = useInputHistoryStore((s) => s.resetNav);
+
+  const [input, setInput] = useState(() => hubDraft);
+  const [attachments, setAttachments] = useState<FileEntry[]>([]);
   const [cursorPos, setCursorPos] = useState(0);
   const [mentionVisible, setMentionVisible] = useState(false);
   const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0);
   const bottomRef = useRef<HTMLDivElement>(null);
   const hubTextareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Consume images dropped via global drag-and-drop (only when Hub is active)
-  const pendingImages = useImageDropStore((s) => s.pendingImages);
-  const consumeImages = useImageDropStore((s) => s.consumeImages);
+  // Consume files dropped via global drag-and-drop (only when Hub is active)
+  const pendingFiles = useFileDropStore((s) => s.pendingFiles);
+  const consumeFiles = useFileDropStore((s) => s.consumeFiles);
+
+  // Debounced draft persistence: save to store after 300ms of no changes
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDraft(HUB_DRAFT_KEY, input);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [input, setDraft]);
 
   useEffect(() => {
-    if (activeView !== 'hub') return;
-    if (pendingImages.length === 0) return;
-    const consumed = consumeImages();
+    if (pendingFiles.length === 0) return;
+    const consumed = consumeFiles();
     if (consumed.length > 0) {
-      setImages((prev) => [...prev, ...consumed]);
+      setAttachments((prev) => [...prev, ...consumed]);
     }
-  }, [pendingImages, consumeImages, activeView]);
+  }, [pendingFiles, consumeFiles]);
 
   // Mark all messages as seen when the hub is visible
   useEffect(() => {
@@ -73,19 +92,21 @@ export default function HubFeed({ onMenuToggle }: HubFeedProps) {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages.length]);
 
-  const removeImage = (index: number) => {
-    setImages((prev) => {
+  const removeAttachment = (index: number) => {
+    setAttachments((prev) => {
       const removed = prev[index];
-      URL.revokeObjectURL(removed.preview);
+      if (removed.preview) URL.revokeObjectURL(removed.preview);
       return prev.filter((_, i) => i !== index);
     });
   };
 
-  // @-mention autocomplete: build candidates and filtered list
+  // @-mention autocomplete: build candidates and filtered list.
+  // Must match MentionAutocomplete's candidates exactly so selectedIndex is always in sync.
   const mentionCandidates = [
     ...sessions.map((s) => s.name),
     'You',
     'all',
+    'devs',   // @devs macro — expands to all "dev" sessions server-side
   ];
 
   const mentionQuery = getMentionQuery(input, cursorPos);
@@ -95,11 +116,18 @@ export default function HubFeed({ onMenuToggle }: HubFeedProps) {
       )
     : [];
 
-  // Show/hide autocomplete based on whether we have a query + matches
+  // Derived visibility — no useEffect lag. Popup is active whenever there's a
+  // non-null query with at least one match. Using derived state means arrow keys
+  // and Tab intercept in handleKeyDown see the correct value on the very first
+  // keypress after the popup appears (no one-render stale-closure gap).
+  const mentionIsActive = mentionQuery !== null && mentionFiltered.length > 0;
+
+  // Keep mentionVisible state in sync for MentionAutocomplete's `visible` prop.
+  // Reset selected index when the filtered list changes.
   useEffect(() => {
-    setMentionVisible(mentionQuery !== null && mentionFiltered.length > 0);
+    setMentionVisible(mentionIsActive);
     setMentionSelectedIndex(0);
-  }, [mentionQuery, mentionFiltered.length]);
+  }, [mentionIsActive]);
 
   const handleMentionSelect = useCallback((newValue: string, newCursorPos: number) => {
     setInput(newValue);
@@ -117,16 +145,22 @@ export default function HubFeed({ onMenuToggle }: HubFeedProps) {
 
   const handleSend = useCallback(async () => {
     const text = input.trim();
-    if (!text && images.length === 0) return;
+    if (!text && attachments.length === 0) return;
 
-    // Upload images first
-    const uploadedPaths: string[] = [];
-    for (const img of images) {
+    // Upload attachments — split into images and files
+    const imagePaths: string[] = [];
+    const filePaths: string[] = [];
+    for (const att of attachments) {
       try {
-        const { filePath } = await uploadImage(img.file);
-        uploadedPaths.push(filePath);
+        if (att.isImage) {
+          const { filePath } = await uploadImage(att.file);
+          imagePaths.push(filePath);
+        } else {
+          const { filePath } = await uploadFile(att.file);
+          filePaths.push(filePath);
+        }
       } catch (err) {
-        console.error('Hub image upload failed:', err);
+        console.error('Hub upload failed:', err);
       }
     }
 
@@ -134,24 +168,28 @@ export default function HubFeed({ onMenuToggle }: HubFeedProps) {
     socket.emit('hub:post', {
       // sessionId is optional for user posts — server handles missing session gracefully
       ...(activeSessionId ? { sessionId: activeSessionId } : {}),
-      text: text || '(image)',
+      text: text || '(attachment)',
       from: 'User',
-      ...(uploadedPaths.length > 0 ? { images: uploadedPaths } : {}),
+      ...(imagePaths.length > 0 ? { images: imagePaths } : {}),
+      ...(filePaths.length > 0 ? { files: filePaths } : {}),
     });
 
     setInput('');
+    historyPush(HUB_DRAFT_KEY, text);
+    historyReset(HUB_DRAFT_KEY);
+    clearDraft(HUB_DRAFT_KEY);
     // Revoke preview URLs before clearing
-    for (const img of images) {
-      URL.revokeObjectURL(img.preview);
+    for (const att of attachments) {
+      if (att.preview) URL.revokeObjectURL(att.preview);
     }
-    setImages([]);
+    setAttachments([]);
     setMentionVisible(false);
     // Reset textarea height after send
     if (hubTextareaRef.current) {
       hubTextareaRef.current.style.height = 'auto';
       hubTextareaRef.current.style.overflowY = 'hidden';
     }
-  }, [input, images, activeSessionId]);
+  }, [input, attachments, activeSessionId]);
 
   // Auto-resize Hub textarea as user types.
   // Accepts the FormEvent param so TypeScript recognises this as a proper event handler
@@ -167,7 +205,8 @@ export default function HubFeed({ onMenuToggle }: HubFeedProps) {
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value);
     setCursorPos(e.target.selectionStart ?? e.target.value.length);
-  }, []);
+    historyReset(HUB_DRAFT_KEY);
+  }, [historyReset]);
 
   const handleInputClick = useCallback((e: React.MouseEvent<HTMLTextAreaElement>) => {
     const target = e.target as HTMLTextAreaElement;
@@ -176,8 +215,10 @@ export default function HubFeed({ onMenuToggle }: HubFeedProps) {
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      // Let mention autocomplete consume arrow/tab/enter/escape keys first
-      if (mentionVisible && mentionFiltered.length > 0) {
+      // Let mention autocomplete consume arrow/tab/enter/escape keys first.
+      // Uses mentionIsActive (derived, always fresh) instead of mentionVisible (state,
+      // one-render lag) so the very first keypress after popup appears is intercepted.
+      if (mentionIsActive) {
         if (e.key === 'ArrowDown') {
           e.preventDefault();
           setMentionSelectedIndex((prev) => (prev + 1) % mentionFiltered.length);
@@ -190,7 +231,10 @@ export default function HubFeed({ onMenuToggle }: HubFeedProps) {
         }
         if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
           e.preventDefault();
-          const name = mentionFiltered[mentionSelectedIndex];
+          // Clamp index — guards against the one-frame gap where mentionSelectedIndex
+          // hasn't been reset yet after the filtered list shrinks (e.g. user kept typing).
+          const safeIndex = Math.min(mentionSelectedIndex, mentionFiltered.length - 1);
+          const name = mentionFiltered[safeIndex];
           if (name && mentionQuery !== null) {
             const atStart = cursorPos - mentionQuery.length - 1;
             const before = input.slice(0, atStart);
@@ -208,13 +252,49 @@ export default function HubFeed({ onMenuToggle }: HubFeedProps) {
         }
       }
 
+      // Input history navigation (bash-style up/down arrow)
+      if (e.key === 'ArrowUp' && !e.shiftKey) {
+        const el = e.target as HTMLTextAreaElement;
+        // Only activate when cursor is at the very start (or input is empty)
+        if (el.selectionStart === 0 && el.selectionEnd === 0) {
+          const prev = historyUp(HUB_DRAFT_KEY, input);
+          if (prev !== null) {
+            e.preventDefault();
+            setInput(prev);
+            // Place cursor at start so next Up press works immediately
+            requestAnimationFrame(() => {
+              el.selectionStart = 0;
+              el.selectionEnd = 0;
+            });
+          }
+        }
+        return;
+      }
+      if (e.key === 'ArrowDown' && !e.shiftKey) {
+        const el = e.target as HTMLTextAreaElement;
+        // Only activate when cursor is at the very end
+        if (el.selectionStart === el.value.length) {
+          const next = historyDown(HUB_DRAFT_KEY);
+          if (next !== null) {
+            e.preventDefault();
+            setInput(next);
+            // Place cursor at end so next Down press works immediately
+            requestAnimationFrame(() => {
+              el.selectionStart = el.value.length;
+              el.selectionEnd = el.value.length;
+            });
+          }
+        }
+        return;
+      }
+
       // Normal send on Enter (without shift)
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         handleSend();
       }
     },
-    [handleSend, mentionVisible, mentionFiltered, mentionSelectedIndex, mentionQuery, cursorPos, input, handleMentionSelect],
+    [handleSend, mentionIsActive, mentionFiltered, mentionSelectedIndex, mentionQuery, cursorPos, input, handleMentionSelect, historyUp, historyDown],
   );
 
   const handlePaste = useCallback(
@@ -229,35 +309,48 @@ export default function HubFeed({ onMenuToggle }: HubFeedProps) {
       }
       if (imageFiles.length > 0) {
         e.preventDefault();
-        const newImages = imageFiles.map((file) => ({
+        const newImages: FileEntry[] = imageFiles.map((file) => ({
           file,
           preview: URL.createObjectURL(file),
+          isImage: true,
         }));
-        setImages((prev) => [...prev, ...newImages]);
+        setAttachments((prev) => [...prev, ...newImages]);
       }
     },
     [],
   );
 
-  // Screenshot capture handler — adds captured image to staged images
+  // Screenshot capture handler — adds captured image to staged attachments
   const handleScreenshot = useCallback((file: File, preview: string) => {
-    setImages((prev) => [...prev, { file, preview }]);
+    setAttachments((prev) => [...prev, { file, preview, isImage: true }]);
   }, []);
 
-  const canSend = input.trim() || images.length > 0;
+  const canSend = input.trim() || attachments.length > 0;
 
   return (
     <div style={styles.container}>
-      {/* Top bar */}
+      {/* Top bar with tabs */}
       <div style={styles.topBar}>
         <div className="mobile-header" style={styles.mobileHeader}>
           <button onClick={onMenuToggle} style={styles.menuBtn}>
             &#9776;
           </button>
         </div>
-        <span style={styles.title}>Hub</span>
+        <div style={styles.tabBar}>
+          <button
+            style={{
+              ...styles.tabBtn,
+              color: '#4aba6a',
+              borderBottom: '2px solid #4aba6a',
+            }}
+          >
+            Hub
+          </button>
+        </div>
       </div>
 
+      {/* Message list + input */}
+      {<>
       {/* Message feed */}
       <div style={styles.feed}>
         {messages.length === 0 ? (
@@ -277,25 +370,29 @@ export default function HubFeed({ onMenuToggle }: HubFeedProps) {
       {/* Input area — always visible; no session required to post */}
       <div style={styles.inputWrapper}>
         {/* Staged image previews */}
-        {images.length > 0 && (
+        {attachments.length > 0 && (
           <div style={styles.imageRow}>
-            {images.map((img, i) => (
-              <ImagePreview
+            {attachments.map((att, i) => (
+              <AttachmentPreview
                 key={i}
-                src={img.preview}
-                onRemove={() => removeImage(i)}
+                entry={att}
+                onRemove={() => removeAttachment(i)}
               />
             ))}
           </div>
         )}
         <div style={styles.inputAreaOuter}>
           {/* @-mention autocomplete popup */}
+          {/* selectedIndex + onSelectedIndexChange wire HubFeed's keyboard state
+              into MentionAutocomplete so arrow keys actually move the highlight */}
           <MentionAutocomplete
             inputValue={input}
             cursorPosition={cursorPos}
             onSelect={handleMentionSelect}
             onDismiss={() => setMentionVisible(false)}
             visible={mentionVisible}
+            selectedIndex={mentionSelectedIndex}
+            onSelectedIndexChange={setMentionSelectedIndex}
           />
           <div style={styles.inputArea}>
             <textarea
@@ -340,6 +437,7 @@ export default function HubFeed({ onMenuToggle }: HubFeedProps) {
           </div>
         </div>
       </div>
+      </>}
     </div>
   );
 }
@@ -357,12 +455,31 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: 8,
-    padding: '10px 16px',
+    padding: '0 130px 0 16px', // paddingRight 130px clears fixed CaffeineToggle (top:12, right:14)
     borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
     background: 'rgba(26, 26, 28, 0.75)',
     backdropFilter: 'blur(20px) saturate(1.2)',
     WebkitBackdropFilter: 'blur(20px) saturate(1.2)',
     flexShrink: 0,
+    minHeight: 44,
+  } as React.CSSProperties,
+  tabBar: {
+    display: 'flex',
+    alignItems: 'stretch',
+    gap: 0,
+    flex: 1,
+    height: 44,
+  },
+  tabBtn: {
+    padding: '0 16px',
+    background: 'none',
+    border: 'none',
+    borderBottom: '2px solid transparent',
+    fontSize: 14,
+    fontWeight: 600,
+    cursor: 'pointer',
+    transition: 'color 0.15s, border-color 0.15s',
+    letterSpacing: '0.01em',
   } as React.CSSProperties,
   mobileHeader: {
     alignItems: 'center',
@@ -371,11 +488,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 20,
     padding: '4px 8px',
     color: 'var(--text-secondary)',
-  },
-  title: {
-    fontSize: 15,
-    fontWeight: 600,
-    color: '#4aba6a',
   },
   feed: {
     flex: 1,
