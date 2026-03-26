@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import * as api from '../../api';
-import type { SettingsResponse, AccountLoginStatus } from '../../api';
+import type { SettingsResponse, AccountLoginStatus, AccountInfo } from '../../api';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -8,37 +8,61 @@ interface SettingsModalProps {
 
 export default function SettingsModal({ onClose }: SettingsModalProps) {
   const [settings, setSettings] = useState<SettingsResponse | null>(null);
-  const [switching, setSwitching] = useState(false);
   const [loginStatuses, setLoginStatuses] = useState<Record<number, AccountLoginStatus | null>>({});
+  const [switching, setSwitching] = useState(false);
+  const [loggingIn, setLoggingIn] = useState<number | null>(null);
+  const [loggingOut, setLoggingOut] = useState<number | null>(null);
   const [restarting, setRestarting] = useState(false);
+
+  const refreshStatus = () => {
+    setLoginStatuses({ 1: null, 2: null });
+    api.fetchLoginStatus()
+      .then((resp) => {
+        setSettings(resp);
+        setLoginStatuses(resp.loginStatuses);
+      })
+      .catch(() => setLoginStatuses({}));
+  };
 
   useEffect(() => {
     api.fetchSettings().then(setSettings).catch(console.error);
-
-    setLoginStatuses({ 1: null, 2: null });
-    api.fetchLoginStatus()
-      .then((resp) => setLoginStatuses(resp.loginStatuses))
-      .catch(() => setLoginStatuses({}));
+    refreshStatus();
   }, []);
 
-  // Toggle: switch account, log out the old one, and restart the server
-  const handleToggle = async () => {
-    if (!settings || switching) return;
-    const previous: 1 | 2 = settings.activeAccount;
-    const target: 1 | 2 = previous === 1 ? 2 : 1;
+  const handleSwitchAccount = async (target: 1 | 2) => {
+    if (!settings || switching || target === settings.activeAccount) return;
     setSwitching(true);
     try {
-      // Switch to the new account
       const updated = await api.setAccount(target);
       setSettings(updated);
-      // Log out the account we just toggled off
-      await api.logoutClaudeAccount(previous).catch(() => {});
-      // Restart the server so everything picks up the new account cleanly
-      await api.restartApp().catch(() => {});
     } catch (err) {
       console.error('Failed to switch account:', err);
     } finally {
       setSwitching(false);
+    }
+  };
+
+  const handleLogin = async (accountId: 1 | 2) => {
+    setLoggingIn(accountId);
+    try {
+      await api.loginClaudeAccount(accountId);
+      refreshStatus();
+    } catch (err) {
+      console.error(`Login for account ${accountId} failed:`, err);
+    } finally {
+      setLoggingIn(null);
+    }
+  };
+
+  const handleLogout = async (accountId: 1 | 2) => {
+    setLoggingOut(accountId);
+    try {
+      await api.logoutClaudeAccount(accountId);
+      refreshStatus();
+    } catch (err) {
+      console.error(`Logout for account ${accountId} failed:`, err);
+    } finally {
+      setLoggingOut(null);
     }
   };
 
@@ -51,10 +75,6 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
     }
   };
 
-
-  const activeStatus = settings ? loginStatuses[settings.activeAccount] : undefined;
-  const isChecking = activeStatus === null;
-
   return (
     <>
       <div style={styles.overlay} onClick={onClose} />
@@ -65,72 +85,87 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
         </div>
 
         <div style={styles.section}>
-          <span style={styles.sectionLabel}>Claude Account</span>
+          <span style={styles.sectionLabel}>Claude Accounts</span>
 
           {settings ? (
-            <>
-              {/* Toggle switch — shows email when logged in, fallback to account name */}
-              <button
-                onClick={handleToggle}
-                disabled={switching}
-                style={styles.toggle}
-              >
-                <div style={styles.toggleTrack}>
-                  <span
-                    style={{
-                      ...styles.toggleOption,
-                      ...(settings.activeAccount === 1 ? styles.toggleOptionActive : {}),
-                    }}
-                    title={loginStatuses[1]?.email || settings.accounts[0]?.name || 'Account 1'}
-                  >
-                    {loginStatuses[1]?.email || settings.accounts[0]?.name || 'Account 1'}
-                  </span>
-                  <span
-                    style={{
-                      ...styles.toggleOption,
-                      ...(settings.activeAccount === 2 ? styles.toggleOptionActive : {}),
-                    }}
-                    title={loginStatuses[2]?.email || settings.accounts[1]?.name || 'Account 2'}
-                  >
-                    {loginStatuses[2]?.email || settings.accounts[1]?.name || 'Account 2'}
-                  </span>
-                </div>
-              </button>
+            <div style={styles.accountList}>
+              {settings.accounts.map((account: AccountInfo) => {
+                const id = account.id as 1 | 2;
+                const status = loginStatuses[id];
+                const isActive = settings.activeAccount === id;
+                const isChecking = status === null;
+                const isLoggedIn = status?.loggedIn === true;
 
-              {/* Active account info */}
-              <div style={styles.statusRow}>
-                {isChecking ? (
-                  <span style={styles.statusText}>Checking…</span>
-                ) : activeStatus?.loggedIn ? (
-                  <span style={styles.statusTextOk}>
-                    {activeStatus.email}
-                    {activeStatus.subscriptionType ? ` · ${activeStatus.subscriptionType}` : ''}
-                  </span>
-                ) : activeStatus && !activeStatus.loggedIn ? (
-                  <span style={styles.statusTextErr}>Not logged in</span>
-                ) : null}
-              </div>
-            </>
+                return (
+                  <div
+                    key={id}
+                    style={{
+                      ...styles.accountCard,
+                      ...(isActive ? styles.accountCardActive : {}),
+                    }}
+                  >
+                    <div style={styles.accountHeader}>
+                      <span style={styles.accountName}>{account.name}</span>
+                      {isActive && <span style={styles.activeBadge}>Active</span>}
+                    </div>
+
+                    <div style={styles.accountStatus}>
+                      {isChecking ? (
+                        <span style={styles.statusText}>Checking...</span>
+                      ) : isLoggedIn ? (
+                        <span style={styles.statusTextOk}>
+                          {status.email}
+                          {status.subscriptionType ? ` · ${status.subscriptionType}` : ''}
+                        </span>
+                      ) : (
+                        <span style={styles.statusTextErr}>Not logged in</span>
+                      )}
+                    </div>
+
+                    <div style={styles.accountActions}>
+                      {!isActive && (
+                        <button
+                          onClick={() => handleSwitchAccount(id)}
+                          disabled={switching}
+                          style={styles.actionBtn}
+                        >
+                          {switching ? 'Switching...' : 'Set Active'}
+                        </button>
+                      )}
+                      {isLoggedIn ? (
+                        <button
+                          onClick={() => handleLogout(id)}
+                          disabled={loggingOut === id}
+                          style={styles.actionBtnDanger}
+                        >
+                          {loggingOut === id ? 'Logging out...' : 'Logout'}
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleLogin(id)}
+                          disabled={loggingIn === id}
+                          style={styles.actionBtnPrimary}
+                        >
+                          {loggingIn === id ? 'Logging in...' : 'Login'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           ) : (
-            <div style={styles.loading}>Loading…</div>
+            <div style={styles.loading}>Loading...</div>
           )}
         </div>
 
-        <div style={styles.note}>
-          Toggling accounts logs out the current account and restarts the server.
-        </div>
-
-        {/* Restart button — always visible for quick access */}
         <button
           onClick={handleRestart}
           disabled={restarting}
           style={styles.restartBtn}
         >
-          {restarting ? 'Restarting…' : 'Restart App'}
+          {restarting ? 'Restarting...' : 'Restart App'}
         </button>
-        <div style={styles.restartHint}>
-          Restart to apply login/logout changes from terminal.
-        </div>
       </div>
     </>
   );
@@ -154,7 +189,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 'var(--radius-md)',
     padding: '20px',
     boxShadow: '0 20px 60px rgba(0, 0, 0, 0.6)',
-    width: 340,
+    width: 360,
     maxWidth: '90vw',
   },
   header: {
@@ -179,7 +214,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
   },
   section: {
-    marginBottom: 12,
+    marginBottom: 16,
   },
   sectionLabel: {
     fontSize: 11,
@@ -188,45 +223,47 @@ const styles: Record<string, React.CSSProperties> = {
     textTransform: 'uppercase',
     letterSpacing: '0.08em',
     display: 'block',
-    marginBottom: 8,
+    marginBottom: 10,
   },
-  // Toggle switch (segmented control)
-  toggle: {
-    display: 'block',
-    width: '100%',
-    padding: 0,
-    border: 'none',
-    background: 'transparent',
-    cursor: 'pointer',
-  },
-  toggleTrack: {
+  accountList: {
     display: 'flex',
-    background: 'rgba(255, 255, 255, 0.06)',
+    flexDirection: 'column',
+    gap: 10,
+  },
+  accountCard: {
+    background: 'rgba(255, 255, 255, 0.04)',
+    border: '1px solid rgba(255, 255, 255, 0.08)',
     borderRadius: 8,
-    padding: 3,
-    gap: 2,
+    padding: '12px',
   },
-  toggleOption: {
-    flex: 1,
-    textAlign: 'center',
-    fontSize: 11,
+  accountCardActive: {
+    border: '1px solid rgba(74, 186, 106, 0.4)',
+    background: 'rgba(74, 186, 106, 0.06)',
+  },
+  accountHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  accountName: {
+    fontSize: 13,
     fontWeight: 600,
-    color: 'var(--text-secondary)',
-    padding: '8px 4px',
-    borderRadius: 6,
-    transition: 'all 0.15s ease',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
+    color: 'var(--text-primary)',
   },
-  toggleOptionActive: {
-    background: 'rgba(74, 186, 106, 0.2)',
+  activeBadge: {
+    fontSize: 10,
+    fontWeight: 600,
     color: '#4aba6a',
-    boxShadow: '0 1px 3px rgba(0, 0, 0, 0.2)',
+    background: 'rgba(74, 186, 106, 0.15)',
+    padding: '2px 8px',
+    borderRadius: 10,
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
   },
-  statusRow: {
-    marginTop: 8,
-    minHeight: 18,
+  accountStatus: {
+    marginBottom: 8,
+    minHeight: 16,
   },
   statusText: {
     fontSize: 11,
@@ -240,17 +277,50 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 11,
     color: '#ef6461',
   },
+  accountActions: {
+    display: 'flex',
+    gap: 8,
+  },
+  actionBtn: {
+    flex: 1,
+    padding: '6px 0',
+    fontSize: 11,
+    fontWeight: 600,
+    color: 'var(--text-primary)',
+    background: 'rgba(255, 255, 255, 0.08)',
+    border: '1px solid rgba(255, 255, 255, 0.12)',
+    borderRadius: 6,
+    cursor: 'pointer',
+    textAlign: 'center',
+  },
+  actionBtnPrimary: {
+    flex: 1,
+    padding: '6px 0',
+    fontSize: 11,
+    fontWeight: 600,
+    color: '#fff',
+    background: 'rgba(74, 186, 106, 0.25)',
+    border: '1px solid rgba(74, 186, 106, 0.4)',
+    borderRadius: 6,
+    cursor: 'pointer',
+    textAlign: 'center',
+  },
+  actionBtnDanger: {
+    flex: 1,
+    padding: '6px 0',
+    fontSize: 11,
+    fontWeight: 600,
+    color: '#ef6461',
+    background: 'rgba(239, 100, 97, 0.1)',
+    border: '1px solid rgba(239, 100, 97, 0.25)',
+    borderRadius: 6,
+    cursor: 'pointer',
+    textAlign: 'center',
+  },
   loading: {
     fontSize: 13,
     color: 'var(--text-secondary)',
     padding: '8px 0',
-  },
-  note: {
-    fontSize: 11,
-    color: 'var(--text-secondary)',
-    lineHeight: 1.5,
-    marginBottom: 16,
-    fontStyle: 'italic',
   },
   restartBtn: {
     display: 'block',
@@ -264,12 +334,5 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 6,
     cursor: 'pointer',
     textAlign: 'center',
-  },
-  restartHint: {
-    fontSize: 10,
-    color: 'var(--text-secondary)',
-    textAlign: 'center',
-    marginTop: 6,
-    opacity: 0.7,
   },
 };

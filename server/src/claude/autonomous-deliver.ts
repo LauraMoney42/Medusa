@@ -309,7 +309,7 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
   // Saves ~50% tokens on the system prompt portion — full role description not needed
   // for simple Hub checks and acknowledgments.
   const basePrompt = compactMode
-    ? getCompactPrompt(meta)
+    ? `Your name is ${meta.name}. ${getCompactPrompt(meta)}`
     : (meta.systemPrompt || "");
 
   let finalSystemPrompt = basePrompt + hubSection;
@@ -479,8 +479,8 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
             console.log(
               `[autonomous-deliver] Session ${sessionId} summarized and trimmed to ${trimmed.length} messages`
             );
-            // Reset the session to start fresh on next message (forces new --session-id instead of --resume)
-            processManager.createSession(sessionId, meta.workingDir, true);
+            // Keep using --resume for next message. The Claude CLI session still exists
+            // even though we trimmed local chat history. --resume will pick up where it left off.
           })
           .catch((err) => {
             console.error(

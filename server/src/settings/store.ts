@@ -1,11 +1,36 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { execFile } from "child_process";
+import { execFile, execSync, spawn } from "child_process";
 import { z } from "zod";
 import config from "../config.js";
 
 type AccountNumber = 1 | 2;
+
+/**
+ * Resolve the absolute path to the `claude` CLI binary.
+ * The macOS app doesn't include ~/.local/bin in PATH, so we must resolve it.
+ */
+function findClaudeBinary(): string {
+  const candidates = [
+    (() => { try { return execSync("which claude", { encoding: "utf-8" }).trim(); } catch { return null; } })(),
+    "/usr/local/bin/claude",
+    "/opt/homebrew/bin/claude",
+    `${process.env.HOME}/.local/bin/claude`,
+    `${process.env.HOME}/.npm-global/bin/claude`,
+  ];
+  for (const p of candidates) {
+    if (!p) continue;
+    try {
+      const real = fs.realpathSync(p);
+      fs.accessSync(real, fs.constants.X_OK);
+      return real;
+    } catch { /* continue */ }
+  }
+  return "claude";
+}
+
+const CLAUDE_BIN = findClaudeBinary();
 
 export type LlmProvider = "claude" | "openai";
 
@@ -159,12 +184,17 @@ function resolveConfigDir(raw: string): string {
  */
 export function checkAccountLoginStatus(configDir: string): Promise<AccountLoginStatus> {
   const resolved = resolveConfigDir(configDir);
+  // Build env without CLAUDECODE — setting it to "" is different from unsetting it.
+  // Spreading process.env then deleting ensures the child process doesn't inherit it.
+  const childEnv: Record<string, string | undefined> = { ...process.env, CLAUDE_CONFIG_DIR: resolved };
+  delete childEnv.CLAUDECODE;
+  delete childEnv.CLAUDE_CODE_ENTRYPOINT;
   return new Promise((resolve) => {
     execFile(
-      "claude",
+      CLAUDE_BIN,
       ["auth", "status", "--json"],
       {
-        env: { ...process.env, CLAUDE_CONFIG_DIR: resolved, CLAUDECODE: "" },
+        env: childEnv as NodeJS.ProcessEnv,
         timeout: 10_000,
       },
       (err, stdout, stderr) => {
@@ -205,26 +235,65 @@ export async function checkAllAccountsLoginStatus(): Promise<Record<number, Acco
 
 /**
  * Logs in to Claude CLI for a given config directory.
- * Runs `claude login` which opens a browser for OAuth.
+ * Spawns `claude auth login`, captures the OAuth URL from stdout,
+ * and opens it with macOS `open` since the server process can't
+ * open a browser directly from execFile.
  */
 export function loginAccount(configDir: string): Promise<{ success: boolean; error?: string }> {
   const resolved = resolveConfigDir(configDir);
+  const childEnv: Record<string, string | undefined> = { ...process.env, CLAUDE_CONFIG_DIR: resolved };
+  delete childEnv.CLAUDECODE;
+  delete childEnv.CLAUDE_CODE_ENTRYPOINT;
   return new Promise((resolve) => {
-    execFile(
-      "claude",
-      ["auth", "login"],
-      {
-        env: { ...process.env, CLAUDE_CONFIG_DIR: resolved, CLAUDECODE: "" },
-        timeout: 120_000, // login may take a while (browser flow)
-      },
-      (err, _stdout, stderr) => {
-        if (err) {
-          resolve({ success: false, error: stderr || err.message });
-        } else {
-          resolve({ success: true });
+    const child = spawn(CLAUDE_BIN, ["auth", "login"], {
+      env: childEnv as NodeJS.ProcessEnv,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let urlOpened = false;
+
+    const handleOutput = (chunk: Buffer) => {
+      const text = chunk.toString();
+      stdout += text;
+      // Look for the OAuth URL in the output and open it with macOS `open`
+      if (!urlOpened) {
+        const urlMatch = text.match(/(https:\/\/claude\.ai\/oauth\/authorize[^\s]+)/);
+        if (urlMatch) {
+          urlOpened = true;
+          console.log(`[settings] Opening OAuth URL for ${configDir}`);
+          spawn("open", [urlMatch[1]], { stdio: "ignore", detached: true }).unref();
         }
       }
-    );
+    };
+
+    child.stdout?.on("data", handleOutput);
+    child.stderr?.on("data", (chunk: Buffer) => {
+      const text = chunk.toString();
+      stderr += text;
+      handleOutput(chunk);
+    });
+
+    // Timeout after 2 minutes
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve({ success: false, error: "Login timed out" });
+    }, 120_000);
+
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code === 0) {
+        resolve({ success: true });
+      } else {
+        resolve({ success: false, error: stderr || `Exit code ${code}` });
+      }
+    });
+
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      resolve({ success: false, error: err.message });
+    });
   });
 }
 
@@ -234,12 +303,15 @@ export function loginAccount(configDir: string): Promise<{ success: boolean; err
  */
 export function logoutAccount(configDir: string): Promise<{ success: boolean; error?: string }> {
   const resolved = resolveConfigDir(configDir);
+  const childEnv: Record<string, string | undefined> = { ...process.env, CLAUDE_CONFIG_DIR: resolved };
+  delete childEnv.CLAUDECODE;
+  delete childEnv.CLAUDE_CODE_ENTRYPOINT;
   return new Promise((resolve) => {
     execFile(
-      "claude",
+      CLAUDE_BIN,
       ["auth", "logout"],
       {
-        env: { ...process.env, CLAUDE_CONFIG_DIR: resolved, CLAUDECODE: "" },
+        env: childEnv as NodeJS.ProcessEnv,
         timeout: 10_000,
       },
       (err, _stdout, stderr) => {

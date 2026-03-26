@@ -49,39 +49,6 @@ export interface HubPostProcessorOptions {
 }
 
 /**
- * Returns true if a hub post text contains no @mention (no @BotName or @all).
- * Used to decide whether to auto-append @all so hibernating bots wake up.
- */
-function hasNoMentions(text: string): boolean {
-  return !/@\w/.test(text);
-}
-
-/**
- * Returns true if the post is a terminal/internal marker that should NOT
- * broadcast to all bots (completions, no-ops, internal routing).
- */
-function isSilentPost(text: string): boolean {
-  const upper = text.toUpperCase();
-  return (
-    upper.includes("[TASK-DONE:") ||
-    upper.includes("[NO-ACTION]") ||
-    upper.includes("[BOT-TASK:")
-  );
-}
-
-/**
- * Fix A: If a hub post has no @mentions and is not a silent/terminal marker,
- * append @all so every hibernating bot wakes and can self-assign the task.
- * This runs before the post is stored, so the @all appears in the record.
- */
-function ensureMentions(text: string): string {
-  if (hasNoMentions(text) && !isSilentPost(text)) {
-    return `${text} @all`;
-  }
-  return text;
-}
-
-/**
  * Process a batch of hub post strings extracted from a bot's streaming response.
  * Adds each post to the hub store, broadcasts it, routes @mentions,
  * and detects [TASK-DONE:] markers.
@@ -93,9 +60,7 @@ export function processHubPosts(
   const { from, sessionId, hubStore, mentionRouter, io, chainDepth = 0 } = opts;
 
   for (const rawText of posts) {
-    // Fix A: auto-append @all on unassigned posts so hibernating bots wake up
-    const postText = ensureMentions(rawText);
-    const hubMsg = hubStore.add({ from, text: postText, sessionId });
+    const hubMsg = hubStore.add({ from, text: rawText, sessionId });
 
     // Broadcast to all connected clients
     io.emit("hub:message", hubMsg);
@@ -104,7 +69,7 @@ export function processHubPosts(
     mentionRouter.processMessage(hubMsg, chainDepth);
 
     // Detect [TASK-DONE:] markers and emit completion events
-    const taskDesc = extractTaskDone(postText);
+    const taskDesc = extractTaskDone(rawText);
     if (taskDesc) {
       const task = hubStore.addCompletedTask({
         hubMessageId: hubMsg.id,
@@ -119,7 +84,7 @@ export function processHubPosts(
 
     // Detect [QUICK-TASK: title | assignee] and auto-create quick tasks
     if (opts.quickTaskStore) {
-      const qt = extractQuickTask(postText);
+      const qt = extractQuickTask(rawText);
       if (qt) {
         const created = opts.quickTaskStore.create(qt);
         console.log(

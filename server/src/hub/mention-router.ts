@@ -92,6 +92,7 @@ export class MentionRouter {
     }
 
     const mentions = this.extractMentions(hubMessage.text, hubMessage.sessionId);
+    console.log(`[mention-router] processMessage from="${hubMessage.from}" mentions=${JSON.stringify(mentions)} text="${hubMessage.text.slice(0, 80)}"`);
 
     const allSessions = this.sessionStore.loadAll();
 
@@ -124,18 +125,25 @@ export class MentionRouter {
       const isUserMessage = hubMessage.from === "User" || hubMessage.from === "You";
       if (!isUserMessage && target.id === hubMessage.sessionId) continue;
 
-      // Cooldown guard
-      const lastTime = this.lastMentionTime.get(target.id) ?? 0;
-      if (Date.now() - lastTime < MentionRouter.COOLDOWN_MS) continue;
+      // Cooldown guard — only applies to bot-originated mentions.
+      // User @mentions always go through so the user is never silently ignored.
+      if (!isUserMessage) {
+        const lastTime = this.lastMentionTime.get(target.id) ?? 0;
+        if (Date.now() - lastTime < MentionRouter.COOLDOWN_MS) continue;
+      }
 
-      if (this.processManager.isSessionBusy(target.id)) {
+      const busy = this.processManager.isSessionBusy(target.id);
+      console.log(`[mention-router] → target=${target.name} (${target.id.slice(0, 8)}) busy=${busy} isUser=${isUserMessage}`);
+      if (busy) {
         // Enqueue up to MAX_PENDING mentions per bot (FIFO). Silently drop 4th+.
         const queue = this.pendingMentions.get(target.id) ?? [];
         if (queue.length < MentionRouter.MAX_PENDING) {
           queue.push({ hubMessage, chainDepth });
           this.pendingMentions.set(target.id, queue);
+          console.log(`[mention-router] → queued (depth: ${queue.length})`);
         }
       } else {
+        console.log(`[mention-router] → delivering now`);
         this.deliverMention(target.id, hubMessage, chainDepth);
       }
     }
@@ -178,12 +186,11 @@ export class MentionRouter {
       return;
     }
 
-    // Drain pending hub mentions next
+    // Drain pending hub mentions next.
+    // No cooldown re-check here — cooldown was already enforced at enqueue time.
+    // Re-checking would block user mentions that were queued while the session was busy.
     const mentionQueue = this.pendingMentions.get(sessionId);
     if (mentionQueue && mentionQueue.length > 0) {
-      // Check cooldown BEFORE consuming from queue to prevent mention loss
-      const lastTime = this.lastMentionTime.get(sessionId) ?? 0;
-      if (Date.now() - lastTime < MentionRouter.COOLDOWN_MS) return;
       const pending = mentionQueue.shift()!;
       if (mentionQueue.length === 0) {
         this.pendingMentions.delete(sessionId);
@@ -371,7 +378,10 @@ export class MentionRouter {
   private deliverMention(sessionId: string, hubMessage: HubMessage, chainDepth: number): void {
     this.lastMentionTime.set(sessionId, Date.now());
 
-    const prompt = `[Hub Request] A teammate tagged you in the Hub: "${hubMessage.text}" (from ${hubMessage.from}). Please review and respond. If you have something to share back, use [HUB-POST: your response].`;
+    const meta = this.sessionStore.get(sessionId);
+    const botName = meta?.name || "Bot";
+
+    const prompt = `[Hub Message from ${hubMessage.from}]: "${hubMessage.text}"\n\nYou are ${botName}. ALWAYS respond via [HUB-POST: your response] so the sender can see your reply in the Hub. If the message is a task or bug: do the actual work first (read code, edit files, fix bugs), then report results via [HUB-POST:]. Do NOT post status dashboards or triage — that is the PM's job. You are NOT Medusa/PM.`;
 
     // Pass hub message images and files to the Claude process
     const images = hubMessage.images && hubMessage.images.length > 0

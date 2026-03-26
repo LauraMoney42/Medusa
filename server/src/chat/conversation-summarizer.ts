@@ -101,6 +101,7 @@ Provide a concise summary (under 200 words):`;
       prompt,
       "--output-format",
       "stream-json",
+      "--verbose",
       "--model",
       "haiku",
     ];

@@ -259,7 +259,10 @@ export class HubPollScheduler {
       // Mark before sending to prevent re-trigger on next tick
       this.lastStatusUpdatePrompt.set(session.id, now);
 
-      const prompt = `[Status Check] It's been a while since your last update. Please post a brief project status update to the Hub covering: what you completed, what's in progress, and any blockers. Use [HUB-POST: your status]. If you have nothing to report, respond with [NO-ACTION].`;
+      const isPM = session.name.toLowerCase() === "medusa";
+      const prompt = isPM
+        ? `[Status Check] Post a brief PM status update to the Hub: what's completed, in progress, and blocked. Use [HUB-POST: your status]. If nothing to report, respond with [NO-ACTION].`
+        : `[Status Check] You've been idle. Check the Hub for unassigned tasks you can pick up. If you find one, start working on it (read code, edit files). If nothing to do, respond with [NO-ACTION]. Do NOT post status dashboards — that is the PM's job.`;
 
       autonomousDeliver({
         sessionId: session.id,

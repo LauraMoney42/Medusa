@@ -1,3 +1,12 @@
+## 2026-03-09
+- Fix: Claude account login status always showing "Not logged in"
+- Root cause 1: server set CLAUDECODE="" instead of unsetting it — now properly deleted from child env
+- Root cause 2: macOS app doesn't include ~/.local/bin in PATH — auth functions now resolve claude binary path like process-manager does
+- Root cause 3: Login button used execFile which can't open browser from server context — now uses spawn to capture OAuth URL and opens it via macOS `open`
+- Redesign Settings modal: per-account cards with individual Login/Logout buttons
+- Account switching no longer auto-logs-out the previous account
+- Files modified: server/src/settings/store.ts, client/src/components/Sidebar/SettingsModal.tsx
+
 ## 2026-02-28
 - Remove Medusa chat icon/button from sidebar; clicking Medusa bot name in session list now opens Medusa chat
 - Medusa session row highlights green when active, name turns accent green

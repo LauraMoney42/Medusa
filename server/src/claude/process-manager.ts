@@ -83,6 +83,14 @@ export class ProcessManager {
     });
   }
 
+  /** Reset a session to use --session-id on the next message (e.g. after summarization). */
+  resetSession(id: string): void {
+    const entry = this.sessions.get(id);
+    if (entry) {
+      entry.isFirstMessage = true;
+    }
+  }
+
   /** Returns true when a claude process is currently running for the session. */
   isSessionBusy(sessionId: string): boolean {
     const entry = this.sessions.get(sessionId);
@@ -193,8 +201,9 @@ export class ProcessManager {
     const parser = new StreamParser();
     parser.onEvent = onEvent;
 
-    // Collect raw stdout to detect "No conversation found" errors
+    // Collect raw stdout/stderr to detect retry-able errors
     let rawStdout = "";
+    let rawStderr = "";
 
     child.stdout!.on("data", (chunk: Buffer) => {
       const str = chunk.toString("utf-8");
@@ -208,6 +217,7 @@ export class ProcessManager {
     child.stderr!.on("data", (chunk: Buffer) => {
       const errText = chunk.toString("utf-8").trim();
       if (!errText) return;
+      rawStderr += errText + "\n";
       if (isUsageWarning(errText)) {
         console.log(`[claude] Usage warning (session ${sessionId}): ${errText}`);
         return;
@@ -220,12 +230,14 @@ export class ProcessManager {
         parser.flush();
         entry.process = null;
 
+        const combined = rawStdout + rawStderr;
+
         // If --resume failed because no session exists, retry with --session-id
         if (
           code !== 0 &&
           !useSessionId &&
           !forceNew &&
-          rawStdout.includes("No conversation found")
+          combined.includes("No conversation found")
         ) {
           console.log(
             `[claude] Session ${sessionId} not found in Claude, retrying with --session-id`
@@ -233,6 +245,22 @@ export class ProcessManager {
           entry.isFirstMessage = true;
           resolve(
             this.spawnClaude(sessionId, entry, text, images, onEvent, true, yoloMode, systemPrompt, model, files)
+          );
+          return;
+        }
+
+        // If --session-id failed because session already exists, retry with --resume
+        if (
+          code !== 0 &&
+          useSessionId &&
+          combined.includes("already in use")
+        ) {
+          console.log(
+            `[claude] Session ${sessionId} already exists in Claude, retrying with --resume`
+          );
+          entry.isFirstMessage = false;
+          resolve(
+            this.spawnClaude(sessionId, entry, text, images, onEvent, false, yoloMode, systemPrompt, model, files)
           );
           return;
         }

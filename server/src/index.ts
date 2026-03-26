@@ -56,7 +56,8 @@ const tokenLogger = new TokenLogger(config.tokenUsageLogFile);
 
 // Pre-load existing sessions into the process manager so that
 // resumed conversations work after a server restart.
-// isFirstMessage=false because these sessions already exist in Claude Code.
+// isFirstMessage=false uses --resume. If the Claude CLI session doesn't exist,
+// the "No conversation found" fallback in process-manager retries with --session-id.
 const allSessions = sessionStore.loadAll();
 for (const meta of allSessions) {
   processManager.createSession(meta.id, meta.workingDir, false);
