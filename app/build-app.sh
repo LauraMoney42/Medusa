@@ -28,7 +28,11 @@ mkdir -p "$APP_BUNDLE/Contents/Resources"
 cp "$RESOURCES_DIR/Info.plist" "$APP_BUNDLE/Contents/"
 
 # Generate app icon from PNG if available
-ICON_PNG="$(cd "$SCRIPT_DIR/.." && pwd)/Pictures/MedusaIcon.png"
+# med-001: check assets/ (committed) first, then legacy Pictures/ locations
+ICON_PNG="$(cd "$SCRIPT_DIR/.." && pwd)/assets/MedusaIcon.png"
+if [ ! -f "$ICON_PNG" ]; then
+    ICON_PNG="$(cd "$SCRIPT_DIR/.." && pwd)/Pictures/MedusaIcon.png"
+fi
 if [ ! -f "$ICON_PNG" ]; then
     ICON_PNG="$HOME/Pictures/MedusaIcon.png"
 fi
