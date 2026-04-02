@@ -22,3 +22,14 @@ MedusaLogoOriginal.png
 
 # Sensitive docs
 docs/security_audit_report.md
+
+# Claude Code local settings — contain machine-specific paths and permissions
+client/.claude/settings.local.json
+.claude/settings.local.json
+
+# Runtime / generated data
+tokenusage/*.json
+tokenusage/*.csv
+server/data/
+*.sqlite
+*.db
