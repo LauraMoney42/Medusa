@@ -42,6 +42,14 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
     setActiveView('hub');
   };
 
+  const handleMedusaChatClick = () => {
+    if (activeView === 'medusa') {
+      return;
+    }
+    setActiveSession(null);
+    setActiveView('medusa');
+  };
+
   const handleUsageClick = () => {
     if (activeView === 'usage') {
       return;
@@ -114,6 +122,25 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
           {unreadCount > 0 && activeView !== 'hub' && (
             <span style={styles.badge}>{unreadCount}</span>
           )}
+        </button>
+
+        {/* Medusa Chat button */}
+        <button
+          onClick={handleMedusaChatClick}
+          style={{
+            ...styles.hubBtn,
+            background: activeView === 'medusa'
+              ? 'rgba(26, 122, 60, 0.15)'
+              : 'transparent',
+            color: activeView === 'medusa'
+              ? '#4aba6a'
+              : 'var(--text-secondary)',
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          </svg>
+          <span>Medusa Chat</span>
         </button>
 
         {/* Stop All button */}

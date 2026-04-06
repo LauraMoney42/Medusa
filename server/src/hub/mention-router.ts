@@ -381,7 +381,14 @@ export class MentionRouter {
     const meta = this.sessionStore.get(sessionId);
     const botName = meta?.name || "Bot";
 
-    const prompt = `[Hub Message from ${hubMessage.from}]: "${hubMessage.text}"\n\nYou are ${botName}. ALWAYS respond via [HUB-POST: your response] so the sender can see your reply in the Hub. If the message is a task or bug: do the actual work first (read code, edit files, fix bugs), then report results via [HUB-POST:]. Do NOT post status dashboards or triage — that is the PM's job. You are NOT Medusa/PM.`;
+    // Build role-specific context: Medusa is the PM and should be affirmed as such.
+    // Dev bots (Dev1, Dev2, etc.) need the reminder that they are NOT the PM.
+    const isPM = botName.toLowerCase() === "medusa";
+    const roleContext = isPM
+      ? `You are ${botName}, the PM. Your job is to triage messages, create/track tasks, and coordinate Devs — NOT to write or edit code yourself. Respond via [HUB-POST: your response].`
+      : `You are ${botName}. ALWAYS respond via [HUB-POST: your response] so the sender can see your reply in the Hub. If the message is a task or bug: do the actual work first (read code, edit files, fix bugs), then report results via [HUB-POST:]. Do NOT post status dashboards or triage — that is the PM's job. You are NOT Medusa/PM.`;
+
+    const prompt = `[Hub Message from ${hubMessage.from}]: "${hubMessage.text}"\n\n${roleContext}`;
 
     // Pass hub message images and files to the Claude process
     const images = hubMessage.images && hubMessage.images.length > 0

@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import * as api from '../../api';
-import type { SettingsResponse, AccountLoginStatus, AccountInfo } from '../../api';
+import type { SettingsResponse, AccountLoginStatus, AccountInfo, OneNoteStatus, OneNoteDeviceCode } from '../../api';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -13,6 +13,12 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
   const [loggingIn, setLoggingIn] = useState<number | null>(null);
   const [loggingOut, setLoggingOut] = useState<number | null>(null);
   const [restarting, setRestarting] = useState(false);
+
+  // OneNote state
+  const [oneNoteStatus, setOneNoteStatus] = useState<OneNoteStatus | null>(null);
+  const [deviceCode, setDeviceCode] = useState<OneNoteDeviceCode | null>(null);
+  const [authPolling, setAuthPolling] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const refreshStatus = () => {
     setLoginStatuses({ 1: null, 2: null });
@@ -27,7 +33,52 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
   useEffect(() => {
     api.fetchSettings().then(setSettings).catch(console.error);
     refreshStatus();
+    api.fetchOneNoteStatus().then(setOneNoteStatus).catch(console.error);
   }, []);
+
+  // Poll OneNote auth status while device code is pending
+  useEffect(() => {
+    if (!deviceCode) { if (pollRef.current) clearInterval(pollRef.current); return; }
+    setAuthPolling(true);
+    pollRef.current = setInterval(() => {
+      api.fetchOneNoteStatus().then((s) => {
+        setOneNoteStatus(s);
+        if (s.status === 'connected') {
+          setDeviceCode(null);
+          setAuthPolling(false);
+          if (pollRef.current) clearInterval(pollRef.current);
+        }
+      }).catch(console.error);
+    }, 5000);
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [deviceCode]);
+
+  const [oneNoteError, setOneNoteError] = useState<string | null>(null);
+  const [connecting, setConnecting] = useState(false);
+
+  const handleConnectOneNote = async () => {
+    setOneNoteError(null);
+    setConnecting(true);
+    try {
+      const dc = await api.startOneNoteAuth();
+      setDeviceCode(dc);
+    } catch (err) {
+      console.error('[onenote] connect failed:', err);
+      setOneNoteError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const handleDisconnectOneNote = async () => {
+    try {
+      await api.disconnectOneNote();
+      setDeviceCode(null);
+      setAuthPolling(false);
+      const s = await api.fetchOneNoteStatus();
+      setOneNoteStatus(s);
+    } catch (err) { console.error(err); }
+  };
 
   const handleSwitchAccount = async (target: 1 | 2) => {
     if (!settings || switching || target === settings.activeAccount) return;
@@ -157,6 +208,72 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
           ) : (
             <div style={styles.loading}>Loading...</div>
           )}
+        </div>
+
+        {/* ---- OneNote Integration ---- */}
+        <div style={{ ...styles.section, marginTop: 8 }}>
+          <span style={styles.sectionLabel}>OneNote Integration</span>
+
+          <div style={styles.accountCard}>
+            <div style={styles.accountHeader}>
+              <span style={styles.accountName}>Microsoft OneNote</span>
+              {oneNoteStatus?.status === 'connected' && (
+                <span style={styles.activeBadge}>Connected</span>
+              )}
+              {(oneNoteStatus?.status === 'pending' || connecting) && (
+                <span style={{ ...styles.activeBadge, color: '#f0b429', background: 'rgba(240,180,41,0.15)' }}>
+                  {connecting ? 'Starting...' : 'Pending'}
+                </span>
+              )}
+            </div>
+
+            {/* Device code instructions — shown after Connect clicked */}
+            {deviceCode && (
+              <div style={{ margin: '8px 0', padding: '10px', background: 'rgba(74,186,106,0.08)', borderRadius: 6, border: '1px solid rgba(74,186,106,0.25)' }}>
+                <p style={{ fontSize: 11, color: 'var(--text-secondary)', margin: '0 0 6px 0' }}>
+                  1.{' '}
+                  <a href={deviceCode.verificationUrl} target="_blank" rel="noreferrer" style={{ color: '#4aba6a' }}>
+                    Open {deviceCode.verificationUrl}
+                  </a>
+                </p>
+                <p style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 6px 0', letterSpacing: 3, fontFamily: 'monospace' }}>
+                  2. Enter: {deviceCode.userCode}
+                </p>
+                <p style={{ fontSize: 10, color: 'var(--text-secondary)', margin: 0 }}>
+                  {authPolling ? '⏳ Waiting... sign in then return here' : 'Sign in with your Microsoft account'}
+                </p>
+              </div>
+            )}
+
+            {/* Inline error display — replaces silent alert() */}
+            {oneNoteError && (
+              <div style={{ margin: '6px 0', padding: '8px', background: 'rgba(239,100,97,0.1)', borderRadius: 6, border: '1px solid rgba(239,100,97,0.3)' }}>
+                <p style={{ fontSize: 10, color: '#ef6461', margin: 0, wordBreak: 'break-all' }}>
+                  ❌ {oneNoteError}
+                </p>
+              </div>
+            )}
+
+            <div style={styles.accountActions}>
+              {oneNoteStatus?.status === 'connected' ? (
+                <button onClick={handleDisconnectOneNote} style={styles.actionBtnDanger}>
+                  Disconnect
+                </button>
+              ) : deviceCode ? (
+                <button onClick={handleDisconnectOneNote} style={styles.actionBtnDanger}>
+                  Cancel
+                </button>
+              ) : (
+                <button
+                  onClick={handleConnectOneNote}
+                  disabled={connecting}
+                  style={styles.actionBtnPrimary}
+                >
+                  {connecting ? 'Connecting...' : 'Connect'}
+                </button>
+              )}
+            </div>
+          </div>
         </div>
 
         <button
@@ -321,6 +438,17 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
     color: 'var(--text-secondary)',
     padding: '8px 0',
+  },
+  textInput: {
+    flex: 1,
+    padding: '6px 8px',
+    fontSize: 11,
+    color: 'var(--text-primary)',
+    background: 'rgba(255, 255, 255, 0.06)',
+    border: '1px solid rgba(255, 255, 255, 0.12)',
+    borderRadius: 6,
+    outline: 'none',
+    fontFamily: 'monospace',
   },
   restartBtn: {
     display: 'block',

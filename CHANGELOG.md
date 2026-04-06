@@ -1,3 +1,11 @@
+## 2026-04-05
+- Feature: Microsoft OneNote integration for Medusa Mac desktop app (mu-onenote-001)
+- OAuth 2.0 device code flow — no redirect URI needed, works in desktop context
+- Token persistence in ~/.claude-chat/settings.json (access + refresh + expiry)
+- Auto-refresh tokens before 1h expiry; creates "Medusa" notebook + "General" section if missing
+- Settings modal: Azure Client ID input field + Connect/Disconnect flow with live device code UI
+- Files modified: server/src/onenote/service.ts (new), server/src/routes/onenote.ts (new), server/src/settings/store.ts, server/src/index.ts, client/src/api.ts, client/src/components/Sidebar/SettingsModal.tsx
+
 ## 2026-03-09
 - Fix: Claude account login status always showing "Not logged in"
 - Root cause 1: server set CLAUDECODE="" instead of unsetting it — now properly deleted from child env

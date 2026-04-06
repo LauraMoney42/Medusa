@@ -19,6 +19,14 @@ async function request<T>(url: string, opts: RequestInit = {}): Promise<T> {
   });
   if (!res.ok) {
     const body = await res.text();
+    // Try to unwrap { error: "..." } JSON — avoids showing raw JSON blobs to users
+    try {
+      const parsed = JSON.parse(body) as { error?: string; message?: string };
+      if (parsed.error) throw new Error(parsed.error);
+      if (parsed.message) throw new Error(parsed.message);
+    } catch (e) {
+      if (e instanceof SyntaxError === false) throw e; // re-throw our Error, not parse error
+    }
     throw new Error(`API ${res.status}: ${body}`);
   }
   return res.json() as Promise<T>;
@@ -255,6 +263,8 @@ export interface AccountInfo {
 export interface SettingsResponse {
   activeAccount: 1 | 2;
   accounts: AccountInfo[];
+  hasMicrosoftClientId?: boolean;
+  oneNoteConnected?: boolean;
 }
 
 export interface LoginStatusResponse extends SettingsResponse {
@@ -285,6 +295,50 @@ export function loginClaudeAccount(accountId: 1 | 2): Promise<{ success: boolean
 export function logoutClaudeAccount(accountId: 1 | 2): Promise<{ success: boolean; loginStatus: AccountLoginStatus }> {
   return request<{ success: boolean; loginStatus: AccountLoginStatus }>(`/api/settings/account/${accountId}/logout`, {
     method: 'POST',
+  });
+}
+
+// ---- OneNote Integration ----
+
+export interface OneNoteStatus {
+  status: 'disconnected' | 'pending' | 'connected' | 'error';
+  hasClientId: boolean;
+}
+
+export interface OneNoteDeviceCode {
+  userCode: string;
+  verificationUrl: string;
+  expiresIn: number;
+}
+
+export function fetchOneNoteStatus(): Promise<OneNoteStatus> {
+  return request<OneNoteStatus>('/api/onenote/auth/status');
+}
+
+export function setOneNoteClientId(clientId: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>('/api/onenote/client-id', {
+    method: 'PUT',
+    body: JSON.stringify({ clientId }),
+  });
+}
+
+export function startOneNoteAuth(): Promise<OneNoteDeviceCode> {
+  return request<OneNoteDeviceCode>('/api/onenote/auth/start', { method: 'POST' });
+}
+
+export function disconnectOneNote(): Promise<{ ok: boolean; status: string }> {
+  return request<{ ok: boolean; status: string }>('/api/onenote/auth', { method: 'DELETE' });
+}
+
+export function sendToOneNote(
+  title: string,
+  content: string,
+  notebook?: string,
+  section?: string
+): Promise<{ ok: boolean; pageId: string; webUrl: string }> {
+  return request<{ ok: boolean; pageId: string; webUrl: string }>('/api/onenote/send', {
+    method: 'POST',
+    body: JSON.stringify({ title, content, notebook, section }),
   });
 }
 

@@ -17,6 +17,27 @@ function isHubSystemMessage(msg: ChatMessage): boolean {
   );
 }
 
+// Hub delivery messages are injected as user turns so the bot sees them in context.
+// The full delivery prompt includes a `[Hub Message from X]: "..."` wrapper plus
+// appended role/routing instructions. Strip those so the chat window shows only the
+// clean human-readable message the sender actually wrote.
+//
+// Format: [Hub Message from SENDER]: "MESSAGE_TEXT"\n\nYou are BOT. ALWAYS respond...
+function stripHubDeliveryWrapper(msg: ChatMessage): ChatMessage {
+  if (msg.role !== 'user') return msg;
+  const text = msg.text;
+
+  // Full form: wrapper + trailing system instructions separated by double newline
+  const fullMatch = text.match(/^\[Hub Message from [^\]]+\]: "([\s\S]*?)"\n\n[\s\S]*/);
+  if (fullMatch) return { ...msg, text: fullMatch[1] };
+
+  // Bare form: wrapper only, no trailing instructions
+  const bareMatch = text.match(/^\[Hub Message from [^\]]+\]: "([\s\S]*)"\s*$/);
+  if (bareMatch) return { ...msg, text: bareMatch[1] };
+
+  return msg;
+}
+
 interface MessageListProps {
   sessionId: string;
   botName?: string;
@@ -60,7 +81,7 @@ export default function MessageList({ sessionId, botName }: MessageListProps) {
         )}
 
         {messages.map((msg) => (
-          <MessageBubble key={msg.id} message={msg} botName={botName} />
+          <MessageBubble key={msg.id} message={stripHubDeliveryWrapper(msg)} botName={botName} />
         ))}
 
         {/* Bottom spacer */}

@@ -1,35 +1,77 @@
+# ── Dependencies ─────────────────────────────────────────────────────────────
 node_modules/
-dist/
-.env
-server/uploads/*
-!server/uploads/.gitkeep
-*.log
-.DS_Store
 
-# Additional ignores
+# ── Build output ──────────────────────────────────────────────────────────────
+dist/
+
+# ── Secrets & credentials (NEVER commit) ─────────────────────────────────────
+.env
 .env.*
 !.env.example
+
+# Certs, private keys
 *.pem
 *.key
-# Desktop app — source included, built .app excluded
+*.jks
+*.p12
+keystore*
+*_key.json
+*-credentials.json
+
+# Google Cloud / Firebase — generated per-project in GCP Console
+google-services.json
+GoogleService-Info.plist
+service-account*.json
+firebase*.json
+!firebase.json
+
+# ── Server uploads / user data ────────────────────────────────────────────────
+server/uploads/*
+!server/uploads/.gitkeep
+
+# ── OS / editor junk ─────────────────────────────────────────────────────────
+*.log
+.DS_Store
+.vscode/
+*.swp
+*.swo
+
+# ── Desktop app ───────────────────────────────────────────────────────────────
 app/Medusa.app/
 
-# Internal dev logs (not for public distribution)
+# ── Internal dev logs ─────────────────────────────────────────────────────────
 devlog.md
 WORKLOG.md
 MedusaLog.txt
 MedusaLogoOriginal.png
 
-# Sensitive docs
+# ── Sensitive docs ────────────────────────────────────────────────────────────
 docs/security_audit_report.md
 
-# Claude Code local settings — contain machine-specific paths and permissions
+# ── Claude Code local settings ────────────────────────────────────────────────
+# settings.local.json = machine-specific paths/perms — do NOT commit
 client/.claude/settings.local.json
 .claude/settings.local.json
+# NOTE: .mcp.json IS committed — project MCP config, contains no secrets
 
-# Runtime / generated data
+# ── Runtime / generated data ──────────────────────────────────────────────────
 tokenusage/*.json
 tokenusage/*.csv
 server/data/
 *.sqlite
 *.db
+
+# ── Playwright MCP — browser artifacts ───────────────────────────────────────
+playwright-state.json
+.playwright/
+playwright-report/
+test-results/
+blob-report/
+page-*.png
+page-*.jpeg
+
+# ── Microsoft / OneNote tokens ────────────────────────────────────────────────
+# Tokens stored in ~/.claude-chat/settings.json — never in repo
+
+# ── npm cache metadata ────────────────────────────────────────────────────────
+.npm/

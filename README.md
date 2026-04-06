@@ -25,6 +25,7 @@ Medusa lets you run multiple Claude Code bots simultaneously, each with their ow
 
 ## Quick Start
 
+**Desktop app (Mac):**
 ```bash
 git clone https://github.com/LauraMoney42/Medusa.git
 cd Medusa
@@ -33,6 +34,15 @@ open app/Medusa.app
 ```
 
 That's it. On first launch the app automatically installs dependencies, builds the client and server, generates an auth token, and logs you in. Just wait for the loading screen to finish.
+
+**Dev / headless setup (all platforms):**
+```bash
+git clone https://github.com/LauraMoney42/Medusa.git
+cd Medusa
+bash scripts/setup.sh
+```
+
+`setup.sh` installs npm dependencies, builds the TypeScript server, copies `.env.example` → `.env`, and registers the **Playwright MCP** tool with Claude Code so bots can control a browser out of the box. Edit `.env` before starting the server.
 
 ## How It Works
 

@@ -39,17 +39,26 @@ const SettingsSchema = z.object({
   llmProvider: z.enum(["claude", "openai"]).default("claude"),
   // Stored as plaintext — file is chmod 600, never returned in full via API
   llmApiKey: z.string().default(""),
+  // Microsoft OneNote integration — stored in same file (chmod 600)
+  microsoftClientId: z.string().default(""),
+  microsoftAccessToken: z.string().default(""),
+  microsoftRefreshToken: z.string().default(""),
+  microsoftTokenExpiry: z.number().default(0),
 });
 
 type SettingsData = z.infer<typeof SettingsSchema>;
 
-// Public shape returned to API callers — token is always masked
+// Public shape returned to API callers — tokens are never returned
 export interface SettingsResponse {
   activeAccount: AccountNumber;
   llmProvider: LlmProvider;
   /** Masked API key — shows only last 4 chars (e.g. "sk-...abcd"). Empty string if not set. */
   llmApiKey: string;
   accounts: Array<{ id: number; name: string; configDir: string }>;
+  /** Whether a Microsoft Client ID has been configured for OneNote */
+  hasMicrosoftClientId: boolean;
+  /** Whether Microsoft access token exists (i.e. user has authenticated) */
+  oneNoteConnected: boolean;
 }
 
 const SETTINGS_FILE = path.join(
@@ -149,7 +158,7 @@ export function updateSettings(
   return state;
 }
 
-/** Builds the public API response shape (token masked). */
+/** Builds the public API response shape (tokens masked/omitted). */
 export function buildSettingsResponse(): SettingsResponse {
   return {
     activeAccount: state.activeAccount,
@@ -159,7 +168,42 @@ export function buildSettingsResponse(): SettingsResponse {
       { id: 1, name: config.account1Name, configDir: config.account1ConfigDir },
       { id: 2, name: config.account2Name, configDir: config.account2ConfigDir },
     ],
+    hasMicrosoftClientId: !!state.microsoftClientId,
+    oneNoteConnected: !!state.microsoftAccessToken,
   };
+}
+
+// ---- OneNote token helpers --------------------------------------------------
+
+/**
+ * Persist Microsoft OAuth tokens (access, refresh, expiry) + optional client ID.
+ * Called by OneNoteService token update callback and the PUT /client-id route.
+ */
+export function updateOneNoteTokens(
+  accessToken: string,
+  refreshToken: string,
+  expiry: number,
+  clientId?: string
+): void {
+  const patch: Partial<SettingsData> = {
+    microsoftAccessToken: accessToken,
+    microsoftRefreshToken: refreshToken,
+    microsoftTokenExpiry: expiry,
+  };
+  if (clientId !== undefined) patch.microsoftClientId = clientId;
+  state = SettingsSchema.parse({ ...state, ...patch });
+  save(state);
+}
+
+/** Clears all Microsoft tokens (but preserves the client ID). */
+export function clearOneNoteTokens(): void {
+  state = SettingsSchema.parse({
+    ...state,
+    microsoftAccessToken: "",
+    microsoftRefreshToken: "",
+    microsoftTokenExpiry: 0,
+  });
+  save(state);
 }
 
 // ---- Login status -----------------------------------------------------------

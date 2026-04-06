@@ -38,6 +38,7 @@ import { paginateDevlogs } from "./utils/devlog-paginator.js";
 import { autonomousDeliver } from "./claude/autonomous-deliver.js";
 import { TokenLogger } from "./metrics/token-logger.js";
 import { createMetricsRouter } from "./routes/metrics.js";
+import { createOneNoteRouter } from "./routes/onenote.js";
 import { z } from "zod";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -147,6 +148,7 @@ app.use("/api/metrics", generalLimiter, metricsRouter);
 app.get("/api/token-usage", generalLimiter, tokenUsageHandler);
 app.use("/api/caffeine", generalLimiter, createCaffeineRouter());
 app.use("/api/settings", generalLimiter, createSettingsRouter(processManager, io));
+app.use("/api/onenote", generalLimiter, createOneNoteRouter());
 // TicTalk proxy — forwards TicBuddy/TicTamer iOS app messages to Anthropic Claude API.
 // Has its own stricter rate limiter (20 req/min) since each call hits the paid API.
 app.use("/api/tictalk", createTicTalkRouter());
