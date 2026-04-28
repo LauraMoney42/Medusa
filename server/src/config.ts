@@ -64,6 +64,8 @@ export interface Config {
   account2Name: string;
   /** CLAUDE_CONFIG_DIR path for account 2 (default: ~/.claude-account2) */
   account2ConfigDir: string;
+  /** KIMI_CONFIG_DIR path (default: ~/.kimi) */
+  kimiConfigDir: string;
 }
 
 const config: Config = {
@@ -128,6 +130,7 @@ const config: Config = {
   account1ConfigDir: process.env.ACCOUNT_1_CONFIG_DIR || "~/.claude",
   account2Name: process.env.ACCOUNT_2_NAME || "Account 2",
   account2ConfigDir: process.env.ACCOUNT_2_CONFIG_DIR || "~/.claude-account2",
+  kimiConfigDir: process.env.KIMI_CONFIG_DIR || "~/.kimi",
 };
 
 export default config;

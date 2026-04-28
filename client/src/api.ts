@@ -254,6 +254,11 @@ export interface AccountLoginStatus {
   subscriptionType?: string;
 }
 
+export interface KimiLoginStatus {
+  loggedIn: boolean;
+  email?: string;
+}
+
 export interface AccountInfo {
   id: 1 | 2;
   name: string;
@@ -262,13 +267,18 @@ export interface AccountInfo {
 
 export interface SettingsResponse {
   activeAccount: 1 | 2;
+  activeProvider: 'claude' | 'kimi';
+  llmProvider: 'claude' | 'openai' | 'kimi';
+  llmApiKey: string;
   accounts: AccountInfo[];
   hasMicrosoftClientId?: boolean;
   oneNoteConnected?: boolean;
+  kimiLoginStatus: KimiLoginStatus;
 }
 
 export interface LoginStatusResponse extends SettingsResponse {
   loginStatuses: Record<number, AccountLoginStatus>;
+  kimiLoginStatus: KimiLoginStatus;
 }
 
 export function fetchSettings(): Promise<SettingsResponse> {
@@ -286,6 +296,13 @@ export function setAccount(account: 1 | 2): Promise<SettingsResponse> {
   });
 }
 
+export function setProvider(provider: 'claude' | 'kimi'): Promise<SettingsResponse> {
+  return request<SettingsResponse>('/api/settings/provider', {
+    method: 'POST',
+    body: JSON.stringify({ provider }),
+  });
+}
+
 export function loginClaudeAccount(accountId: 1 | 2): Promise<{ success: boolean; loginStatus: AccountLoginStatus }> {
   return request<{ success: boolean; loginStatus: AccountLoginStatus }>(`/api/settings/account/${accountId}/login`, {
     method: 'POST',
@@ -294,6 +311,18 @@ export function loginClaudeAccount(accountId: 1 | 2): Promise<{ success: boolean
 
 export function logoutClaudeAccount(accountId: 1 | 2): Promise<{ success: boolean; loginStatus: AccountLoginStatus }> {
   return request<{ success: boolean; loginStatus: AccountLoginStatus }>(`/api/settings/account/${accountId}/logout`, {
+    method: 'POST',
+  });
+}
+
+export function loginKimiAccount(): Promise<{ success: boolean; loginStatus: KimiLoginStatus }> {
+  return request<{ success: boolean; loginStatus: KimiLoginStatus }>('/api/settings/kimi/login', {
+    method: 'POST',
+  });
+}
+
+export function logoutKimiAccount(): Promise<{ success: boolean; loginStatus: KimiLoginStatus }> {
+  return request<{ success: boolean; loginStatus: KimiLoginStatus }>('/api/settings/kimi/logout', {
     method: 'POST',
   });
 }

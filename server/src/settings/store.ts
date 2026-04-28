@@ -32,11 +32,12 @@ function findClaudeBinary(): string {
 
 const CLAUDE_BIN = findClaudeBinary();
 
-export type LlmProvider = "claude" | "openai";
+export type LlmProvider = "claude" | "openai" | "kimi";
 
 const SettingsSchema = z.object({
   activeAccount: z.union([z.literal(1), z.literal(2)]).default(1),
-  llmProvider: z.enum(["claude", "openai"]).default("claude"),
+  activeProvider: z.enum(["claude", "kimi"]).default("claude"),
+  llmProvider: z.enum(["claude", "openai", "kimi"]).default("claude"),
   // Stored as plaintext — file is chmod 600, never returned in full via API
   llmApiKey: z.string().default(""),
   // Microsoft OneNote integration — stored in same file (chmod 600)
@@ -48,9 +49,15 @@ const SettingsSchema = z.object({
 
 type SettingsData = z.infer<typeof SettingsSchema>;
 
+export interface KimiLoginStatus {
+  loggedIn: boolean;
+  email?: string;
+}
+
 // Public shape returned to API callers — tokens are never returned
 export interface SettingsResponse {
   activeAccount: AccountNumber;
+  activeProvider: "claude" | "kimi";
   llmProvider: LlmProvider;
   /** Masked API key — shows only last 4 chars (e.g. "sk-...abcd"). Empty string if not set. */
   llmApiKey: string;
@@ -59,6 +66,7 @@ export interface SettingsResponse {
   hasMicrosoftClientId: boolean;
   /** Whether Microsoft access token exists (i.e. user has authenticated) */
   oneNoteConnected: boolean;
+  kimiLoginStatus: KimiLoginStatus;
 }
 
 const SETTINGS_FILE = path.join(
@@ -73,13 +81,14 @@ function load(): SettingsData {
     const parsed: unknown = JSON.parse(raw);
     const result = SettingsSchema.safeParse(parsed);
     if (result.success) return result.data;
-    // Validation failed — log and fall back to defaults, preserving activeAccount if readable
+    // Validation failed — log and fall back to defaults, preserving activeAccount/activeProvider if readable
     console.error("[settings] Settings file validation failed:", result.error.message);
-    const fallback =
-      parsed !== null && typeof parsed === "object" && "activeAccount" in parsed
-        ? (parsed as Record<string, unknown>).activeAccount
-        : undefined;
-    return SettingsSchema.parse({ activeAccount: fallback });
+    const fallback: Record<string, unknown> =
+      parsed !== null && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+    return SettingsSchema.parse({
+      activeAccount: fallback.activeAccount,
+      activeProvider: fallback.activeProvider,
+    });
   } catch {
     return SettingsSchema.parse({});
   }
@@ -127,6 +136,16 @@ export function setActiveAccount(account: AccountNumber): void {
   console.log(`[settings] Switched to account ${account}`);
 }
 
+export function getActiveProvider(): "claude" | "kimi" {
+  return state.activeProvider;
+}
+
+export function setActiveProvider(provider: "claude" | "kimi"): void {
+  state = { ...state, activeProvider: provider, llmProvider: provider };
+  save(state);
+  console.log(`[settings] Switched to provider ${provider}`);
+}
+
 /** Resolves ~ in config dir paths and returns the absolute CLAUDE_CONFIG_DIR. */
 export function getActiveConfigDir(): string {
   const raw =
@@ -162,6 +181,7 @@ export function updateSettings(
 export function buildSettingsResponse(): SettingsResponse {
   return {
     activeAccount: state.activeAccount,
+    activeProvider: state.activeProvider,
     llmProvider: state.llmProvider,
     llmApiKey: maskApiKey(state.llmApiKey),
     accounts: [
@@ -170,6 +190,7 @@ export function buildSettingsResponse(): SettingsResponse {
     ],
     hasMicrosoftClientId: !!state.microsoftClientId,
     oneNoteConnected: !!state.microsoftAccessToken,
+    kimiLoginStatus: checkKimiLoginStatusSync(),
   };
 }
 
@@ -358,6 +379,148 @@ export function logoutAccount(configDir: string): Promise<{ success: boolean; er
         env: childEnv as NodeJS.ProcessEnv,
         timeout: 10_000,
       },
+      (err, _stdout, stderr) => {
+        if (err) {
+          resolve({ success: false, error: stderr || err.message });
+        } else {
+          resolve({ success: true });
+        }
+      }
+    );
+  });
+}
+
+/** Resolve the absolute path to the `kimi` CLI binary. */
+function findKimiBinary(): string {
+  const candidates = [
+    (() => { try { return execSync("which kimi", { encoding: "utf-8" }).trim(); } catch { return null; } })(),
+    "/usr/local/bin/kimi",
+    "/opt/homebrew/bin/kimi",
+    `${process.env.HOME}/.local/bin/kimi`,
+    `${process.env.HOME}/.npm-global/bin/kimi`,
+  ];
+  for (const p of candidates) {
+    if (!p) continue;
+    try {
+      const real = fs.realpathSync(p);
+      fs.accessSync(real, fs.constants.X_OK);
+      return real;
+    } catch { /* continue */ }
+  }
+  return "kimi";
+}
+
+const KIMI_BIN = findKimiBinary();
+
+const KIMI_CREDENTIALS_FILE = path.join(
+  resolveConfigDir(config.kimiConfigDir),
+  "credentials",
+  "kimi-code.json"
+);
+
+/** Check whether Kimi CLI has valid credentials (non-expired token). */
+function checkKimiLoginStatusSync(): KimiLoginStatus {
+  try {
+    const raw = fs.readFileSync(KIMI_CREDENTIALS_FILE, "utf-8");
+    const data = JSON.parse(raw);
+    if (!data.access_token) return { loggedIn: false };
+    // Check expiry if present
+    if (data.expires_at && Date.now() / 1000 > data.expires_at) {
+      return { loggedIn: false };
+    }
+    // Try to extract email from JWT payload (best effort)
+    let email: string | undefined;
+    try {
+      const payload = JSON.parse(Buffer.from(data.access_token.split(".")[1], "base64url").toString());
+      email = payload.email || payload.sub;
+    } catch {
+      // ignore
+    }
+    return { loggedIn: true, email };
+  } catch {
+    return { loggedIn: false };
+  }
+}
+
+export function checkKimiLoginStatus(): Promise<KimiLoginStatus> {
+  return Promise.resolve(checkKimiLoginStatusSync());
+}
+
+/**
+ * Logs in to Kimi CLI.
+ * Spawns `kimi login --json`, captures the verification URL from stdout,
+ * and opens it with macOS `open`.
+ */
+export function loginKimi(): Promise<{ success: boolean; error?: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(KIMI_BIN, ["login", "--json"], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let urlOpened = false;
+
+    const handleOutput = (chunk: Buffer) => {
+      const text = chunk.toString();
+      stdout += text;
+      if (!urlOpened) {
+        // Kimi outputs: {"type":"verification_url",...,"data":{"verification_url":"...","user_code":"..."}}
+        const lines = text.split("\n");
+        for (const line of lines) {
+          try {
+            const obj = JSON.parse(line.trim());
+            if (obj.type === "verification_url" && obj.data?.verification_url) {
+              urlOpened = true;
+              console.log("[settings] Opening Kimi OAuth URL");
+              spawn("open", [obj.data.verification_url], { stdio: "ignore", detached: true }).unref();
+            }
+          } catch {
+            // ignore non-JSON lines
+          }
+        }
+      }
+    };
+
+    child.stdout?.on("data", handleOutput);
+    child.stderr?.on("data", (chunk: Buffer) => {
+      const text = chunk.toString();
+      stderr += text;
+      handleOutput(chunk);
+    });
+
+    // Timeout after 2 minutes
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve({ success: false, error: "Login timed out" });
+    }, 120_000);
+
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code === 0) {
+        resolve({ success: true });
+      } else {
+        resolve({ success: false, error: stderr || `Exit code ${code}` });
+      }
+    });
+
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      resolve({ success: false, error: err.message });
+    });
+  });
+}
+
+/**
+ * Logs out of Kimi CLI.
+ * Runs `kimi logout`.
+ */
+export function logoutKimi(): Promise<{ success: boolean; error?: string }> {
+  return new Promise((resolve) => {
+    execFile(
+      KIMI_BIN,
+      ["logout"],
+      { timeout: 10_000 },
       (err, _stdout, stderr) => {
         if (err) {
           resolve({ success: false, error: stderr || err.message });

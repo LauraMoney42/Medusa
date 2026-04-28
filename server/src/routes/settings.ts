@@ -4,19 +4,24 @@ import type { Server as IOServer } from "socket.io";
 import {
   getActiveAccount,
   setActiveAccount,
+  getActiveProvider,
+  setActiveProvider,
   buildSettingsResponse,
   updateSettings,
   checkAllAccountsLoginStatus,
   checkAccountLoginStatus,
   loginAccount,
   logoutAccount,
+  checkKimiLoginStatus,
+  loginKimi,
+  logoutKimi,
   getConfigDirForAccount,
 } from "../settings/store.js";
 import type { ProcessManager } from "../claude/process-manager.js";
 
 // Schema for PATCH /api/settings body — partial update, both fields optional
 const PatchSettingsSchema = z.object({
-  llmProvider: z.enum(["claude", "openai"]).optional(),
+  llmProvider: z.enum(["claude", "openai", "kimi"]).optional(),
   // Min length 10 catches clearly bogus values; format varies by provider
   llmApiKey: z.string().min(10, "API key must be at least 10 characters").optional(),
 });
@@ -67,12 +72,12 @@ export function createSettingsRouter(processManager: ProcessManager, io: IOServe
     }
 
     const previousAccount = getActiveAccount();
-    if (account === previousAccount) {
+    const previousProvider = getActiveProvider();
+    if (account === previousAccount && previousProvider === "claude") {
       return res.json(buildSettingsResponse());
     }
 
-    // Kill all active Claude sessions before switching — they're using the old
-    // account's CLAUDE_CONFIG_DIR. New messages will spawn with the new config.
+    // Kill all active sessions before switching
     const busySessions = processManager.getBusySessions();
     if (busySessions.length > 0) {
       console.log(
@@ -82,7 +87,6 @@ export function createSettingsRouter(processManager: ProcessManager, io: IOServe
       for (const sessionId of busySessions) {
         processManager.abort(sessionId);
       }
-      // Notify connected clients so UI can show the sessions were stopped
       io.emit("account:switched", {
         from: previousAccount,
         to: account,
@@ -90,15 +94,52 @@ export function createSettingsRouter(processManager: ProcessManager, io: IOServe
       });
     }
 
+    setActiveProvider("claude");
     setActiveAccount(account);
     return res.json(buildSettingsResponse());
   });
 
-  // GET /api/settings/login-status — async check of Claude CLI login status per account
+  // POST /api/settings/provider — switch between claude and kimi
+  router.post("/provider", (req: Request, res: Response) => {
+    const { provider } = req.body as { provider: unknown };
+    if (provider !== "claude" && provider !== "kimi") {
+      return res.status(400).json({ error: "provider must be 'claude' or 'kimi'" });
+    }
+
+    const previousProvider = getActiveProvider();
+    if (provider === previousProvider) {
+      return res.json(buildSettingsResponse());
+    }
+
+    // Kill all active sessions before switching provider
+    const busySessions = processManager.getBusySessions();
+    if (busySessions.length > 0) {
+      console.log(
+        `[settings] Switching provider ${previousProvider} → ${provider}: ` +
+        `aborting ${busySessions.length} active session(s)`
+      );
+      for (const sessionId of busySessions) {
+        processManager.abort(sessionId);
+      }
+      io.emit("provider:switched", {
+        from: previousProvider,
+        to: provider,
+        abortedSessions: busySessions,
+      });
+    }
+
+    setActiveProvider(provider);
+    return res.json(buildSettingsResponse());
+  });
+
+  // GET /api/settings/login-status — async check of Claude CLI + Kimi login status
   router.get("/login-status", async (_req: Request, res: Response) => {
     try {
-      const statuses = await checkAllAccountsLoginStatus();
-      res.json({ ...buildSettingsResponse(), loginStatuses: statuses });
+      const [statuses, kimiStatus] = await Promise.all([
+        checkAllAccountsLoginStatus(),
+        checkKimiLoginStatus(),
+      ]);
+      res.json({ ...buildSettingsResponse(), loginStatuses: statuses, kimiLoginStatus: kimiStatus });
     } catch (err) {
       console.error("[settings] Login status check failed:", err);
       res.status(500).json({ error: "Failed to check login status" });
@@ -141,6 +182,35 @@ export function createSettingsRouter(processManager: ProcessManager, io: IOServe
       return res.json({ success: true, loginStatus: { loggedIn: false } });
     } catch (err) {
       console.error(`[settings] Logout for account ${id} failed:`, err);
+      return res.status(500).json({ error: "Logout failed" });
+    }
+  });
+
+  // POST /api/settings/kimi/login — trigger `kimi login`
+  router.post("/kimi/login", async (_req: Request, res: Response) => {
+    try {
+      const result = await loginKimi();
+      if (!result.success) {
+        return res.status(500).json({ error: result.error || "Login failed" });
+      }
+      const status = await checkKimiLoginStatus();
+      return res.json({ success: true, loginStatus: status });
+    } catch (err) {
+      console.error("[settings] Kimi login failed:", err);
+      return res.status(500).json({ error: "Login failed" });
+    }
+  });
+
+  // POST /api/settings/kimi/logout — trigger `kimi logout`
+  router.post("/kimi/logout", async (_req: Request, res: Response) => {
+    try {
+      const result = await logoutKimi();
+      if (!result.success) {
+        return res.status(500).json({ error: result.error || "Logout failed" });
+      }
+      return res.json({ success: true, loginStatus: { loggedIn: false } });
+    } catch (err) {
+      console.error("[settings] Kimi logout failed:", err);
       return res.status(500).json({ error: "Logout failed" });
     }
   });

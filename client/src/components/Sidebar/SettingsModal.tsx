@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import * as api from '../../api';
-import type { SettingsResponse, AccountLoginStatus, AccountInfo, OneNoteStatus, OneNoteDeviceCode } from '../../api';
+import type { SettingsResponse, AccountLoginStatus, KimiLoginStatus, AccountInfo, OneNoteStatus, OneNoteDeviceCode } from '../../api';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -9,9 +9,12 @@ interface SettingsModalProps {
 export default function SettingsModal({ onClose }: SettingsModalProps) {
   const [settings, setSettings] = useState<SettingsResponse | null>(null);
   const [loginStatuses, setLoginStatuses] = useState<Record<number, AccountLoginStatus | null>>({});
+  const [kimiStatus, setKimiStatus] = useState<KimiLoginStatus | null>(null);
   const [switching, setSwitching] = useState(false);
   const [loggingIn, setLoggingIn] = useState<number | null>(null);
   const [loggingOut, setLoggingOut] = useState<number | null>(null);
+  const [kimiLoggingIn, setKimiLoggingIn] = useState(false);
+  const [kimiLoggingOut, setKimiLoggingOut] = useState(false);
   const [restarting, setRestarting] = useState(false);
 
   // OneNote state
@@ -22,10 +25,12 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
 
   const refreshStatus = () => {
     setLoginStatuses({ 1: null, 2: null });
+    setKimiStatus(null);
     api.fetchLoginStatus()
       .then((resp) => {
         setSettings(resp);
         setLoginStatuses(resp.loginStatuses);
+        setKimiStatus(resp.kimiLoginStatus);
       })
       .catch(() => setLoginStatuses({}));
   };
@@ -81,13 +86,26 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
   };
 
   const handleSwitchAccount = async (target: 1 | 2) => {
-    if (!settings || switching || target === settings.activeAccount) return;
+    if (!settings || switching || (target === settings.activeAccount && settings.activeProvider === 'claude')) return;
     setSwitching(true);
     try {
       const updated = await api.setAccount(target);
       setSettings(updated);
     } catch (err) {
       console.error('Failed to switch account:', err);
+    } finally {
+      setSwitching(false);
+    }
+  };
+
+  const handleSwitchProvider = async (provider: 'claude' | 'kimi') => {
+    if (!settings || switching || settings.activeProvider === provider) return;
+    setSwitching(true);
+    try {
+      const updated = await api.setProvider(provider);
+      setSettings(updated);
+    } catch (err) {
+      console.error('Failed to switch provider:', err);
     } finally {
       setSwitching(false);
     }
@@ -117,6 +135,30 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
     }
   };
 
+  const handleKimiLogin = async () => {
+    setKimiLoggingIn(true);
+    try {
+      await api.loginKimiAccount();
+      refreshStatus();
+    } catch (err) {
+      console.error('Kimi login failed:', err);
+    } finally {
+      setKimiLoggingIn(false);
+    }
+  };
+
+  const handleKimiLogout = async () => {
+    setKimiLoggingOut(true);
+    try {
+      await api.logoutKimiAccount();
+      refreshStatus();
+    } catch (err) {
+      console.error('Kimi logout failed:', err);
+    } finally {
+      setKimiLoggingOut(false);
+    }
+  };
+
   const handleRestart = async () => {
     setRestarting(true);
     try {
@@ -136,20 +178,21 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
         </div>
 
         <div style={styles.section}>
-          <span style={styles.sectionLabel}>Claude Accounts</span>
+          <span style={styles.sectionLabel}>Accounts</span>
 
           {settings ? (
             <div style={styles.accountList}>
+              {/* Claude Accounts */}
               {settings.accounts.map((account: AccountInfo) => {
                 const id = account.id as 1 | 2;
                 const status = loginStatuses[id];
-                const isActive = settings.activeAccount === id;
+                const isActive = settings.activeProvider === 'claude' && settings.activeAccount === id;
                 const isChecking = status === null;
                 const isLoggedIn = status?.loggedIn === true;
 
                 return (
                   <div
-                    key={id}
+                    key={`claude-${id}`}
                     style={{
                       ...styles.accountCard,
                       ...(isActive ? styles.accountCardActive : {}),
@@ -204,6 +247,69 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
                   </div>
                 );
               })}
+
+              {/* Kimi Account */}
+              {(() => {
+                const isActive = settings.activeProvider === 'kimi';
+                const isChecking = kimiStatus === null;
+                const isLoggedIn = kimiStatus?.loggedIn === true;
+
+                return (
+                  <div
+                    key="kimi"
+                    style={{
+                      ...styles.accountCard,
+                      ...(isActive ? styles.accountCardActive : {}),
+                    }}
+                  >
+                    <div style={styles.accountHeader}>
+                      <span style={styles.accountName}>Kimi</span>
+                      {isActive && <span style={styles.activeBadge}>Active</span>}
+                    </div>
+
+                    <div style={styles.accountStatus}>
+                      {isChecking ? (
+                        <span style={styles.statusText}>Checking...</span>
+                      ) : isLoggedIn ? (
+                        <span style={styles.statusTextOk}>
+                          {kimiStatus.email || 'Logged in'}
+                        </span>
+                      ) : (
+                        <span style={styles.statusTextErr}>Not logged in</span>
+                      )}
+                    </div>
+
+                    <div style={styles.accountActions}>
+                      {!isActive && (
+                        <button
+                          onClick={() => handleSwitchProvider('kimi')}
+                          disabled={switching}
+                          style={styles.actionBtn}
+                        >
+                          {switching ? 'Switching...' : 'Set Active'}
+                        </button>
+                      )}
+                      {isLoggedIn ? (
+                        <button
+                          onClick={handleKimiLogout}
+                          disabled={kimiLoggingOut}
+                          style={styles.actionBtnDanger}
+                        >
+                          {kimiLoggingOut ? 'Logging out...' : 'Logout'}
+                        </button>
+                      ) : (
+                        <button
+                          onClick={handleKimiLogin}
+                          disabled={kimiLoggingIn}
+                          style={styles.actionBtnPrimary}
+                        >
+                          {kimiLoggingIn ? 'Logging in...' : 'Login'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           ) : (
             <div style={styles.loading}>Loading...</div>
