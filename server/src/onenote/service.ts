@@ -216,7 +216,7 @@ export class OneNoteService {
   // Callbacks for token persistence
   private onTokenUpdate: ((tokens: { accessToken: string; refreshToken: string; expiry: number }) => void) | null = null;
 
-  constructor(clientId: string, tenantId = "common") {
+  constructor(clientId: string, tenantId = "consumers") {
     this.clientId = clientId;
     this.tenantId = tenantId;
   }

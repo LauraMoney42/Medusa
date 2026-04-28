@@ -39,7 +39,8 @@ export default function ProjectDetailCard({ project, isHighlighted, onEdit }: Pr
   const progressPct = total === 0 ? 0 : Math.round((done.length / total) * 100);
 
   // Unique owners, preserving first-seen order
-  const uniqueOwners = [...new Set(project.assignments.map((a) => a.owner))];
+  // Filter out null/undefined owners (unassigned tasks) before deduplicating
+  const uniqueOwners = [...new Set(project.assignments.map((a) => a.owner).filter(Boolean))];
 
   return (
     <div

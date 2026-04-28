@@ -10,6 +10,7 @@ import Sidebar from './components/Sidebar/Sidebar';
 import HubFeed from './components/Hub/HubFeed';
 import ProjectPane from './components/Project/ProjectPane';
 import MedusaChat from './components/Hub/MedusaChat';
+import LaunchScreen from './components/Hub/LaunchScreen';
 import UsagePane from './components/Usage/UsagePane';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import CaffeineToggle from './components/Caffeine/CaffeineToggle';
@@ -17,6 +18,8 @@ import OnboardingView from './components/Onboarding/OnboardingView';
 import { checkAuth } from './api';
 
 const ONBOARDING_KEY = 'medusa_onboarding_done';
+// Show launch screen once per browser session (sessionStorage resets on tab close)
+const LAUNCH_KEY = 'medusa_launch_shown';
 
 export default function App() {
   // null = checking auth, false = not authed, true = authed
@@ -54,6 +57,13 @@ function AuthenticatedApp() {
   const completeOnboarding = useCallback(() => {
     localStorage.setItem(ONBOARDING_KEY, '1');
     setShowOnboarding(false);
+  }, []);
+
+  // Launch screen — shown once per session (sessionStorage resets on tab close)
+  const [showLaunch, setShowLaunch] = useState(() => !sessionStorage.getItem(LAUNCH_KEY));
+  const dismissLaunch = useCallback(() => {
+    sessionStorage.setItem(LAUNCH_KEY, '1');
+    setShowLaunch(false);
   }, []);
 
   const { connected } = useSocket();
@@ -143,8 +153,11 @@ function AuthenticatedApp() {
 
   return (
     <ErrorBoundary>
-      {/* First-launch onboarding — renders above everything */}
-      {showOnboarding && <OnboardingView onComplete={completeOnboarding} />}
+      {/* Launch splash — shown once per session, above everything */}
+      {showLaunch && <LaunchScreen onDismiss={dismissLaunch} />}
+
+      {/* First-launch onboarding — renders above main app (below launch screen) */}
+      {!showLaunch && showOnboarding && <OnboardingView onComplete={completeOnboarding} />}
 
       <div
         className="app-layout"

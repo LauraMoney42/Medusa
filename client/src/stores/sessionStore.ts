@@ -35,12 +35,14 @@ export const useSessionStore = create<SessionState & SessionActions>(
     activeSessionId: null,
     statuses: {},
     pendingTasks: {},
-    // Default to hub — individual bot chat removed per user directive
+    // Default to medusa — home screen is the Medusa chat pane
     activeView: (() => {
       const stored = localStorage.getItem('medusa_active_view');
-      // Migrate stale 'chat' value to 'hub' (individual bot chat removed)
-      if (stored === 'project') return 'project';
-      return 'hub';
+      // Restore last saved view if valid; otherwise land on 'medusa' home screen
+      if (stored === 'project' || stored === 'usage' || stored === 'hub' || stored === 'medusa') {
+        return stored as 'hub' | 'project' | 'usage' | 'medusa';
+      }
+      return 'medusa';
     })(),
     isServerShuttingDown: false,
     shuttingDownSessions: [],

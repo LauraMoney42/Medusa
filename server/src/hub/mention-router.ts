@@ -135,12 +135,16 @@ export class MentionRouter {
       const busy = this.processManager.isSessionBusy(target.id);
       console.log(`[mention-router] → target=${target.name} (${target.id.slice(0, 8)}) busy=${busy} isUser=${isUserMessage}`);
       if (busy) {
-        // Enqueue up to MAX_PENDING mentions per bot (FIFO). Silently drop 4th+.
+        // Enqueue up to MAX_PENDING mentions per bot (FIFO). Warn + drop if full.
         const queue = this.pendingMentions.get(target.id) ?? [];
         if (queue.length < MentionRouter.MAX_PENDING) {
           queue.push({ hubMessage, chainDepth });
           this.pendingMentions.set(target.id, queue);
           console.log(`[mention-router] → queued (depth: ${queue.length})`);
+        } else {
+          console.warn(
+            `[mention-router] ⚠️ DROP: mention queue full (${MentionRouter.MAX_PENDING}) for ${target.name} — message from ${hubMessage.from} dropped: "${hubMessage.text.slice(0, 80)}"`
+          );
         }
       } else {
         console.log(`[mention-router] → delivering now`);
@@ -260,8 +264,12 @@ export class MentionRouter {
         if (queue.length < MentionRouter.MAX_PENDING) {
           queue.push({ prompt: message, chainDepth });
           this.pendingBotTasks.set(targetSessionId, queue);
+        } else {
+          // Warn + drop if queue is full — consistent with mention behavior
+          console.warn(
+            `[mention-router] ⚠️ DROP: bot-task queue full (${MentionRouter.MAX_PENDING}) for ${target.targetName} — task from ${senderName} dropped: "${message.slice(0, 80)}"`
+          );
         }
-        // Silently drop if queue is full — consistent with mention behavior
       } else {
         this.deliverBotTaskDirect(targetSessionId, message, chainDepth);
       }

@@ -122,7 +122,17 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
       <div ref={messageListRef} style={styles.messageList}>
         {chatMessages.length === 0 ? (
           <div style={styles.emptyState}>
-            Start a conversation with Medusa
+            <img
+              src="/MedusaIcon.png"
+              alt="Medusa"
+              style={styles.emptyIcon}
+            />
+            <p style={styles.emptyTitle}>Medusa</p>
+            <p style={styles.emptySubtitle}>AI-Powered Development Hub</p>
+            <p style={styles.emptyDescription}>
+              Your PM bot. Ask Medusa to create tasks, check project status,
+              plan sprints, or just think through a problem together.
+            </p>
           </div>
         ) : (
           chatMessages.map((msg) => (
@@ -265,10 +275,41 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 12,
   } as React.CSSProperties,
   emptyState: {
-    textAlign: 'center' as const,
-    color: 'var(--text-muted)',
-    fontSize: 14,
+    display: 'flex',
+    flexDirection: 'column' as const,
+    alignItems: 'center',
+    gap: 8,
     margin: 'auto',
+    padding: '40px 32px',
+    maxWidth: 340,
+    textAlign: 'center' as const,
+  },
+  emptyIcon: {
+    width: 72,
+    height: 72,
+    borderRadius: '50%',
+    border: '1.5px solid rgba(74, 186, 106, 0.35)',
+    boxShadow: '0 0 32px rgba(74, 186, 106, 0.15)',
+    marginBottom: 4,
+  },
+  emptyTitle: {
+    fontSize: 20,
+    fontWeight: 700,
+    color: '#4aba6a',
+    margin: 0,
+  },
+  emptySubtitle: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.35)',
+    margin: 0,
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.06em',
+  },
+  emptyDescription: {
+    fontSize: 13,
+    color: 'var(--text-muted)',
+    lineHeight: 1.6,
+    margin: '8px 0 0',
   },
   bubble: {
     maxWidth: '70%',

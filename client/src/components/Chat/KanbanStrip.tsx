@@ -78,8 +78,11 @@ export default function KanbanStrip({ botName }: KanbanStripProps) {
         // Trim + case-insensitive partial match (bidirectional).
         // Trimming catches accidental whitespace in owner names written by bots.
         // Bidirectional allows "Full Stack Dev (Cosmo)" to match session "Full Stack Dev".
-        const ownerLower = assignment.owner.trim().toLowerCase();
+        // Guard against null/undefined owner (unassigned tasks written by bots)
+        const ownerLower = (assignment.owner ?? '').trim().toLowerCase();
         const botLower = trimmedBotName.toLowerCase();
+        // Unassigned tasks have no owner to match against — skip them in Kanban view
+        if (!ownerLower) continue;
         if (!ownerLower.includes(botLower) && !botLower.includes(ownerLower)) continue;
 
         const hash = hashCode(assignment.task + assignment.owner);

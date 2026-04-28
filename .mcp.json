@@ -1,16 +1,18 @@
 {
   "mcpServers": {
     "playwright": {
-      "command": "node",
+      "command": "/opt/homebrew/Cellar/node/25.6.1/bin/node",
       "args": [
         "./node_modules/@playwright/mcp/cli.js",
-        "--browser", "chrome",
-        "--caps", "screenshots"
+        "--browser",
+        "chrome",
+        "--caps",
+        "screenshots"
       ],
       "env": {}
     },
     "onenote": {
-      "command": "node",
+      "command": "/opt/homebrew/Cellar/node/25.6.1/bin/node",
       "args": [
         "/opt/homebrew/lib/node_modules/mcp-server-onenote/dist/index.js"
       ],

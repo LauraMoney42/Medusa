@@ -300,6 +300,14 @@ export default function HubFeed({ onMenuToggle }: HubFeedProps) {
   const handlePaste = useCallback(
     (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
       const items = e.clipboardData.items;
+
+      // If there is plain text in the clipboard, let the browser handle it normally.
+      // This prevents rich-text copies (which bundle an image thumbnail alongside text)
+      // from being swallowed as image attachments instead of pasting as text.
+      const hasPlainText = Array.from(items).some((item) => item.type === 'text/plain');
+      if (hasPlainText) return;
+
+      // No text — check for a standalone image paste (e.g. screenshot from clipboard)
       const imageFiles: File[] = [];
       for (let i = 0; i < items.length; i++) {
         if (items[i].type.startsWith('image/')) {

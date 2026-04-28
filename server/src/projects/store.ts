@@ -11,7 +11,9 @@ const AssignmentSchema = z.object({
   // id was added after many assignments were created without one.
   // Making it optional allows legacy data to load; we backfill missing ids at load time.
   id: z.string().optional(),
-  owner: z.string(),
+  // owner is nullable — bots write null for unassigned tasks. A non-nullable z.string()
+  // here was silently dropping entire projects when any assignment had owner: null.
+  owner: z.string().nullable().optional(),
   task: z.string(),
   status: z.enum(["pending", "in_progress", "done"]),
 });
@@ -21,7 +23,9 @@ const ProjectSchema = z.object({
   title: z.string(),
   summary: z.string(),
   content: z.string(),
-  status: z.enum(["active", "complete"]),
+  // "paused" is used by bots but was missing from the enum, causing those projects
+  // to be silently dropped. Added here to match real-world usage.
+  status: z.enum(["active", "complete", "paused"]),
   priority: z.enum(["P0", "P1", "P2", "P3"]).optional(),
   assignments: z.array(AssignmentSchema),
   createdAt: z.string(),

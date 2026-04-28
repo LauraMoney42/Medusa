@@ -169,15 +169,22 @@ export default function ChatInput({ sessionId, botName }: ChatInputProps) {
   const handlePaste = async (e: ClipboardEvent<HTMLTextAreaElement>) => {
     const items = e.clipboardData.items;
     const imageFiles: File[] = [];
+    let hasText = false;
 
     for (let i = 0; i < items.length; i++) {
-      if (items[i].type.startsWith('image/')) {
+      if (items[i].type === 'text/plain' || items[i].type === 'text/html') {
+        hasText = true;
+      } else if (items[i].type.startsWith('image/')) {
         const file = items[i].getAsFile();
         if (file) imageFiles.push(file);
       }
     }
 
-    if (imageFiles.length > 0) {
+    // Only treat as image attachment when there is NO text in the clipboard.
+    // When both image and text are present (e.g. copying from a browser), the
+    // image is a visual snapshot of the selection — the user wants the text,
+    // not a screenshot. Let the default paste behaviour insert the plain text.
+    if (imageFiles.length > 0 && !hasText) {
       e.preventDefault();
       const newEntries: FileEntry[] = imageFiles.map((file) => ({
         file,

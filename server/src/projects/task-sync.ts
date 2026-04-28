@@ -48,7 +48,8 @@ export class TaskSyncManager {
         if (!assignment.id) continue;
 
         // Score this assignment
-        const score = this.scoreMatch(botName, description, assignment.owner, assignment.task);
+        // owner is now nullable (unassigned tasks have owner: null); coerce to empty string
+        const score = this.scoreMatch(botName, description, assignment.owner ?? '', assignment.task);
 
         if (score > 0 && (!bestMatch || score > bestMatch.score)) {
           bestMatch = {
