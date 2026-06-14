@@ -12,6 +12,7 @@ import ProjectPane from './components/Project/ProjectPane';
 import MedusaChat from './components/Hub/MedusaChat';
 import LaunchScreen from './components/Hub/LaunchScreen';
 import UsagePane from './components/Usage/UsagePane';
+import ArcadePane from './components/Arcade/ArcadePane';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import CaffeineToggle from './components/Caffeine/CaffeineToggle';
 import OnboardingView from './components/Onboarding/OnboardingView';
@@ -24,13 +25,28 @@ const LAUNCH_KEY = 'medusa_launch_shown';
 export default function App() {
   // null = checking auth, false = not authed, true = authed
   const [authed, setAuthed] = useState<boolean | null>(null);
+  // Track whether we were kicked out due to socket auth failure vs first visit
+  const [authFailed, setAuthFailed] = useState(false);
 
   // On mount, ask the server if our cookie is valid instead of reading localStorage
   useEffect(() => {
     checkAuth().then(setAuthed);
   }, []);
 
+  // Listen for socket auth failures (e.g. after sleep/wake cookie mismatch)
+  // and force the user back to login.
+  useEffect(() => {
+    const handleAuthFailed = () => {
+      console.log('[app] Socket auth failed — showing login screen');
+      setAuthFailed(true);
+      setAuthed(false);
+    };
+    window.addEventListener('medusa:auth-failed', handleAuthFailed);
+    return () => window.removeEventListener('medusa:auth-failed', handleAuthFailed);
+  }, []);
+
   const handleLogin = useCallback(() => {
+    setAuthFailed(false);
     setAuthed(true);
   }, []);
 
@@ -38,7 +54,12 @@ export default function App() {
   if (authed === null) return null;
 
   if (!authed) {
-    return <LoginScreen onLogin={handleLogin} />;
+    return (
+      <LoginScreen
+        onLogin={handleLogin}
+        reason={authFailed ? 'Session expired — please log in again' : undefined}
+      />
+    );
   }
 
   // Render the main app only after auth succeeds, so the WebSocket
@@ -187,6 +208,10 @@ function AuthenticatedApp() {
         ) : activeView === 'usage' ? (
           <ErrorBoundary>
             <UsagePane />
+          </ErrorBoundary>
+        ) : activeView === 'arcade' ? (
+          <ErrorBoundary>
+            <ArcadePane />
           </ErrorBoundary>
         ) : (
           <ErrorBoundary>

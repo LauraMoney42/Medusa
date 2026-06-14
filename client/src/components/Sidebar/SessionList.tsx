@@ -4,17 +4,20 @@ import { useTaskStore, hasCompletedTask } from '../../stores/taskStore';
 import { useDraftStore } from '../../stores/draftStore';
 import SessionEditor from './SessionEditor';
 import type { SessionMeta } from '../../types/session';
+import * as api from '../../api';
 
 /** Check if a session is the Medusa bot (case-insensitive name match) */
 function isMedusaSession(name: string): boolean {
   return name.toLowerCase() === 'medusa';
 }
 
-/** 4-state status icon: busy (spinning cog) > complete (checkmark) > pending (pulsing) > idle (gray dot) */
-function StatusIcon({ status, hasPendingTask, hasCompleted }: {
+/** Status icon: busy > paused > status-requested > complete > pending > idle */
+function StatusIcon({ status, hasPendingTask, hasCompleted, paused, statusRequested }: {
   status: 'idle' | 'busy';
   hasPendingTask: boolean;
   hasCompleted: boolean;
+  paused?: boolean;
+  statusRequested?: boolean;
 }) {
   if (status === 'busy') {
     return (
@@ -25,6 +28,19 @@ function StatusIcon({ status, hasPendingTask, hasCompleted }: {
         </svg>
       </span>
     );
+  }
+  if (paused) {
+    return (
+      <span style={statusStyles.pauseIcon} title="Paused">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+          <rect x="6" y="4" width="5" height="16" rx="1" />
+          <rect x="13" y="4" width="5" height="16" rx="1" />
+        </svg>
+      </span>
+    );
+  }
+  if (statusRequested) {
+    return <span style={statusStyles.statusRequestedDot} title="Status requested" />;
   }
   if (hasCompleted) {
     return <span style={statusStyles.checkmark}>&#10003;</span>;
@@ -67,6 +83,20 @@ const statusStyles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
     opacity: 0.6,
   },
+  pauseIcon: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 14, height: 14,
+    color: 'var(--warning, #f59e0b)',
+    flexShrink: 0,
+  } as React.CSSProperties,
+  statusRequestedDot: {
+    width: 8, height: 8, borderRadius: '50%',
+    background: 'var(--accent)',
+    animation: 'pendingPulse 2s ease-in-out infinite',
+    flexShrink: 0,
+  },
 };
 
 export default function SessionList() {
@@ -81,6 +111,7 @@ export default function SessionList() {
   const renameSession = useSessionStore((s) => s.renameSession);
   const deleteSession = useSessionStore((s) => s.deleteSession);
   const reorderSessions = useSessionStore((s) => s.reorderSessions);
+  const devControl = useSessionStore((s) => s.devControl);
 
   // Context menu state
   const [contextMenu, setContextMenu] = useState<{
@@ -153,6 +184,33 @@ export default function SessionList() {
     await deleteSession(id);
   };
 
+  const handlePause = async (id: string) => {
+    setContextMenu(null);
+    try {
+      await api.pauseSession(id);
+    } catch (err) {
+      console.error('Failed to pause session:', err);
+    }
+  };
+
+  const handleResume = async (id: string) => {
+    setContextMenu(null);
+    try {
+      await api.resumeSession(id);
+    } catch (err) {
+      console.error('Failed to resume session:', err);
+    }
+  };
+
+  const handleRequestStatus = async (id: string) => {
+    setContextMenu(null);
+    try {
+      await api.requestSessionStatus(id);
+    } catch (err) {
+      console.error('Failed to request status:', err);
+    }
+  };
+
   // Drag handlers
   const handleDragStart = useCallback((e: React.DragEvent, sessionId: string) => {
     setDragId(sessionId);
@@ -204,6 +262,7 @@ export default function SessionList() {
 
       {sessions.map((session) => {
         const status = (statuses[session.id] ?? 'idle') as 'idle' | 'busy';
+        const control = devControl[session.id];
         const isDragOver = dragOverId === session.id && dragId !== session.id;
         const isMedusa = isMedusaSession(session.name);
         const isMedusaActive = isMedusa && activeView === 'medusa';
@@ -241,6 +300,8 @@ export default function SessionList() {
               status={status}
               hasPendingTask={!!pendingTasks[session.id]}
               hasCompleted={hasCompletedTask(completedTasks, session.id)}
+              paused={control?.paused}
+              statusRequested={control?.statusRequested}
             />
 
             {renamingId === session.id ? (
@@ -310,6 +371,27 @@ export default function SessionList() {
             onClick={() => handleRenameStart(contextMenu.sessionId)}
           >
             Rename
+          </button>
+          {(devControl[contextMenu.sessionId]?.paused ? (
+            <button
+              style={styles.contextItem}
+              onClick={() => handleResume(contextMenu.sessionId)}
+            >
+              Resume
+            </button>
+          ) : (
+            <button
+              style={styles.contextItem}
+              onClick={() => handlePause(contextMenu.sessionId)}
+            >
+              Pause
+            </button>
+          ))}
+          <button
+            style={styles.contextItem}
+            onClick={() => handleRequestStatus(contextMenu.sessionId)}
+          >
+            Request status
           </button>
           <button
             style={{ ...styles.contextItem, color: 'var(--danger)' }}

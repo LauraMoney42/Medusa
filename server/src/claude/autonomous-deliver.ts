@@ -20,12 +20,12 @@ import { processHubPosts } from "../hub/post-processor.js";
 import { summarizeConversation } from "../chat/conversation-summarizer.js";
 import { summarizingSessionIds } from "../chat/summarization-guard.js";
 import config from "../config.js";
-import { compress } from "../compressor/engine.js";
+import { compress, assembleSystemPrompt, estimateTokens } from "../compressor/engine.js";
 
 export interface AutonomousDeliverParams {
   sessionId: string;
   prompt: string;
-  source: "mention" | "poll" | "nudge" | "resume" | "bot-to-bot" | "status-check";
+  source: "mention" | "poll" | "nudge" | "resume" | "bot-to-bot" | "status-check" | "status-request";
   io: IOServer;
   processManager: ProcessManager;
   sessionStore: SessionStore;
@@ -78,9 +78,9 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
 
   // Determine behavior based on source
   // bot-to-bot uses compact mode — internal task messages don't need full Hub history
-  const compactMode = source === "poll" || source === "nudge" || source === "mention" || source === "bot-to-bot" || source === "status-check";
-  const detectHubPosts = source !== "resume"; // Resume doesn't route hub posts
-  const persistUserMessage = source !== "poll" && source !== "nudge" && source !== "status-check"; // Poll/nudge/status-check defer persistence until NO-ACTION check
+  const compactMode = source === "poll" || source === "nudge" || source === "mention" || source === "bot-to-bot" || source === "status-check" || source === "status-request";
+  const detectHubPosts = true; // Always detect hub posts — resumed bots need to be able to respond
+  const persistUserMessage = source !== "poll" && source !== "nudge" && source !== "status-check" && source !== "status-request"; // Poll/nudge/status-check defer persistence until NO-ACTION check
   const checkNoAction = source === "poll" || source === "status-check"; // Poll + status-check skip persistence on [NO-ACTION]
 
   const meta = sessionStore.get(sessionId);
@@ -136,7 +136,11 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
 
   // Helper: process extracted hub posts (with chain routing + task-done detection)
   const handleHubPosts = (posts: string[]) => {
-    if (!posts.length || !mentionRouter) return;
+    if (!posts.length) return;
+    if (!mentionRouter) {
+      console.warn(`[autonomous-deliver] Dropping ${posts.length} hub post(s) from ${meta.name} — mentionRouter not available (source=${source})`);
+      return;
+    }
     processHubPosts(posts, {
       from: meta.name,
       sessionId,
@@ -251,6 +255,11 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
         let remaining = "";
         if (hubDetector) {
           remaining = hubDetector.flush();
+          const pendingHub = hubDetector.getPendingHubPosts();
+          const pendingBot = hubDetector.getPendingBotTasks();
+          hubDetector.clearPending();
+          if (pendingHub.length > 0) handleHubPosts(pendingHub);
+          if (pendingBot.length > 0) handleBotTasks(pendingBot);
         }
         if (remaining) {
           assistantText += remaining;
@@ -278,7 +287,7 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
           botName: meta.name,
           claudeSessionId: event.sessionId,
           messageId: assistantMsgId,
-          source: (source === "bot-to-bot" || source === "status-check") ? "mention" : source,
+          source: (source === "bot-to-bot" || source === "status-check" || source === "status-request") ? "mention" : source,
           costUsd: event.totalCostUsd ?? 0,
           durationMs: event.durationMs ?? 0,
           durationApiMs: event.durationApiMs,
@@ -288,13 +297,22 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
         break;
       }
 
-      case "error":
+      case "error": {
+        const errMsg = event.message;
         io.to(sessionId).emit("message:error", {
           sessionId,
           messageId: assistantMsgId,
-          error: event.message,
+          error: errMsg,
         });
+        // Also post to Hub so errors are visible globally
+        const hubErrMsg = hubStore.add({
+          from: "System",
+          text: `❌ **Error** in ${meta.name}: ${errMsg}`,
+          sessionId: "",
+        });
+        io.emit("hub:message", hubErrMsg);
         break;
+      }
     }
   };
 
@@ -312,15 +330,16 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
     ? `Your name is ${meta.name}. ${getCompactPrompt(meta)}`
     : (meta.systemPrompt || "");
 
-  let finalSystemPrompt = basePrompt + hubSection;
-
   // Inject conversation summary if available (TO4: conversation summarization)
   const conversationSummary = chatStore.loadSummary(sessionId);
-  if (conversationSummary) {
-    finalSystemPrompt += `\n\n--- CONVERSATION SUMMARY (previous context) ---\n${conversationSummary}\n--- END SUMMARY ---`;
-  }
 
-  finalSystemPrompt = finalSystemPrompt.trim();
+  // Assemble with token budget enforcement (drops/truncates sections as needed)
+  let finalSystemPrompt = assembleSystemPrompt(
+    basePrompt,
+    "", // skills not loaded for autonomous delivery to save tokens
+    conversationSummary,
+    hubSection
+  );
 
   // TC-4: Compress assembled system prompt. Autonomous delivery (polls, mentions,
   // bot-to-bot) uses aggressive level since these are internal ops where token
@@ -336,7 +355,7 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
   try {
     // Map source to selectModel's expected sources
     // "resume" and "bot-to-bot" use "mention" tier — re-triggered or internal tasks
-    const modelSource = source === "resume" || source === "bot-to-bot" || source === "status-check" ? "mention" : source;
+    const modelSource = source === "resume" || source === "bot-to-bot" || source === "status-check" || source === "status-request" ? "mention" : source;
 
     // Select model based on routing config
     const routingEnabled = config.modelRoutingEnabled !== false;
@@ -402,6 +421,11 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
       let remaining = "";
       if (hubDetector) {
         remaining = hubDetector.flush();
+        const pendingHub = hubDetector.getPendingHubPosts();
+        const pendingBot = hubDetector.getPendingBotTasks();
+        hubDetector.clearPending();
+        if (pendingHub.length > 0) handleHubPosts(pendingHub);
+        if (pendingBot.length > 0) handleBotTasks(pendingBot);
       }
       if (remaining) {
         assistantText += remaining;
@@ -416,10 +440,14 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
     }
 
     // Check for NO-ACTION response (poll only)
+    // Use exact match or standalone token to avoid false positives when a bot
+    // mentions [NO-ACTION] as part of instructions or context.
     if (checkNoAction) {
+      const trimmed = assistantText.trim();
       const isNoAction =
-        assistantText.trim() === "[NO-ACTION]" ||
-        assistantText.includes("[NO-ACTION]");
+        trimmed === "[NO-ACTION]" ||
+        /^\[NO-ACTION\]\s*$/.test(trimmed) ||
+        /^\s*\[NO-ACTION\]\s*$/.test(trimmed);
 
       if (isNoAction) {
         console.log(`[autonomous-deliver] ${meta.name} responded [NO-ACTION], skipping persistence`);
@@ -454,9 +482,18 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
     // Check if conversation needs summarization (async, don't block response)
     if (config.summarizationEnabled && source !== "resume" && !summarizingSessionIds.has(sessionId)) {
       const allMessages = chatStore.loadMessages(sessionId);
-      if (allMessages.length >= config.summarizationThreshold) {
+      const estimatedMsgTokens = allMessages.reduce(
+        (sum, m) => sum + estimateTokens(m.text),
+        0
+      );
+      const tokenThreshold = 120_000; // ~half of 256K context window
+      if (
+        allMessages.length >= config.summarizationThreshold ||
+        estimatedMsgTokens >= tokenThreshold
+      ) {
         console.log(
-          `[autonomous-deliver] Session ${sessionId} has ${allMessages.length} messages, triggering summarization`
+          `[autonomous-deliver] Session ${sessionId} has ${allMessages.length} messages ` +
+          `(~${estimatedMsgTokens} est. tokens), triggering summarization`
         );
         // Mark in-flight to prevent concurrent re-triggers
         summarizingSessionIds.add(sessionId);
@@ -499,12 +536,20 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
       mentionRouter.onSessionIdle(sessionId);
     }
   } catch (err) {
+    const errMsg = err instanceof Error ? err.message : `${source} delivery failed`;
     console.error(`[autonomous-deliver] Failed to deliver ${source} to ${meta.name}:`, err);
     io.to(sessionId).emit("message:error", {
       sessionId,
       messageId: assistantMsgId,
-      error: err instanceof Error ? err.message : `${source} delivery failed`,
+      error: errMsg,
     });
+    // Also post to Hub so errors are visible globally
+    const hubErrMsg = hubStore.add({
+      from: "System",
+      text: `❌ **Error** in ${meta.name}: ${errMsg}`,
+      sessionId: "",
+    });
+    io.emit("hub:message", hubErrMsg);
     // Ensure stream is closed and status reset so the client doesn't stay stuck on spinning cog
     if (!streamEnded) {
       io.to(sessionId).emit("message:stream:end", { sessionId, messageId: assistantMsgId });

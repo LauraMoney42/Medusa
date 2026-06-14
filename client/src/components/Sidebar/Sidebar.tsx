@@ -57,6 +57,13 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
     setActiveView('usage');
   };
 
+  const handleArcadeClick = () => {
+    if (activeView === 'arcade') {
+      return;
+    }
+    setActiveView('arcade');
+  };
+
   const handleShutdown = useCallback(async () => {
     setShutdownLoading(true);
     try {
@@ -177,6 +184,28 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
           <span>Usage</span>
         </button>
 
+        {/* Arcade button */}
+        <button
+          onClick={handleArcadeClick}
+          style={{
+            ...styles.hubBtn,
+            background: activeView === 'arcade'
+              ? 'rgba(26, 122, 60, 0.15)'
+              : 'transparent',
+            color: activeView === 'arcade'
+              ? '#4aba6a'
+              : 'var(--text-secondary)',
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="2" y="6" width="20" height="12" rx="2" />
+            <path d="M6 10h.01" />
+            <path d="M18 10h.01" />
+            <path d="M10 14h4" />
+          </svg>
+          <span>Arcade</span>
+        </button>
+
         {/* Projects button */}
         <button
           onClick={handleProjectsClick}
@@ -195,6 +224,9 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
           </svg>
           <span>Projects</span>
         </button>
+
+        {/* Agent busy → Arcade prompt */}
+        <AgentBusyPrompt onOpenArcade={handleArcadeClick} />
 
         {/* Bot list — click Medusa bot name to open Medusa chat */}
         <SessionList />
@@ -248,6 +280,22 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
         )}
       </aside>
     </>
+  );
+}
+
+/** Small prompt shown in sidebar when any agent is busy — quick access to Arcade */
+function AgentBusyPrompt({ onOpenArcade }: { onOpenArcade: () => void }) {
+  const statuses = useSessionStore((s) => s.statuses);
+  const anyBusy = Object.values(statuses).some((s) => s === 'busy');
+  if (!anyBusy) return null;
+
+  return (
+    <div className="arcade-busy-prompt" onClick={onOpenArcade}>
+      <span style={{ fontSize: 16 }}>🎮</span>
+      <span style={{ fontSize: 12, fontWeight: 600, color: '#4aba6a' }}>
+        Agent working — play while you wait!
+      </span>
+    </div>
   );
 }
 

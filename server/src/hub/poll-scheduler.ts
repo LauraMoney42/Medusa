@@ -6,8 +6,10 @@ import type { HubStore } from "./store.js";
 import type { MentionRouter } from "./mention-router.js";
 import type { TokenLogger } from "../metrics/token-logger.js";
 import type { QuickTaskStore } from "../projects/quick-task-store.js";
+import type { DevControlStore } from "../dev-control/store.js";
 import { autonomousDeliver } from "../claude/autonomous-deliver.js";
 import config from "../config.js";
+import { hasMention, hasAllMention, hasYouMention, hasAnyMention } from "./mention-utils.js";
 
 /** Per-bot cooldown: 2 minutes between polls (reduced from 10min to keep bots active) */
 const PER_BOT_COOLDOWN_MS = 2 * 60 * 1000;
@@ -44,6 +46,8 @@ export class HubPollScheduler {
   private chatStore: ChatStore;
   private tokenLogger?: TokenLogger;
   private quickTaskStore?: QuickTaskStore;
+  private devControlStore?: DevControlStore;
+  private deliverStatusRequest?: (sessionId: string) => Promise<void>;
 
   /** sessionId -> last poll timestamp */
   private lastPollTime = new Map<string, number>();
@@ -67,7 +71,9 @@ export class HubPollScheduler {
     io: IOServer,
     chatStore: ChatStore,
     tokenLogger?: TokenLogger,
-    quickTaskStore?: QuickTaskStore
+    quickTaskStore?: QuickTaskStore,
+    devControlStore?: DevControlStore,
+    deliverStatusRequest?: (sessionId: string) => Promise<void>
   ) {
     this.processManager = processManager;
     this.sessionStore = sessionStore;
@@ -77,6 +83,8 @@ export class HubPollScheduler {
     this.chatStore = chatStore;
     this.tokenLogger = tokenLogger;
     this.quickTaskStore = quickTaskStore;
+    this.devControlStore = devControlStore;
+    this.deliverStatusRequest = deliverStatusRequest;
   }
 
   start(): void {
@@ -105,6 +113,7 @@ export class HubPollScheduler {
     this.lastHeartbeat.delete(sessionId);
     this.lastStaleWarning.delete(sessionId);
     this.lastStatusUpdatePrompt.delete(sessionId);
+    this.devControlStore?.remove(sessionId);
   }
 
   /**
@@ -129,6 +138,9 @@ export class HubPollScheduler {
     for (const session of allSessions) {
       // Skip non-bot sessions
       if (session.name === "You" || session.name === "System") continue;
+
+      // Skip paused sessions
+      if (this.devControlStore?.isPaused(session.id)) continue;
 
       // Skip if bot is currently busy (it's working, not stale)
       if (this.processManager.isSessionBusy(session.id)) {
@@ -180,7 +192,8 @@ export class HubPollScheduler {
       // Skip if not yet stale
       if (now - entry.assignedAt < config.staleTaskThresholdMs) continue;
 
-      // Skip if bot is currently busy (it's working, not stale)
+      // Skip paused or busy bots
+      if (this.devControlStore?.isPaused(sessionId)) continue;
       if (this.processManager.isSessionBusy(sessionId)) continue;
 
       const meta = this.sessionStore.get(sessionId);
@@ -213,7 +226,8 @@ export class HubPollScheduler {
     const meta = this.sessionStore.get(sessionId);
     if (!meta) return;
 
-    // Skip if busy — the bot is doing something
+    // Skip if paused or busy — the bot is doing something
+    if (this.devControlStore?.isPaused(sessionId)) return;
     if (this.processManager.isSessionBusy(sessionId)) return;
 
     const prompt = `You were assigned a task via the Hub ${minutesAgo} minutes ago but haven't started or reported progress. Please check your Hub assignments and either start working or report what's blocking you.`;
@@ -250,7 +264,8 @@ export class HubPollScheduler {
       // Skip non-bot sessions
       if (session.name === "You" || session.name === "System") continue;
 
-      // Skip busy bots — they're already working
+      // Skip paused or busy bots
+      if (this.devControlStore?.isPaused(session.id)) continue;
       if (this.processManager.isSessionBusy(session.id)) continue;
 
       const lastPrompt = this.lastStatusUpdatePrompt.get(session.id) ?? 0;
@@ -286,6 +301,22 @@ export class HubPollScheduler {
     }
   }
 
+  /**
+   * Deliver any pending user-requested status updates to bots that are now idle and not paused.
+   * The controller's deliverStatusRequest handles skipping/busy checks; this just schedules them.
+   */
+  private processPendingStatusRequests(): void {
+    if (!this.devControlStore || !this.deliverStatusRequest) return;
+
+    const allSessions = this.sessionStore.loadAll();
+    for (const session of allSessions) {
+      if (!this.devControlStore.hasStatusRequest(session.id)) continue;
+      this.deliverStatusRequest(session.id).catch((err) => {
+        console.error(`[poll-scheduler] Status request delivery failed for ${session.name}:`, err);
+      });
+    }
+  }
+
   private tick(): void {
     // Check for stale assignments on every tick, even if no new hub messages
     this.checkStaleAssignments();
@@ -296,6 +327,9 @@ export class HubPollScheduler {
     // Proactively prompt idle bots for status updates
     this.checkStatusUpdates();
 
+    // Deliver any pending user-requested status updates that are now actionable
+    this.processPendingStatusRequests();
+
     const recentMessages = this.hubStore.getRecent(20);
     if (recentMessages.length === 0) return;
 
@@ -305,6 +339,9 @@ export class HubPollScheduler {
 
     for (const session of allSessions) {
       if (polledCount >= MAX_BOTS_PER_TICK) break;
+
+      // Skip paused bots
+      if (this.devControlStore?.isPaused(session.id)) continue;
 
       // Skip busy bots
       if (this.processManager.isSessionBusy(session.id)) continue;
@@ -323,6 +360,8 @@ export class HubPollScheduler {
 
       // Idle bot hibernation: bots with no pending tasks only wake for direct @mentions.
       // Bots with pending tasks get the full relevant feed (broadcasts, system, @You).
+      // Medusa (PM) is NEVER hibernated — she must see all messages to track status.
+      const isMedusa = session.name.toLowerCase() === "medusa";
       const hasPendingTask = this.staleAssignments.has(session.id);
       const lowerName = session.name.toLowerCase();
 
@@ -332,10 +371,13 @@ export class HubPollScheduler {
         const lowerText = m.text.toLowerCase();
 
         // Direct @mention always wakes the bot
-        if (lowerText.includes(`@${lowerName}`)) return true;
+        if (hasMention(m.text, session.name)) return true;
 
         // @all targets every bot — wake regardless of pending task status
-        if (lowerText.includes("@all")) return true;
+        if (hasAllMention(m.text)) return true;
+
+        // Medusa (PM) never hibernates — she needs full context to manage
+        if (isMedusa) return true;
 
         // If hibernating (no pending tasks), only wake for direct @mentions / @all
         if (!hasPendingTask) return false;
@@ -344,9 +386,9 @@ export class HubPollScheduler {
         // Include system messages
         if (m.from === "System") return true;
         // Include @You escalations
-        if (lowerText.includes("@you")) return true;
+        if (hasYouMention(m.text)) return true;
         // Include broadcasts (no @ mentions)
-        if (!lowerText.includes("@")) return true;
+        if (!hasAnyMention(m.text)) return true;
         // Skip messages directed at other bots
         return false;
       });

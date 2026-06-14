@@ -2,6 +2,7 @@ import { spawn } from "child_process";
 import { execSync } from "child_process";
 import fs from "fs";
 import type { TokenLogger } from "../metrics/token-logger.js";
+import { getActiveProvider } from "../settings/store.js";
 
 /**
  * Find the Claude CLI binary.
@@ -36,7 +37,40 @@ function findClaudeBinary(): string {
   return "claude";
 }
 
+/**
+ * Find the Kimi CLI binary.
+ */
+function findKimiBinary(): string {
+  const candidates = [
+    (() => {
+      try {
+        return execSync("which kimi", { encoding: "utf-8" }).trim();
+      } catch {
+        return null;
+      }
+    })(),
+    "/usr/local/bin/kimi",
+    "/opt/homebrew/bin/kimi",
+    `${process.env.HOME}/.local/bin/kimi`,
+    `${process.env.HOME}/.npm-global/bin/kimi`,
+  ];
+
+  for (const p of candidates) {
+    if (!p) continue;
+    try {
+      const real = fs.realpathSync(p);
+      fs.accessSync(real, fs.constants.X_OK);
+      return real;
+    } catch {
+      // continue
+    }
+  }
+
+  return "kimi";
+}
+
 const CLAUDE_BIN = findClaudeBinary();
+const KIMI_BIN = findKimiBinary();
 
 export interface ChatMessage {
   id: string;
@@ -96,6 +130,100 @@ ${transcript}
 Provide a concise summary (under 200 words):`;
 
   return new Promise<SummarizationResult>((resolve, reject) => {
+    const provider = getActiveProvider();
+
+    if (!provider) {
+      return reject(new Error("No provider selected for summarization"));
+    }
+
+    if (provider === "kimi") {
+      // Use Kimi CLI for summarization
+      // Use a unique session key every time so Kimi doesn't accumulate
+      // previous summarization attempts into the context window.
+      const args = [
+        "--print",
+        "--output-format",
+        "stream-json",
+        "--prompt",
+        prompt,
+        "--session",
+        `summarize-${opts?.sessionId ?? Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        "--work-dir",
+        process.cwd(),
+      ];
+
+      const child = spawn(KIMI_BIN, args, {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env },
+      });
+
+      let stdout = "";
+      let stderr = "";
+
+      child.stdout!.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString("utf-8");
+      });
+
+      child.stderr!.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString("utf-8");
+      });
+
+      child.on("close", (code) => {
+        if (code !== 0) {
+          return reject(
+            new Error(`Summarization failed (exit ${code}): ${stderr || stdout}`)
+          );
+        }
+
+        let summaryText = "";
+
+        for (const line of stdout.split("\n")) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try {
+            const obj = JSON.parse(trimmed);
+            if (obj.role === "assistant" && Array.isArray(obj.content)) {
+              for (const block of obj.content) {
+                if (block.type === "text" && block.text) {
+                  summaryText += block.text;
+                }
+              }
+            }
+          } catch {
+            // Skip non-JSON lines
+          }
+        }
+
+        if (!summaryText) {
+          summaryText = "Summary unavailable.";
+        }
+
+        // Log summarization (no cost data available for Kimi)
+        if (opts?.tokenLogger) {
+          opts.tokenLogger.log({
+            timestamp: new Date().toISOString(),
+            sessionId: opts.sessionId ?? "",
+            botName: opts.botName ?? "summarizer",
+            claudeSessionId: "",
+            messageId: "",
+            source: "summarizer",
+            costUsd: 0,
+            durationMs: 0,
+            success: true,
+          });
+        }
+
+        resolve({ summary: summaryText, costUsd: 0, durationMs: 0 });
+      });
+
+      child.on("error", (err) => {
+        reject(new Error(`Summarization spawn error: ${err.message}`));
+      });
+
+      return;
+    }
+
+    // Use Claude CLI for summarization (original behavior)
     const args = [
       "-p",
       prompt,

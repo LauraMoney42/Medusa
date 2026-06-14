@@ -5,9 +5,10 @@ import * as api from '../api';
 interface SessionState {
   sessions: SessionMeta[];
   activeSessionId: string | null;
-  activeView: 'hub' | 'project' | 'usage' | 'medusa';
+  activeView: 'hub' | 'project' | 'usage' | 'medusa' | 'arcade';
   statuses: Record<string, 'idle' | 'busy'>;
   pendingTasks: Record<string, boolean>;
+  devControl: Record<string, { paused: boolean; statusRequested: boolean; interrupted: boolean }>;
   isServerShuttingDown: boolean;
   shuttingDownSessions: { id: string; name: string }[];
 }
@@ -25,7 +26,9 @@ interface SessionActions {
   setSessionWorkingDir: (id: string, workingDir: string) => void;
   setSessionStatus: (id: string, status: 'idle' | 'busy') => void;
   setPendingTask: (id: string, hasPending: boolean) => void;
-  setActiveView: (view: 'hub' | 'project' | 'usage' | 'medusa') => void;
+  setDevControl: (id: string, state: { paused: boolean; statusRequested: boolean; interrupted: boolean }) => void;
+  removeDevControl: (id: string) => void;
+  setActiveView: (view: 'hub' | 'project' | 'usage' | 'medusa' | 'arcade') => void;
   setServerShuttingDown: (busySessions: { id: string; name: string }[]) => void;
 }
 
@@ -35,6 +38,7 @@ export const useSessionStore = create<SessionState & SessionActions>(
     activeSessionId: null,
     statuses: {},
     pendingTasks: {},
+    devControl: {},
     // Default to medusa — home screen is the Medusa chat pane
     activeView: (() => {
       const stored = localStorage.getItem('medusa_active_view');
@@ -48,8 +52,19 @@ export const useSessionStore = create<SessionState & SessionActions>(
     shuttingDownSessions: [],
 
     fetchSessions: async () => {
-      const sessions = await api.fetchSessions();
-      set({ sessions });
+      const [sessions, devControlList] = await Promise.all([
+        api.fetchSessions(),
+        api.fetchDevControl().catch(() => [] as api.DevControlState[]),
+      ]);
+      const devControl: SessionState['devControl'] = {};
+      for (const entry of devControlList) {
+        devControl[entry.sessionId] = {
+          paused: entry.paused,
+          statusRequested: entry.statusRequested,
+          interrupted: entry.interrupted,
+        };
+      }
+      set({ sessions, devControl });
     },
 
     createSession: async (name, workingDir, systemPrompt) => {
@@ -128,6 +143,16 @@ export const useSessionStore = create<SessionState & SessionActions>(
 
     setPendingTask: (id, hasPending) =>
       set((s) => ({ pendingTasks: { ...s.pendingTasks, [id]: hasPending } })),
+
+    setDevControl: (id, state) =>
+      set((s) => ({ devControl: { ...s.devControl, [id]: state } })),
+
+    removeDevControl: (id) =>
+      set((s) => {
+        const next = { ...s.devControl };
+        delete next[id];
+        return { devControl: next };
+      }),
 
     setActiveView: (view) => {
       localStorage.setItem('medusa_active_view', view);

@@ -10,6 +10,8 @@ interface SessionEntry {
   workingDir: string;
   /** Lock to prevent concurrent sendMessage calls */
   spawnLock: Promise<any> | null;
+  /** Kimi session key — rotated when token limit is hit to start fresh */
+  kimiSessionKey: string;
 }
 
 /**
@@ -105,6 +107,19 @@ function isUsageWarning(text: string): boolean {
   );
 }
 
+/**
+ * Detects Anthropic context-window-exceeded errors.
+ * When the accumulated conversation + system prompt exceeds 262,144 tokens,
+ * the API returns a 400 with "exceeded model token limit".
+ */
+function isTokenLimitError(text: string): boolean {
+  const lower = text.toLowerCase();
+  return (
+    lower.includes("exceeded model token limit") ||
+    lower.includes("token limit") && lower.includes("exceeded")
+  );
+}
+
 export class ProcessManager {
   private sessions: Map<string, SessionEntry> = new Map();
 
@@ -116,6 +131,7 @@ export class ProcessManager {
       isFirstMessage,
       workingDir,
       spawnLock: null,
+      kimiSessionKey: id,
     });
   }
 
@@ -160,6 +176,9 @@ export class ProcessManager {
 
     // Claim the lock immediately before spawning
     const provider = getActiveProvider();
+    if (!provider) {
+      return Promise.reject(new Error("No provider selected. Go to Settings and choose Claude or Kimi."));
+    }
     const spawnPromise = provider === "kimi"
       ? this.spawnKimi(sessionId, entry, text, images, onEvent, yoloMode, systemPrompt, model, files)
       : this.spawnClaude(sessionId, entry, text, images, onEvent, false, yoloMode, systemPrompt, model, files);
@@ -232,7 +251,7 @@ export class ProcessManager {
     const child = spawn(CLAUDE_BIN, args, {
       cwd: entry.workingDir,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, CLAUDECODE: undefined, CLAUDE_CONFIG_DIR: getActiveConfigDir() },
+      env: { ...process.env, CLAUDECODE: undefined, ...(getActiveConfigDir() ? { CLAUDE_CONFIG_DIR: getActiveConfigDir() } : {}) },
     });
 
     entry.process = child;
@@ -250,6 +269,9 @@ export class ProcessManager {
       parser.feed(str);
     });
 
+    // Track whether we hit a token limit so we can retry with a fresh session
+    let tokenLimitHit = false;
+
     // Forward stderr lines as error events so the client knows something went wrong.
     // Filter out Claude CLI usage/billing warnings — they're informational, not errors,
     // and pollute the response text when appended by the client's setError handler.
@@ -260,6 +282,13 @@ export class ProcessManager {
       if (isUsageWarning(errText)) {
         console.log(`[claude] Usage warning (session ${sessionId}): ${errText}`);
         return;
+      }
+      if (isTokenLimitError(errText)) {
+        tokenLimitHit = true;
+        console.warn(
+          `[claude] Token limit exceeded for session ${sessionId}. Will retry with fresh session.`
+        );
+        // Still emit so the user sees it in Hub/chat, then retry transparently
       }
       onEvent({ kind: "error", message: errText });
     });
@@ -300,6 +329,23 @@ export class ProcessManager {
           entry.isFirstMessage = false;
           resolve(
             this.spawnClaude(sessionId, entry, text, images, onEvent, false, yoloMode, systemPrompt, model, files)
+          );
+          return;
+        }
+
+        // If token limit exceeded, retry with a fresh session (--session-id).
+        // The CLI's internal conversation history grew too large; starting fresh
+        // clears Anthropic's side and gives us a clean context window.
+        if (
+          code !== 0 &&
+          tokenLimitHit
+        ) {
+          console.log(
+            `[claude] Retrying session ${sessionId} with fresh context after token limit error`
+          );
+          entry.isFirstMessage = true;
+          resolve(
+            this.spawnClaude(sessionId, entry, text, images, onEvent, true, yoloMode, systemPrompt, model, files)
           );
           return;
         }
@@ -357,7 +403,7 @@ export class ProcessManager {
       "--prompt",
       prompt,
       "--session",
-      sessionId,
+      entry.kimiSessionKey,
       "--work-dir",
       entry.workingDir,
     ];
@@ -395,9 +441,15 @@ export class ProcessManager {
       child.on("close", (code) => {
         entry.process = null;
 
+        // Detect token limit errors in full stdout (message may span lines)
+        const tokenLimitHit =
+          rawStdout.includes("exceeded model token limit") ||
+          (rawStdout.includes("token limit") && rawStdout.includes("exceeded"));
+
         // Parse each JSON line from stdout
         const lines = rawStdout.split("\n").map((l) => l.trim()).filter(Boolean);
         let emittedText = false;
+        let errorText = "";
 
         for (const line of lines) {
           try {
@@ -414,8 +466,29 @@ export class ProcessManager {
             // tool_calls and tool results are emitted inline as text by kimi,
             // so we don't need special handling here.
           } catch {
-            // Ignore non-JSON lines
+            // Not valid JSON — could be an error message from the CLI
+            errorText += line + "\n";
           }
+        }
+
+        // If token limit exceeded, retry with a fresh Kimi session.
+        // Rotate the session key so Kimi starts with a clean context window.
+        if (code !== 0 && tokenLimitHit) {
+          const oldKey = entry.kimiSessionKey;
+          entry.kimiSessionKey = `${sessionId}-fresh-${Date.now()}`;
+          console.log(
+            `[kimi] Token limit hit for session ${sessionId} (key=${oldKey}). ` +
+            `Retrying with fresh key ${entry.kimiSessionKey}`
+          );
+          resolve(
+            this.spawnKimi(sessionId, entry, text, images, onEvent, yoloMode, systemPrompt, _model, files)
+          );
+          return;
+        }
+
+        // If the process failed and we have non-JSON output, emit it as an error
+        if (code !== 0 && errorText.trim() && !emittedText) {
+          onEvent({ kind: "error", message: errorText.trim() });
         }
 
         // Emit result event so the stream is properly finalized

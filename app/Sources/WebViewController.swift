@@ -359,6 +359,15 @@ class WebViewController: NSWindowController, WKNavigationDelegate, WKUIDelegate,
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         loadingView.removeFromSuperview()
+
+        // Inject the auth token into localStorage so Socket.IO can include it
+        // in the handshake auth payload. WKWebView's WebSocket upgrade doesn't
+        // reliably send httpOnly cookies injected via WKHTTPCookieStore.
+        let token = serverManager.authToken
+        if !token.isEmpty {
+            let js = "localStorage.setItem('auth-token', '\(token)');"
+            webView.evaluateJavaScript(js, completionHandler: nil)
+        }
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {

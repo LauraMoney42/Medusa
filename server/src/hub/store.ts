@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
+import { hasMention, hasAllMention, hasYouMention, hasAnyMention } from "./mention-utils.js";
 
 const HubMessageSchema = z.object({
   id: z.string(),
@@ -128,25 +129,25 @@ export class HubStore {
       }
 
       // Include if bot is @mentioned
-      if (lowerText.includes(`@${lowerName}`)) {
+      if (hasMention(msg.text, sessionName)) {
         relevant.unshift(msg);
         continue;
       }
 
       // Include @all broadcasts — they target every bot explicitly
-      if (lowerText.includes("@all")) {
+      if (hasAllMention(msg.text)) {
         relevant.unshift(msg);
         continue;
       }
 
       // Include @You messages (user-directed escalations all bots should see)
-      if (lowerText.includes("@you")) {
+      if (hasYouMention(msg.text)) {
         relevant.unshift(msg);
         continue;
       }
 
       // Include broadcast messages (no @ mentions at all)
-      if (!lowerText.includes("@")) {
+      if (!hasAnyMention(msg.text)) {
         relevant.unshift(msg);
         continue;
       }

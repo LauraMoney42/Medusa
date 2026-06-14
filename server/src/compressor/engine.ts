@@ -265,6 +265,126 @@ export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
+/**
+ * Maximum tokens to allow in a system prompt.
+ * Anthropic's context window is 262,144 tokens. We budget 80K for the
+ * system prompt so ~180K remains for conversation history + user message.
+ */
+export const MAX_SYSTEM_PROMPT_TOKENS = 80000;
+
+/**
+ * Assemble a system prompt from components, truncating or dropping
+ * sections if the total would exceed the token budget.
+ *
+ * Truncation order (least important first):
+ * 1. Hub messages → replaced with "[Hub messages truncated...]"
+ * 2. Conversation summary → dropped entirely
+ * 3. Skills prompt → dropped entirely
+ * 4. Base prompt → hard-truncated from the end (last resort)
+ */
+export function assembleSystemPrompt(
+  basePrompt: string,
+  skillsPrompt: string,
+  summary: string | null,
+  hubSection: string,
+  maxTokens: number = MAX_SYSTEM_PROMPT_TOKENS
+): string {
+  // Build full prompt
+  let prompt = basePrompt;
+  if (skillsPrompt) prompt = (prompt + skillsPrompt).trim();
+  if (summary) {
+    prompt +=
+      `\n\n--- CONVERSATION SUMMARY (previous context) ---\n${summary}\n--- END SUMMARY ---`;
+  }
+  prompt += hubSection;
+  prompt = prompt.trim();
+
+  if (estimateTokens(prompt) <= maxTokens) {
+    return prompt;
+  }
+
+  // Phase 1: Truncate hub section to header + placeholder
+  let truncatedHub = "";
+  if (hubSection.length > 0) {
+    const endHubIdx = hubSection.lastIndexOf("\n--- END HUB ---");
+    if (endHubIdx !== -1) {
+      // Keep header up to first message line (starts with "\n[...")
+      const firstMsgIdx = hubSection.indexOf("\n[");
+      if (firstMsgIdx !== -1 && firstMsgIdx < endHubIdx) {
+        truncatedHub =
+          hubSection.slice(0, firstMsgIdx) +
+          "\n[Hub messages truncated due to token limit]" +
+          hubSection.slice(endHubIdx);
+      } else {
+        // No messages, just keep as-is
+        truncatedHub = hubSection;
+      }
+    } else {
+      truncatedHub =
+        hubSection.slice(0, 200) +
+        "\n[Hub context truncated due to token limit]";
+    }
+  }
+
+  prompt = basePrompt;
+  if (skillsPrompt) prompt = (prompt + skillsPrompt).trim();
+  if (summary) {
+    prompt +=
+      `\n\n--- CONVERSATION SUMMARY (previous context) ---\n${summary}\n--- END SUMMARY ---`;
+  }
+  prompt += truncatedHub;
+  prompt = prompt.trim();
+
+  if (estimateTokens(prompt) <= maxTokens) {
+    console.warn(
+      `[token-budget] Hub messages truncated to fit ${maxTokens} token budget`
+    );
+    return prompt;
+  }
+
+  // Phase 2: Drop summary entirely
+  if (summary) {
+    prompt = basePrompt;
+    if (skillsPrompt) prompt = (prompt + skillsPrompt).trim();
+    prompt += truncatedHub || hubSection;
+    prompt = prompt.trim();
+
+    if (estimateTokens(prompt) <= maxTokens) {
+      console.warn(
+        `[token-budget] Conversation summary dropped to fit ${maxTokens} token budget`
+      );
+      return prompt;
+    }
+  }
+
+  // Phase 3: Drop skills entirely
+  if (skillsPrompt) {
+    prompt = basePrompt;
+    prompt += truncatedHub || hubSection;
+    prompt = prompt.trim();
+
+    if (estimateTokens(prompt) <= maxTokens) {
+      console.warn(
+        `[token-budget] Skills dropped to fit ${maxTokens} token budget`
+      );
+      return prompt;
+    }
+  }
+
+  // Phase 4: Hard truncate from the end (last resort)
+  const maxChars = maxTokens * 4;
+  if (prompt.length > maxChars) {
+    prompt =
+      prompt.slice(0, maxChars - 80) +
+      "\n[SYSTEM PROMPT TRUNCATED: exceeded token budget]";
+    console.warn(
+      `[token-budget] System prompt hard-truncated to ${maxTokens} tokens (last resort)`
+    );
+  }
+
+  return prompt;
+}
+
 // Re-export types for consumers
 export type {
   CompressionLevel,

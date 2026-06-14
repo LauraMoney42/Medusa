@@ -25,6 +25,8 @@ export function useSocket() {
   const setError = useChatStore((s) => s.setError);
   const setSessionStatus = useSessionStore((s) => s.setSessionStatus);
   const setPendingTask = useSessionStore((s) => s.setPendingTask);
+  const setDevControl = useSessionStore((s) => s.setDevControl);
+  const removeDevControl = useSessionStore((s) => s.removeDevControl);
   const setSessionYolo = useSessionStore((s) => s.setSessionYolo);
   const setSessionSystemPrompt = useSessionStore((s) => s.setSessionSystemPrompt);
   const setSessionSkills = useSessionStore((s) => s.setSessionSkills);
@@ -54,7 +56,40 @@ export function useSocket() {
       }
     };
 
-    const handleDisconnect = () => setConnected(false);
+    const handleDisconnect = (reason: string) => {
+      setConnected(false);
+      console.log('[socket] disconnected:', reason);
+    };
+
+    const handleOffline = () => {
+      setConnected(false);
+      console.log('[socket] browser offline');
+    };
+
+    // Detect wake-from-sleep and force reconnect if needed
+    const handleOnline = () => {
+      console.log('[socket] browser online, checking connection');
+      if (!socket.connected) {
+        socket.connect();
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        console.log('[socket] tab visible, checking connection');
+        if (!socket.connected) {
+          socket.connect();
+        }
+      }
+    };
+
+    const handlePageShow = (e: PageTransitionEvent) => {
+      // persisted=true means page was restored from bfcache after sleep
+      if (e.persisted || !socket.connected) {
+        console.log('[socket] pageshow (persisted=', e.persisted, '), reconnecting');
+        socket.connect();
+      }
+    };
 
     const handleUserMessage = (msg: ChatMessage) => {
       addUserMessage(msg);
@@ -128,6 +163,23 @@ export function useSocket() {
       setPendingTask(data.sessionId, data.hasPendingTask);
     };
 
+    const handleDevControlUpdate = (data: {
+      sessionId: string;
+      paused: boolean;
+      statusRequested: boolean;
+      interrupted: boolean;
+    }) => {
+      setDevControl(data.sessionId, {
+        paused: data.paused,
+        statusRequested: data.statusRequested,
+        interrupted: data.interrupted,
+      });
+    };
+
+    const handleDevControlRemoved = (data: { sessionId: string }) => {
+      removeDevControl(data.sessionId);
+    };
+
     const handleTaskAssigned = (data: { sessionId: string }) => {
       setPendingTask(data.sessionId, true);
     };
@@ -141,9 +193,25 @@ export function useSocket() {
       setServerShuttingDown(data.busySessions);
     };
 
+    const handleConnectError = (error: Error) => {
+      console.log('[socket] connect_error:', error.message);
+      // If auth failed, stop the reconnection spiral before we hit the
+      // 5-attempt rate limit and force the user back to login.
+      if (error.message === 'Authentication failed') {
+        socket.disconnect();
+        // Notify App.tsx to show the login screen
+        window.dispatchEvent(new CustomEvent('medusa:auth-failed'));
+      }
+    };
+
     // Register all listeners
     socket.on('connect', handleConnect);
     socket.on('disconnect', handleDisconnect);
+    socket.on('connect_error', handleConnectError);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pageshow', handlePageShow);
     socket.on('message:user', handleUserMessage);
     socket.on('message:stream:start', handleStreamStart);
     socket.on('message:stream:delta', handleStreamDelta);
@@ -159,6 +227,8 @@ export function useSocket() {
     socket.on('task:done', handleTaskDone);
     socket.on('tasks:acknowledged', handleTasksAcknowledged);
     socket.on('session:pending-task', handlePendingTask);
+    socket.on('dev-control:update', handleDevControlUpdate);
+    socket.on('dev-control:removed', handleDevControlRemoved);
     socket.on('bot:task-assigned', handleTaskAssigned);
     socket.on('bot:task-cleared', handleTaskCleared);
     socket.on('server:shutting-down', handleServerShuttingDown);
@@ -167,6 +237,7 @@ export function useSocket() {
       // CRITICAL: Remove all listeners before disconnecting to prevent memory leaks
       socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
+      socket.off('connect_error', handleConnectError);
       socket.off('message:user', handleUserMessage);
       socket.off('message:stream:start', handleStreamStart);
       socket.off('message:stream:delta', handleStreamDelta);
@@ -182,9 +253,16 @@ export function useSocket() {
       socket.off('task:done', handleTaskDone);
       socket.off('tasks:acknowledged', handleTasksAcknowledged);
       socket.off('session:pending-task', handlePendingTask);
+      socket.off('dev-control:update', handleDevControlUpdate);
+      socket.off('dev-control:removed', handleDevControlRemoved);
       socket.off('bot:task-assigned', handleTaskAssigned);
       socket.off('bot:task-cleared', handleTaskCleared);
       socket.off('server:shutting-down', handleServerShuttingDown);
+
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pageshow', handlePageShow);
 
       disconnectSocket();
       socketRef.current = null;

@@ -74,6 +74,36 @@ export function fetchSessions(): Promise<SessionMeta[]> {
   return request<SessionMeta[]>('/api/sessions');
 }
 
+export interface DevControlState {
+  sessionId: string;
+  paused: boolean;
+  statusRequested: boolean;
+  interrupted: boolean;
+  updatedAt: number;
+}
+
+export function fetchDevControl(): Promise<DevControlState[]> {
+  return request<DevControlState[]>('/api/dev-control');
+}
+
+export function pauseSession(sessionId: string): Promise<{ ok: boolean; wasBusy: boolean }> {
+  return request<{ ok: boolean; wasBusy: boolean }>(`/api/dev-control/${sessionId}/pause`, {
+    method: 'POST',
+  });
+}
+
+export function resumeSession(sessionId: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/dev-control/${sessionId}/resume`, {
+    method: 'POST',
+  });
+}
+
+export function requestSessionStatus(sessionId: string): Promise<{ ok: boolean; sent: boolean }> {
+  return request<{ ok: boolean; sent: boolean }>(`/api/dev-control/${sessionId}/status`, {
+    method: 'POST',
+  });
+}
+
 export function createSession(
   name: string,
   workingDir?: string,
@@ -248,52 +278,12 @@ export function restartApp(): Promise<void> {
   return request<void>('/api/health/restart', { method: 'POST' });
 }
 
-export interface AccountLoginStatus {
-  loggedIn: boolean;
-  email?: string;
-  subscriptionType?: string;
-}
-
-export interface KimiLoginStatus {
-  loggedIn: boolean;
-  email?: string;
-}
-
-export interface AccountInfo {
-  id: 1 | 2;
-  name: string;
-  configDir: string;
-}
-
 export interface SettingsResponse {
-  activeAccount: 1 | 2;
-  activeProvider: 'claude' | 'kimi';
-  llmProvider: 'claude' | 'openai' | 'kimi';
-  llmApiKey: string;
-  accounts: AccountInfo[];
-  hasMicrosoftClientId?: boolean;
-  oneNoteConnected?: boolean;
-  kimiLoginStatus: KimiLoginStatus;
-}
-
-export interface LoginStatusResponse extends SettingsResponse {
-  loginStatuses: Record<number, AccountLoginStatus>;
-  kimiLoginStatus: KimiLoginStatus;
+  activeProvider: 'claude' | 'kimi' | null;
 }
 
 export function fetchSettings(): Promise<SettingsResponse> {
   return request<SettingsResponse>('/api/settings');
-}
-
-export function fetchLoginStatus(): Promise<LoginStatusResponse> {
-  return request<LoginStatusResponse>('/api/settings/login-status');
-}
-
-export function setAccount(account: 1 | 2): Promise<SettingsResponse> {
-  return request<SettingsResponse>('/api/settings/account', {
-    method: 'POST',
-    body: JSON.stringify({ account }),
-  });
 }
 
 export function setProvider(provider: 'claude' | 'kimi'): Promise<SettingsResponse> {
@@ -303,26 +293,8 @@ export function setProvider(provider: 'claude' | 'kimi'): Promise<SettingsRespon
   });
 }
 
-export function loginClaudeAccount(accountId: 1 | 2): Promise<{ success: boolean; loginStatus: AccountLoginStatus }> {
-  return request<{ success: boolean; loginStatus: AccountLoginStatus }>(`/api/settings/account/${accountId}/login`, {
-    method: 'POST',
-  });
-}
-
-export function logoutClaudeAccount(accountId: 1 | 2): Promise<{ success: boolean; loginStatus: AccountLoginStatus }> {
-  return request<{ success: boolean; loginStatus: AccountLoginStatus }>(`/api/settings/account/${accountId}/logout`, {
-    method: 'POST',
-  });
-}
-
-export function loginKimiAccount(): Promise<{ success: boolean; loginStatus: KimiLoginStatus }> {
-  return request<{ success: boolean; loginStatus: KimiLoginStatus }>('/api/settings/kimi/login', {
-    method: 'POST',
-  });
-}
-
-export function logoutKimiAccount(): Promise<{ success: boolean; loginStatus: KimiLoginStatus }> {
-  return request<{ success: boolean; loginStatus: KimiLoginStatus }>('/api/settings/kimi/logout', {
+export function logoutProvider(): Promise<{ success: boolean; settings: SettingsResponse }> {
+  return request<{ success: boolean; settings: SettingsResponse }>('/api/settings/logout', {
     method: 'POST',
   });
 }

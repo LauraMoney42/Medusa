@@ -14,9 +14,13 @@ dist/
 *.key
 *.jks
 *.p12
+*.p8
 keystore*
 *_key.json
 *-credentials.json
+
+# App Store Connect secrets folder
+secrets/
 
 # Google Cloud / Firebase — generated per-project in GCP Console
 google-services.json

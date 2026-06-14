@@ -4,7 +4,7 @@ import { timingSafeEqual, createHash } from "crypto";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
 import config from "../config.js";
-import { compress } from "../compressor/engine.js";
+import { compress, assembleSystemPrompt, estimateTokens } from "../compressor/engine.js";
 import { loadCompressorConfig } from "../compressor/config.js";
 
 // P2-9: Validate that every image path is within the uploads directory.
@@ -107,6 +107,8 @@ const BOT_TASK_PREFIX_LOWER = "[bot-task: ";
  */
 export class HubPostDetector {
   private buffer = "";
+  private pendingHubPosts: string[] = [];
+  private pendingBotTasks: string[] = [];
 
   /**
    * Feed a delta chunk. Returns clean text (with hub posts and bot tasks stripped)
@@ -117,11 +119,31 @@ export class HubPostDetector {
     return this.extract();
   }
 
-  /** Flush remaining buffer as clean output (called on stream end). */
+  /** Flush remaining buffer as clean output (called on stream end).
+   *  Also extracts any unclosed [HUB-POST: ...] or [BOT-TASK: ...] markers
+   *  that never received a closing bracket (e.g. model truncation).
+   */
   flush(): string {
+    this.extractUnclosed();
     const remaining = this.buffer;
     this.buffer = "";
     return remaining;
+  }
+
+  /** Hub posts extracted during the last flush() from unclosed markers. */
+  getPendingHubPosts(): string[] {
+    return this.pendingHubPosts;
+  }
+
+  /** Bot tasks extracted during the last flush() from unclosed markers. */
+  getPendingBotTasks(): string[] {
+    return this.pendingBotTasks;
+  }
+
+  /** Clear pending posts/tasks after processing them. */
+  clearPending(): void {
+    this.pendingHubPosts = [];
+    this.pendingBotTasks = [];
   }
 
   private extract(): DetectorResult {
@@ -216,6 +238,61 @@ export class HubPostDetector {
     }
     return maxLen;
   }
+
+  /**
+   * At stream end, extract any [HUB-POST: ...] or [BOT-TASK: ...] markers
+   * that were never closed with a `]`. This handles model truncation where
+   * the closing bracket is omitted (common with very long hub posts).
+   *
+   * CONSERVATIVE: only extracts if the unclosed marker is at the very start
+   * of the buffer (after optional whitespace). This prevents extracting
+   * examples like "(e.g., [HUB-POST: ..." that appear mid-sentence.
+   */
+  private extractUnclosed(): void {
+    const trimmed = this.buffer.trimStart();
+    const trimOffset = this.buffer.length - trimmed.length;
+    const lowerBuf = trimmed.toLowerCase();
+
+    const hubIdx = lowerBuf.indexOf(HUB_PREFIX_LOWER);
+    const botIdx = lowerBuf.indexOf(BOT_TASK_PREFIX_LOWER);
+
+    // Only proceed if a marker appears at the very start of (trimmed) buffer
+    const firstMarkerIdx =
+      hubIdx === -1 ? Infinity :
+      botIdx === -1 ? hubIdx :
+      Math.min(hubIdx, botIdx);
+
+    if (firstMarkerIdx !== 0) return;
+
+    let prefixLen: number;
+    let isBot: boolean;
+
+    if (botIdx === 0) {
+      prefixLen = BOT_TASK_PREFIX.length;
+      isBot = true;
+    } else {
+      prefixLen = HUB_PREFIX.length;
+      isBot = false;
+    }
+
+    const afterPrefix = trimmed.slice(prefixLen);
+
+    // If there's a closing bracket anywhere after the marker, normal extract()
+    // would have handled it (or it's a nested bracket inside content).
+    if (afterPrefix.includes("]")) return;
+
+    const content = afterPrefix.trim();
+    if (!content) return;
+
+    // Keep any leading whitespace that was before the marker
+    this.buffer = this.buffer.slice(0, trimOffset);
+
+    if (isBot) {
+      this.pendingBotTasks.push(content);
+    } else {
+      this.pendingHubPosts.push(content);
+    }
+  }
 }
 
 // ---- Task-Done Detection ----
@@ -301,6 +378,12 @@ IMPORTANT — Auto-continuation:
 - When you finish a task, check the Hub for your next assignment. If you have one, start it immediately. Do NOT wait for the user to tell you to begin.
 - If you are idle and see assigned work for you in the Hub, pick it up and start working.
 - Only stop and wait if you have NO assigned tasks remaining.
+
+IMPORTANT — No Duplicate Work:
+- If a task or bug is already assigned to another bot (e.g., "@Dev3 is fixing rw-bug-001"), do NOT touch it.
+- Do NOT investigate, patch, comment on, or "help with" another bot's assigned task.
+- If you see work discussed in the Hub that is NOT @'ed to you, respond with [NO-ACTION].
+- The ONLY exception: @Medusa explicitly reassigns the task to you.
 
 IMPORTANT — Escalation:
 - If you need human approval, a decision, or are blocked on something only the user can resolve, post to the Hub with this exact format:
@@ -574,6 +657,11 @@ export function setupSocketHandler(
         case "result": {
           // Flush any remaining buffered text from the hub detector
           const remaining = hubDetector.flush();
+          const pendingHub = hubDetector.getPendingHubPosts();
+          const pendingBot = hubDetector.getPendingBotTasks();
+          hubDetector.clearPending();
+          if (pendingHub.length > 0) handleHubPosts(pendingHub);
+          if (pendingBot.length > 0) handleBotTasks(pendingBot);
           if (remaining) {
             assistantText += remaining;
             io.to(sessionId).emit("message:stream:delta", {
@@ -610,30 +698,39 @@ export function setupSocketHandler(
           break;
         }
 
-        case "error":
+        case "error": {
+          const errMsg = event.message;
           io.to(sessionId).emit("message:error", {
             sessionId,
             messageId: assistantMsgId,
-            error: event.message,
+            error: errMsg,
           });
+          // Also post to Hub so errors are visible globally
+          const hubErrMsg = hubStore.add({
+            from: "System",
+            text: `❌ **Error** in ${meta.name}: ${errMsg}`,
+            sessionId: "",
+          });
+          io.emit("hub:message", hubErrMsg);
           break;
+        }
       }
     };
 
     // Build combined system prompt (custom instructions + skills + summary + hub context)
-    let finalSystemPrompt = meta.systemPrompt || "";
-    if (meta.skills && meta.skills.length > 0) {
-      const skillsPrompt = await skillCatalog.buildSkillsPrompt(meta.skills);
-      finalSystemPrompt = (finalSystemPrompt + skillsPrompt).trim();
-    }
-    // Inject conversation summary if available
+    const skillsPrompt =
+      meta.skills && meta.skills.length > 0
+        ? await skillCatalog.buildSkillsPrompt(meta.skills)
+        : "";
     const summary = chatStore.loadSummary(sessionId);
-    if (summary) {
-      finalSystemPrompt += `\n\n--- CONVERSATION SUMMARY (previous context) ---\n${summary}\n--- END SUMMARY ---`;
-    }
-    // Inject hub context filtered to this bot's relevant messages
-    finalSystemPrompt += buildHubPromptSection(hubStore, store, sessionId, meta.name);
-    finalSystemPrompt = finalSystemPrompt.trim();
+    const hubSection = buildHubPromptSection(hubStore, store, sessionId, meta.name);
+
+    let finalSystemPrompt = assembleSystemPrompt(
+      meta.systemPrompt || "",
+      skillsPrompt,
+      summary,
+      hubSection
+    );
 
     // TC-4: Compress the assembled system prompt (hub context + summary + instructions).
     // Uses moderate level — balances token savings with semantic preservation.
@@ -703,11 +800,23 @@ export function setupSocketHandler(
         messageId: assistantMsgId,
         error: message,
       });
+      // Also post to Hub so errors are visible globally
+      const hubErrMsg = hubStore.add({
+        from: "System",
+        text: `❌ **Error** in ${meta.name}: ${message}`,
+        sessionId: "",
+      });
+      io.emit("hub:message", hubErrMsg);
     }
 
     // Always finalize the stream if the parser didn't emit a result event
     if (!streamEnded) {
       const remaining = hubDetector.flush();
+      const pendingHub = hubDetector.getPendingHubPosts();
+      const pendingBot = hubDetector.getPendingBotTasks();
+      hubDetector.clearPending();
+      if (pendingHub.length > 0) handleHubPosts(pendingHub);
+      if (pendingBot.length > 0) handleBotTasks(pendingBot);
       if (remaining) {
         assistantText += remaining;
       }
@@ -733,9 +842,18 @@ export function setupSocketHandler(
     // Check if conversation needs summarization
     if (config.summarizationEnabled && !summarizingSessionIds.has(sessionId)) {
       const allMessages = chatStore.loadMessages(sessionId);
-      if (allMessages.length >= config.summarizationThreshold) {
+      const estimatedMsgTokens = allMessages.reduce(
+        (sum, m) => sum + estimateTokens(m.text),
+        0
+      );
+      const tokenThreshold = 120_000; // ~half of 256K context window
+      if (
+        allMessages.length >= config.summarizationThreshold ||
+        estimatedMsgTokens >= tokenThreshold
+      ) {
         console.log(
-          `[summarization] Session ${sessionId} has ${allMessages.length} messages, triggering summarization`
+          `[summarization] Session ${sessionId} has ${allMessages.length} messages ` +
+          `(~${estimatedMsgTokens} est. tokens), triggering summarization`
         );
         // Mark in-flight to prevent concurrent re-triggers
         summarizingSessionIds.add(sessionId);

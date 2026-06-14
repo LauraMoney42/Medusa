@@ -6,6 +6,12 @@ import type { HubStore, HubMessage } from "./store.js";
 import type { TokenLogger } from "../metrics/token-logger.js";
 import type { QuickTaskStore } from "../projects/quick-task-store.js";
 import { autonomousDeliver } from "../claude/autonomous-deliver.js";
+import {
+  hasMention,
+  hasAllMention,
+  hasDevsMention,
+  parseBotTaskTarget,
+} from "./mention-utils.js";
 
 interface PendingMention {
   hubMessage: HubMessage;
@@ -99,14 +105,18 @@ export class MentionRouter {
     // If no @mentions, default to Medusa as the responder — but ONLY for
     // user-originated messages. Bot hub posts without @mentions should not
     // auto-route to Medusa (they'd burn the cooldown and block real user requests).
+    // EXCEPTION: [TASK-DONE:] messages from bots are always routed to Medusa
+    // so she can update project status.
     if (mentions.length === 0) {
       const isUserMessage = hubMessage.from === "User" || hubMessage.from === "You";
-      if (!isUserMessage) return;
+      const hasTaskDone = /\[TASK-DONE:/i.test(hubMessage.text);
+      if (!isUserMessage && !hasTaskDone) return;
       const medusa = allSessions.find(
         (s) => s.name.toLowerCase() === "medusa"
       );
       if (medusa) {
-        console.log(`[mention-router] No @mentions in "${hubMessage.text.slice(0, 60)}" — routing to Medusa`);
+        const reason = hasTaskDone && !isUserMessage ? "TASK-DONE from bot" : "no @mentions";
+        console.log(`[mention-router] ${reason} in "${hubMessage.text.slice(0, 60)}" — routing to Medusa`);
         mentions.push(medusa.name);
       } else {
         return;
@@ -286,21 +296,18 @@ export class MentionRouter {
     sortedSessions: { id: string; name: string }[]
   ): { targetSessionId: string; targetName: string; message: string } | null {
     if (!content.startsWith("@")) return null;
-    const withoutAt = content.slice(1); // e.g. "Backend Dev please verify..."
 
     for (const session of sortedSessions) {
-      const lowerName = session.name.toLowerCase();
-      const lowerContent = withoutAt.toLowerCase();
-      if (lowerContent.startsWith(lowerName)) {
-        // Self-send guard — no valid use case, prevents loops
-        if (session.id === senderSessionId) {
-          console.warn(`[mention-router] [BOT-TASK] self-send to ${session.name} dropped`);
-          return null;
-        }
-        const message = withoutAt.slice(session.name.length).trim();
-        if (!message) return null; // Empty message body
-        return { targetSessionId: session.id, targetName: session.name, message };
+      const message = parseBotTaskTarget(content, session.name);
+      if (message === null) continue;
+
+      // Self-send guard — no valid use case, prevents loops
+      if (session.id === senderSessionId) {
+        console.warn(`[mention-router] [BOT-TASK] self-send to ${session.name} dropped`);
+        return null;
       }
+      if (!message) return null; // Empty message body
+      return { targetSessionId: session.id, targetName: session.name, message };
     }
     return null;
   }
@@ -350,20 +357,21 @@ export class MentionRouter {
     const lowerText = text.toLowerCase();
 
     // @all pings every session except the sender
-    if (lowerText.includes("@all")) {
+    if (hasAllMention(text)) {
       return allSessions
         .filter((s) => s.id !== senderSessionId)
         .map((s) => s.name);
     }
 
-    // @devs pings every session whose name contains "dev" (case-insensitive), except the sender
-    if (lowerText.includes("@devs")) {
+    // @devs pings every session whose name contains "dev" as a whole word, except the sender
+    if (hasDevsMention(text)) {
       return allSessions
-        .filter((s) => s.id !== senderSessionId && s.name.toLowerCase().includes("dev"))
+        .filter((s) => s.id !== senderSessionId && /\bdev\b/i.test(s.name))
         .map((s) => s.name);
     }
 
     const mentioned: string[] = [];
+    let remainingText = text;
 
     // Sort longest names first to prevent partial matches (e.g. "@Full Stack Dev" before "@Dev")
     const sorted = [...allSessions].sort(
@@ -371,9 +379,14 @@ export class MentionRouter {
     );
 
     for (const session of sorted) {
-      const pattern = `@${session.name.toLowerCase()}`;
-      if (lowerText.includes(pattern)) {
+      if (hasMention(remainingText, session.name)) {
         mentioned.push(session.name);
+        // Remove this match so shorter names don't false-match on the same occurrence
+        const escaped = session.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        remainingText = remainingText.replace(
+          new RegExp(`@${escaped}(?!\\w)`, "gi"),
+          " "
+        );
       }
     }
 
@@ -394,7 +407,7 @@ export class MentionRouter {
     const isPM = botName.toLowerCase() === "medusa";
     const roleContext = isPM
       ? `You are ${botName}, the PM. Your job is to triage messages, create/track tasks, and coordinate Devs — NOT to write or edit code yourself. Respond via [HUB-POST: your response].`
-      : `You are ${botName}. ALWAYS respond via [HUB-POST: your response] so the sender can see your reply in the Hub. If the message is a task or bug: do the actual work first (read code, edit files, fix bugs), then report results via [HUB-POST:]. Do NOT post status dashboards or triage — that is the PM's job. You are NOT Medusa/PM.`;
+      : `You are ${botName}. ALWAYS respond via [HUB-POST: your response] so the sender can see your reply in the Hub. If the message is a task or bug: do the actual work first (read code, edit files, fix bugs), then report results via [HUB-POST: your results]. Do NOT post status dashboards or triage — that is the PM's job. You are NOT Medusa/PM.`;
 
     const prompt = `[Hub Message from ${hubMessage.from}]: "${hubMessage.text}"\n\n${roleContext}`;
 

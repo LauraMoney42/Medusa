@@ -3,9 +3,10 @@ import { login } from '../../api';
 
 interface LoginScreenProps {
   onLogin: () => void;
+  reason?: string;
 }
 
-export default function LoginScreen({ onLogin }: LoginScreenProps) {
+export default function LoginScreen({ onLogin, reason }: LoginScreenProps) {
   const [token, setToken] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -45,7 +46,11 @@ export default function LoginScreen({ onLogin }: LoginScreenProps) {
         </div>
 
         <h1 style={styles.title}>Medusa</h1>
-        <p style={styles.subtitle}>Enter your authentication token to connect</p>
+        {reason ? (
+          <p style={styles.reason}>{reason}</p>
+        ) : (
+          <p style={styles.subtitle}>Enter your authentication token to connect</p>
+        )}
 
         <input
           type="password"
@@ -137,6 +142,12 @@ const styles: Record<string, React.CSSProperties> = {
   subtitle: {
     fontSize: 14,
     color: 'var(--text-secondary)',
+    textAlign: 'center' as const,
+    margin: 0,
+  },
+  reason: {
+    fontSize: 14,
+    color: '#f5a623',
     textAlign: 'center' as const,
     margin: 0,
   },

@@ -32,6 +32,8 @@ export interface Config {
   quickTasksFile: string;
   /** Path to persist interrupted session state for auto-resume on next startup */
   interruptedSessionsFile: string;
+  /** Path to persist per-session dev control state (pause / interrupt / status request) */
+  devControlFile: string;
   /** Enable background Hub polling for idle bots (default: false) */
   hubPolling: boolean;
   /** Interval in ms between poll ticks (default: 120000 = 2 min) */
@@ -56,14 +58,8 @@ export interface Config {
   compressorConfigFile: string;
   /** Path to token usage log file (JSONL format, default: ~/.claude-chat/token-usage.jsonl) */
   tokenUsageLogFile: string;
-  /** Display name for account 1 */
-  account1Name: string;
-  /** CLAUDE_CONFIG_DIR path for account 1 (default: ~/.claude) */
-  account1ConfigDir: string;
-  /** Display name for account 2 */
-  account2Name: string;
-  /** CLAUDE_CONFIG_DIR path for account 2 (default: ~/.claude-account2) */
-  account2ConfigDir: string;
+  /** CLAUDE_CONFIG_DIR path (default: ~/.claude) */
+  claudeConfigDir: string;
   /** KIMI_CONFIG_DIR path (default: ~/.kimi) */
   kimiConfigDir: string;
 }
@@ -106,6 +102,11 @@ const config: Config = {
     ".claude-chat",
     "interrupted-sessions.json"
   ),
+  devControlFile: path.join(
+    process.env.HOME || process.env.USERPROFILE || "~",
+    ".claude-chat",
+    "dev-control.json"
+  ),
   hubPolling: process.env.HUB_POLLING === "true",
   hubPollIntervalMs: parseInt(process.env.HUB_POLL_INTERVAL_MS || "120000", 10),
   staleTaskThresholdMs: parseInt(process.env.STALE_TASK_THRESHOLD_MS || "600000", 10),
@@ -126,10 +127,7 @@ const config: Config = {
     ".claude-chat",
     "token-usage.jsonl"
   ),
-  account1Name: process.env.ACCOUNT_1_NAME || "Account 1",
-  account1ConfigDir: process.env.ACCOUNT_1_CONFIG_DIR || "~/.claude",
-  account2Name: process.env.ACCOUNT_2_NAME || "Account 2",
-  account2ConfigDir: process.env.ACCOUNT_2_CONFIG_DIR || "~/.claude-account2",
+  claudeConfigDir: process.env.CLAUDE_CONFIG_DIR || "~/.claude",
   kimiConfigDir: process.env.KIMI_CONFIG_DIR || "~/.kimi",
 };
 

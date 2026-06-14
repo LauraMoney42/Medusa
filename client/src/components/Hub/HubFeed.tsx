@@ -5,6 +5,7 @@ import { useFileDropStore, type FileEntry } from '../../stores/fileDropStore';
 import { useDraftStore } from '../../stores/draftStore';
 import { useInputHistoryStore } from '../../stores/inputHistoryStore';
 import { getSocket } from '../../socket';
+import { useSocket } from '../../hooks/useSocket';
 import { uploadImage, uploadFile } from '../../api';
 import HubMessage from './HubMessage';
 import AttachmentPreview from '../Input/AttachmentPreview';
@@ -39,6 +40,7 @@ function getMentionQuery(input: string, cursor: number): string | null {
 const HUB_DRAFT_KEY = 'hub'; // Special key in draftStore for Hub input persistence
 
 export default function HubFeed({ onMenuToggle }: HubFeedProps) {
+  const { connected } = useSocket();
   const messages = useHubStore((s) => s.messages);
   const markAllSeen = useHubStore((s) => s.markAllSeen);
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
@@ -147,6 +149,12 @@ export default function HubFeed({ onMenuToggle }: HubFeedProps) {
     const text = input.trim();
     if (!text && attachments.length === 0) return;
 
+    const socket = getSocket();
+    if (!socket.connected) {
+      // Queue will be flushed on reconnect, but warn the user
+      console.warn('[HubFeed] Socket disconnected — message queued for reconnect');
+    }
+
     // Upload attachments — split into images and files
     const imagePaths: string[] = [];
     const filePaths: string[] = [];
@@ -164,7 +172,6 @@ export default function HubFeed({ onMenuToggle }: HubFeedProps) {
       }
     }
 
-    const socket = getSocket();
     socket.emit('hub:post', {
       // sessionId is optional for user posts — server handles missing session gracefully
       ...(activeSessionId ? { sessionId: activeSessionId } : {}),
@@ -389,6 +396,11 @@ export default function HubFeed({ onMenuToggle }: HubFeedProps) {
             ))}
           </div>
         )}
+        {!connected && (
+          <div style={styles.offlineBanner}>
+            ⚠️ Offline — reconnecting… messages will queue and send automatically
+          </div>
+        )}
         <div style={styles.inputAreaOuter}>
           {/* @-mention autocomplete popup */}
           {/* selectedIndex + onSelectedIndexChange wire HubFeed's keyboard state
@@ -591,5 +603,14 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
     color: 'var(--text-muted)',
     padding: '8px 0',
+  },
+  offlineBanner: {
+    padding: '6px 12px',
+    fontSize: 12,
+    color: '#f5a623',
+    background: 'rgba(245, 166, 35, 0.12)',
+    borderBottom: '1px solid rgba(245, 166, 35, 0.2)',
+    textAlign: 'center',
+    flexShrink: 0,
   },
 };

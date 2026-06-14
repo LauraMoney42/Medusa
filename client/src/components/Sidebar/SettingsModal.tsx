@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import * as api from '../../api';
-import type { SettingsResponse, AccountLoginStatus, KimiLoginStatus, AccountInfo, OneNoteStatus, OneNoteDeviceCode } from '../../api';
+import type { SettingsResponse, OneNoteStatus, OneNoteDeviceCode } from '../../api';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -8,70 +8,76 @@ interface SettingsModalProps {
 
 export default function SettingsModal({ onClose }: SettingsModalProps) {
   const [settings, setSettings] = useState<SettingsResponse | null>(null);
-  const [loginStatuses, setLoginStatuses] = useState<Record<number, AccountLoginStatus | null>>({});
-  const [kimiStatus, setKimiStatus] = useState<KimiLoginStatus | null>(null);
-  const [switching, setSwitching] = useState(false);
-  const [loggingIn, setLoggingIn] = useState<number | null>(null);
-  const [loggingOut, setLoggingOut] = useState<number | null>(null);
-  const [kimiLoggingIn, setKimiLoggingIn] = useState(false);
-  const [kimiLoggingOut, setKimiLoggingOut] = useState(false);
+  const [showPicker, setShowPicker] = useState(false);
+  const [working, setWorking] = useState(false);
   const [restarting, setRestarting] = useState(false);
 
   // OneNote state
   const [oneNoteStatus, setOneNoteStatus] = useState<OneNoteStatus | null>(null);
   const [deviceCode, setDeviceCode] = useState<OneNoteDeviceCode | null>(null);
   const [authPolling, setAuthPolling] = useState(false);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const refreshStatus = () => {
-    setLoginStatuses({ 1: null, 2: null });
-    setKimiStatus(null);
-    api.fetchLoginStatus()
-      .then((resp) => {
-        setSettings(resp);
-        setLoginStatuses(resp.loginStatuses);
-        setKimiStatus(resp.kimiLoginStatus);
-      })
-      .catch(() => setLoginStatuses({}));
-  };
 
   useEffect(() => {
     api.fetchSettings().then(setSettings).catch(console.error);
-    refreshStatus();
     api.fetchOneNoteStatus().then(setOneNoteStatus).catch(console.error);
-  }, []);
 
-  // Poll OneNote auth status while device code is pending
-  useEffect(() => {
-    if (!deviceCode) { if (pollRef.current) clearInterval(pollRef.current); return; }
-    setAuthPolling(true);
-    pollRef.current = setInterval(() => {
-      api.fetchOneNoteStatus().then((s) => {
-        setOneNoteStatus(s);
-        if (s.status === 'connected') {
-          setDeviceCode(null);
-          setAuthPolling(false);
-          if (pollRef.current) clearInterval(pollRef.current);
-        }
-      }).catch(console.error);
-    }, 5000);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    if (deviceCode) {
+      setAuthPolling(true);
+      const id = setInterval(() => {
+        api.fetchOneNoteStatus().then((s) => {
+          setOneNoteStatus(s);
+          if (s.status === 'connected') {
+            setDeviceCode(null);
+            setAuthPolling(false);
+            clearInterval(id);
+          }
+        }).catch(console.error);
+      }, 5000);
+      return () => clearInterval(id);
+    }
   }, [deviceCode]);
 
-  const [oneNoteError, setOneNoteError] = useState<string | null>(null);
-  const [connecting, setConnecting] = useState(false);
+  const handleLogin = async (provider: 'claude' | 'kimi') => {
+    setWorking(true);
+    try {
+      const updated = await api.setProvider(provider);
+      setSettings(updated);
+      setShowPicker(false);
+    } catch (err) {
+      console.error('Login failed:', err);
+      alert(err instanceof Error ? err.message : 'Login failed');
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    setWorking(true);
+    try {
+      const result = await api.logoutProvider();
+      setSettings(result.settings);
+    } catch (err) {
+      console.error('Logout failed:', err);
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const handleRestart = async () => {
+    setRestarting(true);
+    try {
+      await api.restartApp();
+    } catch {
+      // Server is shutting down — connection error is expected
+    }
+  };
 
   const handleConnectOneNote = async () => {
-    setOneNoteError(null);
-    setConnecting(true);
     try {
       const dc = await api.startOneNoteAuth();
       setDeviceCode(dc);
     } catch (err) {
       console.error('[onenote] connect failed:', err);
-      setOneNoteError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setConnecting(false);
     }
   };
 
@@ -85,89 +91,6 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
     } catch (err) { console.error(err); }
   };
 
-  const handleSwitchAccount = async (target: 1 | 2) => {
-    if (!settings || switching || (target === settings.activeAccount && settings.activeProvider === 'claude')) return;
-    setSwitching(true);
-    try {
-      const updated = await api.setAccount(target);
-      setSettings(updated);
-    } catch (err) {
-      console.error('Failed to switch account:', err);
-    } finally {
-      setSwitching(false);
-    }
-  };
-
-  const handleSwitchProvider = async (provider: 'claude' | 'kimi') => {
-    if (!settings || switching || settings.activeProvider === provider) return;
-    setSwitching(true);
-    try {
-      const updated = await api.setProvider(provider);
-      setSettings(updated);
-    } catch (err) {
-      console.error('Failed to switch provider:', err);
-    } finally {
-      setSwitching(false);
-    }
-  };
-
-  const handleLogin = async (accountId: 1 | 2) => {
-    setLoggingIn(accountId);
-    try {
-      await api.loginClaudeAccount(accountId);
-      refreshStatus();
-    } catch (err) {
-      console.error(`Login for account ${accountId} failed:`, err);
-    } finally {
-      setLoggingIn(null);
-    }
-  };
-
-  const handleLogout = async (accountId: 1 | 2) => {
-    setLoggingOut(accountId);
-    try {
-      await api.logoutClaudeAccount(accountId);
-      refreshStatus();
-    } catch (err) {
-      console.error(`Logout for account ${accountId} failed:`, err);
-    } finally {
-      setLoggingOut(null);
-    }
-  };
-
-  const handleKimiLogin = async () => {
-    setKimiLoggingIn(true);
-    try {
-      await api.loginKimiAccount();
-      refreshStatus();
-    } catch (err) {
-      console.error('Kimi login failed:', err);
-    } finally {
-      setKimiLoggingIn(false);
-    }
-  };
-
-  const handleKimiLogout = async () => {
-    setKimiLoggingOut(true);
-    try {
-      await api.logoutKimiAccount();
-      refreshStatus();
-    } catch (err) {
-      console.error('Kimi logout failed:', err);
-    } finally {
-      setKimiLoggingOut(false);
-    }
-  };
-
-  const handleRestart = async () => {
-    setRestarting(true);
-    try {
-      await api.restartApp();
-    } catch {
-      // Server is shutting down — connection error is expected
-    }
-  };
-
   return (
     <>
       <div style={styles.overlay} onClick={onClose} />
@@ -177,146 +100,75 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
           <button onClick={onClose} style={styles.closeBtn} title="Close">✕</button>
         </div>
 
+        {/* Provider Login */}
         <div style={styles.section}>
-          <span style={styles.sectionLabel}>Accounts</span>
+          <span style={styles.sectionLabel}>Account</span>
 
           {settings ? (
-            <div style={styles.accountList}>
-              {/* Claude Accounts */}
-              {settings.accounts.map((account: AccountInfo) => {
-                const id = account.id as 1 | 2;
-                const status = loginStatuses[id];
-                const isActive = settings.activeProvider === 'claude' && settings.activeAccount === id;
-                const isChecking = status === null;
-                const isLoggedIn = status?.loggedIn === true;
+            <div style={styles.accountCard}>
+              <div style={styles.accountStatus}>
+                {settings.activeProvider ? (
+                  <span style={styles.statusTextOk}>
+                    Using {settings.activeProvider === 'claude' ? 'Claude' : 'Kimi'}
+                  </span>
+                ) : (
+                  <span style={styles.statusTextErr}>Not logged in</span>
+                )}
+              </div>
 
-                return (
-                  <div
-                    key={`claude-${id}`}
-                    style={{
-                      ...styles.accountCard,
-                      ...(isActive ? styles.accountCardActive : {}),
-                    }}
+              {showPicker ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
+                  <span style={{ ...styles.statusText, fontSize: 11, marginBottom: 4 }}>
+                    Choose a provider:
+                  </span>
+                  <button
+                    onClick={() => handleLogin('claude')}
+                    disabled={working}
+                    style={styles.actionBtnPrimary}
                   >
-                    <div style={styles.accountHeader}>
-                      <span style={styles.accountName}>{account.name}</span>
-                      {isActive && <span style={styles.activeBadge}>Active</span>}
-                    </div>
-
-                    <div style={styles.accountStatus}>
-                      {isChecking ? (
-                        <span style={styles.statusText}>Checking...</span>
-                      ) : isLoggedIn ? (
-                        <span style={styles.statusTextOk}>
-                          {status.email}
-                          {status.subscriptionType ? ` · ${status.subscriptionType}` : ''}
-                        </span>
-                      ) : (
-                        <span style={styles.statusTextErr}>Not logged in</span>
-                      )}
-                    </div>
-
-                    <div style={styles.accountActions}>
-                      {!isActive && (
-                        <button
-                          onClick={() => handleSwitchAccount(id)}
-                          disabled={switching}
-                          style={styles.actionBtn}
-                        >
-                          {switching ? 'Switching...' : 'Set Active'}
-                        </button>
-                      )}
-                      {isLoggedIn ? (
-                        <button
-                          onClick={() => handleLogout(id)}
-                          disabled={loggingOut === id}
-                          style={styles.actionBtnDanger}
-                        >
-                          {loggingOut === id ? 'Logging out...' : 'Logout'}
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => handleLogin(id)}
-                          disabled={loggingIn === id}
-                          style={styles.actionBtnPrimary}
-                        >
-                          {loggingIn === id ? 'Logging in...' : 'Login'}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-
-              {/* Kimi Account */}
-              {(() => {
-                const isActive = settings.activeProvider === 'kimi';
-                const isChecking = kimiStatus === null;
-                const isLoggedIn = kimiStatus?.loggedIn === true;
-
-                return (
-                  <div
-                    key="kimi"
-                    style={{
-                      ...styles.accountCard,
-                      ...(isActive ? styles.accountCardActive : {}),
-                    }}
+                    {working ? 'Opening…' : 'Claude'}
+                  </button>
+                  <button
+                    onClick={() => handleLogin('kimi')}
+                    disabled={working}
+                    style={styles.actionBtnPrimary}
                   >
-                    <div style={styles.accountHeader}>
-                      <span style={styles.accountName}>Kimi</span>
-                      {isActive && <span style={styles.activeBadge}>Active</span>}
-                    </div>
-
-                    <div style={styles.accountStatus}>
-                      {isChecking ? (
-                        <span style={styles.statusText}>Checking...</span>
-                      ) : isLoggedIn ? (
-                        <span style={styles.statusTextOk}>
-                          {kimiStatus.email || 'Logged in'}
-                        </span>
-                      ) : (
-                        <span style={styles.statusTextErr}>Not logged in</span>
-                      )}
-                    </div>
-
-                    <div style={styles.accountActions}>
-                      {!isActive && (
-                        <button
-                          onClick={() => handleSwitchProvider('kimi')}
-                          disabled={switching}
-                          style={styles.actionBtn}
-                        >
-                          {switching ? 'Switching...' : 'Set Active'}
-                        </button>
-                      )}
-                      {isLoggedIn ? (
-                        <button
-                          onClick={handleKimiLogout}
-                          disabled={kimiLoggingOut}
-                          style={styles.actionBtnDanger}
-                        >
-                          {kimiLoggingOut ? 'Logging out...' : 'Logout'}
-                        </button>
-                      ) : (
-                        <button
-                          onClick={handleKimiLogin}
-                          disabled={kimiLoggingIn}
-                          style={styles.actionBtnPrimary}
-                        >
-                          {kimiLoggingIn ? 'Logging in...' : 'Login'}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })()}
+                    {working ? 'Opening…' : 'Kimi'}
+                  </button>
+                  <button
+                    onClick={() => setShowPicker(false)}
+                    style={styles.actionBtn}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <div style={styles.accountActions}>
+                  <button
+                    onClick={() => setShowPicker(true)}
+                    disabled={working}
+                    style={styles.actionBtnPrimary}
+                  >
+                    {working ? 'Working…' : 'Login'}
+                  </button>
+                  {settings.activeProvider && (
+                    <button
+                      onClick={handleLogout}
+                      disabled={working}
+                      style={styles.actionBtnDanger}
+                    >
+                      {working ? 'Working…' : 'Logout'}
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           ) : (
-            <div style={styles.loading}>Loading...</div>
+            <div style={styles.loading}>Loading…</div>
           )}
         </div>
 
-        {/* ---- OneNote Integration ---- */}
+        {/* OneNote */}
         <div style={{ ...styles.section, marginTop: 8 }}>
           <span style={styles.sectionLabel}>OneNote Integration</span>
 
@@ -326,14 +178,13 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
               {oneNoteStatus?.status === 'connected' && (
                 <span style={styles.activeBadge}>Connected</span>
               )}
-              {(oneNoteStatus?.status === 'pending' || connecting) && (
+              {(oneNoteStatus?.status === 'pending' || authPolling) && (
                 <span style={{ ...styles.activeBadge, color: '#f0b429', background: 'rgba(240,180,41,0.15)' }}>
-                  {connecting ? 'Starting...' : 'Pending'}
+                  {authPolling ? 'Starting…' : 'Pending'}
                 </span>
               )}
             </div>
 
-            {/* Device code instructions — shown after Connect clicked */}
             {deviceCode && (
               <div style={{ margin: '8px 0', padding: '10px', background: 'rgba(74,186,106,0.08)', borderRadius: 6, border: '1px solid rgba(74,186,106,0.25)' }}>
                 <p style={{ fontSize: 11, color: 'var(--text-secondary)', margin: '0 0 6px 0' }}>
@@ -346,16 +197,7 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
                   2. Enter: {deviceCode.userCode}
                 </p>
                 <p style={{ fontSize: 10, color: 'var(--text-secondary)', margin: 0 }}>
-                  {authPolling ? '⏳ Waiting... sign in then return here' : 'Sign in with your Microsoft account'}
-                </p>
-              </div>
-            )}
-
-            {/* Inline error display — replaces silent alert() */}
-            {oneNoteError && (
-              <div style={{ margin: '6px 0', padding: '8px', background: 'rgba(239,100,97,0.1)', borderRadius: 6, border: '1px solid rgba(239,100,97,0.3)' }}>
-                <p style={{ fontSize: 10, color: '#ef6461', margin: 0, wordBreak: 'break-all' }}>
-                  ❌ {oneNoteError}
+                  {authPolling ? '⏳ Waiting… sign in then return here' : 'Sign in with your Microsoft account'}
                 </p>
               </div>
             )}
@@ -370,24 +212,16 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
                   Cancel
                 </button>
               ) : (
-                <button
-                  onClick={handleConnectOneNote}
-                  disabled={connecting}
-                  style={styles.actionBtnPrimary}
-                >
-                  {connecting ? 'Connecting...' : 'Connect'}
+                <button onClick={handleConnectOneNote} style={styles.actionBtnPrimary}>
+                  Connect
                 </button>
               )}
             </div>
           </div>
         </div>
 
-        <button
-          onClick={handleRestart}
-          disabled={restarting}
-          style={styles.restartBtn}
-        >
-          {restarting ? 'Restarting...' : 'Restart App'}
+        <button onClick={handleRestart} disabled={restarting} style={styles.restartBtn}>
+          {restarting ? 'Restarting…' : 'Restart App'}
         </button>
       </div>
     </>
@@ -448,20 +282,11 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'block',
     marginBottom: 10,
   },
-  accountList: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 10,
-  },
   accountCard: {
     background: 'rgba(255, 255, 255, 0.04)',
     border: '1px solid rgba(255, 255, 255, 0.08)',
     borderRadius: 8,
     padding: '12px',
-  },
-  accountCardActive: {
-    border: '1px solid rgba(74, 186, 106, 0.4)',
-    background: 'rgba(74, 186, 106, 0.06)',
   },
   accountHeader: {
     display: 'flex',
@@ -544,17 +369,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
     color: 'var(--text-secondary)',
     padding: '8px 0',
-  },
-  textInput: {
-    flex: 1,
-    padding: '6px 8px',
-    fontSize: 11,
-    color: 'var(--text-primary)',
-    background: 'rgba(255, 255, 255, 0.06)',
-    border: '1px solid rgba(255, 255, 255, 0.12)',
-    borderRadius: 6,
-    outline: 'none',
-    fontFamily: 'monospace',
   },
   restartBtn: {
     display: 'block',

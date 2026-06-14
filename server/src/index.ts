@@ -39,6 +39,9 @@ import { autonomousDeliver } from "./claude/autonomous-deliver.js";
 import { TokenLogger } from "./metrics/token-logger.js";
 import { createMetricsRouter } from "./routes/metrics.js";
 import { createOneNoteRouter } from "./routes/onenote.js";
+import { createDevControlRouter } from "./routes/dev-control.js";
+import { devControlStore } from "./dev-control/store.js";
+import { DevControlController } from "./dev-control/controller.js";
 import { z } from "zod";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -90,18 +93,29 @@ const io = new IOServer(server, {
   cors: {
     origin: config.allowedOrigins,
     methods: ["GET", "POST"],
+    credentials: true,
   },
   maxHttpBufferSize: 10 * 1024 * 1024, // 10 MB
-});
+  // Detect dead connections faster so stale sockets don't accumulate
+  // after laptop sleep / network drops.
+  pingInterval: 15000,
+  pingTimeout: 8000,
+} as any);
 
 // MentionRouter needs io for streaming responses to session rooms
 const mentionRouter = new MentionRouter(processManager, sessionStore, hubStore, chatStore, io, tokenLogger, quickTaskStore);
 
 setupSocketHandler(io, processManager, sessionStore, skillCatalog, chatStore, hubStore, mentionRouter, tokenLogger, quickTaskStore);
 
+// ---- Per-session dev control (pause / interrupt / status) ----
+const devControlController = new DevControlController(
+  devControlStore, processManager, sessionStore, io, chatStore, hubStore, mentionRouter, tokenLogger, quickTaskStore
+);
+
 // ---- Background hub polling + stale assignment tracking ----
 const pollScheduler = new HubPollScheduler(
-  processManager, sessionStore, hubStore, mentionRouter, io, chatStore, tokenLogger, quickTaskStore
+  processManager, sessionStore, hubStore, mentionRouter, io, chatStore, tokenLogger, quickTaskStore,
+  devControlStore, devControlController.deliverStatusRequest.bind(devControlController)
 );
 
 // ---- P2-2: HTTP rate limiting ----
@@ -148,6 +162,7 @@ app.use("/api/metrics", generalLimiter, metricsRouter);
 app.get("/api/token-usage", generalLimiter, tokenUsageHandler);
 app.use("/api/caffeine", generalLimiter, createCaffeineRouter());
 app.use("/api/settings", generalLimiter, createSettingsRouter(processManager, io));
+app.use("/api/dev-control", generalLimiter, createDevControlRouter(devControlController));
 app.use("/api/onenote", generalLimiter, createOneNoteRouter());
 // TicTalk proxy — forwards TicBuddy/TicTamer iOS app messages to Anthropic Claude API.
 // Has its own stricter rate limiter (20 req/min) since each call hits the paid API.
@@ -415,6 +430,7 @@ async function resumeInterruptedSessions(): Promise<InterruptedSession[]> {
       sessionStore,
       hubStore,
       chatStore,
+      mentionRouter,
       tokenLogger,
       quickTaskStore,
     }).catch((err) => {
