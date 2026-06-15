@@ -129,6 +129,7 @@ _Note: The Narrator iOS App Store screenshots are now captured and post-processe
 9. **@You**: Complete ASC subscription metadata for The Narrator.
 10. **@Dev4**: ~~Capture The Narrator iOS App Store screenshots now that disk space is available.~~ ✅ Done.
 10b. **@Dev4**: ✅ Package App Store visual assets (screenshots + icons + upload doc).
+10c. **@Dev4**: ✅ Draft The Narrator v1.0 release notes (`TheNarrator/docs/RELEASE_NOTES.md`).
 11. **@Dev2**: Fill any remaining ASC metadata via API where possible.
 
 ---
