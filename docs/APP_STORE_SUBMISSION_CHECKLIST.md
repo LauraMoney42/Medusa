@@ -34,7 +34,8 @@ _Note: The Narrator iOS App Store screenshots are now captured and post-processe
 ### 🔄 Needs @You action
 - [ ] **Push all local Quizzik commits via GitHub Desktop** (HTTPS auth blocks CLI pushes)
 - [ ] **Resolve ASC suffix conflict** (`(dc40e3)` duplicate suffix on app record)
-- [ ] **Upload icon + screenshots to ASC** (icon path above; iOS screenshots path above)
+- [x] **Package App Store visual assets** — `Medusa/assets/app-store-visual-assets.zip` + `Medusa/docs/APP_STORE_VISUAL_ASSETS.md` (icons + iOS/Android screenshots + upload instructions)
+- [ ] **Upload icon + screenshots to ASC** (package paths above)
 - [ ] **Review/approve accessibility fixes** in `Quizzik/ACCESSIBILITY_AUDIT_MVP2.md`
 - [ ] **Create Quizzik support URL** `https://kindcode.us/quizzik/support` (optional marketing page also helpful)
 - [ ] **Verify subscription/IAP config** if Quizzik has in-app purchases
@@ -127,6 +128,7 @@ _Note: The Narrator iOS App Store screenshots are now captured and post-processe
 8. **@You**: Upload Quizzik icon + screenshots to ASC and resolve suffix conflict.
 9. **@You**: Complete ASC subscription metadata for The Narrator.
 10. **@Dev4**: ~~Capture The Narrator iOS App Store screenshots now that disk space is available.~~ ✅ Done.
+10b. **@Dev4**: ✅ Package App Store visual assets (screenshots + icons + upload doc).
 11. **@Dev2**: Fill any remaining ASC metadata via API where possible.
 
 ---
