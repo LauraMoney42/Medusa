@@ -3,6 +3,7 @@ import { execSync } from "child_process";
 import fs from "fs";
 import type { TokenLogger } from "../metrics/token-logger.js";
 import { getActiveProvider } from "../settings/store.js";
+import { getHeadroomEnv } from "../headroom/proxy-manager.js";
 
 /**
  * Find the Claude CLI binary.
@@ -236,7 +237,8 @@ Provide a concise summary (under 200 words):`;
 
     const child = spawn(CLAUDE_BIN, args, {
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, CLAUDECODE: undefined },
+      // Route summarizer traffic through Headroom too (no-op when the proxy is down).
+      env: { ...process.env, CLAUDECODE: undefined, ...getHeadroomEnv() },
     });
 
     let stdout = "";

@@ -41,6 +41,11 @@ class ServerManager {
 
     private var process: Process?
     private var stderrPipe: Pipe?
+    // Server stdout+stderr are written here (~/Library/Logs/Medusa/server.log) so
+    // they're viewable via `tail -f`. stderrTail keeps a rolling buffer of recent
+    // stderr for the crash dialog.
+    private var logHandle: FileHandle?
+    private var stderrTail = Data()
     private(set) var port: Int = 3456
     private(set) var host: String = "0.0.0.0"
     private(set) var authToken: String = ""
@@ -365,6 +370,25 @@ class ServerManager {
 
     // MARK: - Spawn Server
 
+    /// Opens ~/Library/Logs/Medusa/server.log for appending. Returns nil on failure.
+    /// View live with: tail -f ~/Library/Logs/Medusa/server.log
+    private func openLogFile() -> FileHandle? {
+        let fm = FileManager.default
+        guard let logsDir = fm.urls(for: .libraryDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("Logs/Medusa", isDirectory: true) else { return nil }
+        try? fm.createDirectory(at: logsDir, withIntermediateDirectories: true)
+        let logURL = logsDir.appendingPathComponent("server.log")
+        if !fm.fileExists(atPath: logURL.path) {
+            fm.createFile(atPath: logURL.path, contents: nil)
+        }
+        guard let handle = try? FileHandle(forWritingTo: logURL) else { return nil }
+        handle.seekToEndOfFile()
+        if let banner = "\n===== Medusa server started \(Date()) =====\n".data(using: .utf8) {
+            handle.write(banner)
+        }
+        return handle
+    }
+
     private func spawnServer(nodePath: String, completion: @escaping (Result<Int, Error>) -> Void) {
         let entryPoint = (serverDir as NSString).appendingPathComponent("dist/index.js")
 
@@ -382,11 +406,28 @@ class ServerManager {
         }
         proc.environment = procEnv
 
-        // Capture stderr for error reporting
+        // Log server stdout + stderr to ~/Library/Logs/Medusa/server.log so they're
+        // viewable (`tail -f`). stderr is teed to a rolling buffer for crash reporting.
+        let logHandle = openLogFile()
+        self.logHandle = logHandle
+        self.stderrTail = Data()
+
+        proc.standardOutput = logHandle ?? FileHandle.nullDevice
+
         let errPipe = Pipe()
         proc.standardError = errPipe
-        proc.standardOutput = FileHandle.nullDevice
         self.stderrPipe = errPipe
+        errPipe.fileHandleForReading.readabilityHandler = { [weak self] fh in
+            let data = fh.availableData
+            guard !data.isEmpty else { return }
+            logHandle?.write(data)
+            guard let self = self else { return }
+            self.stderrTail.append(data)
+            // Keep only the last ~8KB for the crash dialog
+            if self.stderrTail.count > 8192 {
+                self.stderrTail.removeSubrange(0..<(self.stderrTail.count - 8192))
+            }
+        }
 
         // Track if completion was already called
         var completed = false
@@ -398,6 +439,11 @@ class ServerManager {
 
         proc.terminationHandler = { [weak self] p in
             guard let self = self, self.process != nil else { return }
+
+            // Stop teeing stderr and close the log handle (a restart reopens a fresh one)
+            errPipe.fileHandleForReading.readabilityHandler = nil
+            try? self.logHandle?.close()
+            self.logHandle = nil
 
             // Exit code 75 = restart requested (from /api/health/restart)
             if p.terminationStatus == 75 {
@@ -416,10 +462,10 @@ class ServerManager {
                 return
             }
 
-            let data = errPipe.fileHandleForReading.availableData
-            let msg = String(data: data, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "exit code \(p.terminationStatus)"
-            completionOnce(.failure(ServerError.serverCrashed(msg)))
+            let msg = String(data: self.stderrTail, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let crashMsg = (msg?.isEmpty == false) ? msg! : "exit code \(p.terminationStatus)"
+            completionOnce(.failure(ServerError.serverCrashed(crashMsg)))
         }
 
         do {

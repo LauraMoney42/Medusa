@@ -3,6 +3,7 @@ import { spawn, ChildProcess, execSync } from "child_process";
 import type { ParsedEvent } from "./types.js";
 import { StreamParser } from "./stream-parser.js";
 import { getActiveConfigDir, getActiveProvider } from "../settings/store.js";
+import { getHeadroomEnv } from "../headroom/proxy-manager.js";
 
 interface SessionEntry {
   process: ChildProcess | null;
@@ -251,7 +252,9 @@ export class ProcessManager {
     const child = spawn(CLAUDE_BIN, args, {
       cwd: entry.workingDir,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, CLAUDECODE: undefined, ...(getActiveConfigDir() ? { CLAUDE_CONFIG_DIR: getActiveConfigDir() } : {}) },
+      // ...getHeadroomEnv() routes this bot's traffic through the Headroom
+      // compression proxy when it's up (returns {} otherwise → direct Anthropic).
+      env: { ...process.env, CLAUDECODE: undefined, ...(getActiveConfigDir() ? { CLAUDE_CONFIG_DIR: getActiveConfigDir() } : {}), ...getHeadroomEnv() },
     });
 
     entry.process = child;

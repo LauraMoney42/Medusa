@@ -1,3 +1,32 @@
+## 2026-07-03 15:52
+- Feature: macOS app now writes server logs to a file (previously stdout → /dev/null, unviewable)
+- Server stdout + stderr → ~/Library/Logs/Medusa/server.log (view live: `tail -f ~/Library/Logs/Medusa/server.log`)
+- stderr still teed to a rolling 8KB buffer for the crash dialog; log handle reopened on each (re)start
+- Requires an app rebuild (app/build-app.sh — done) + relaunch
+- Files affected: app/Sources/ServerManager.swift
+
+## 2026-07-03 15:34
+- Feature: Live Headroom compression panel in the Settings modal
+- Shows Active/Starting/Off status badge + a 2×2 stat grid (avg compression %, tokens saved, est. $ saved, requests compressed), polled every 5s while the modal is open
+- New endpoint GET /api/headroom/stats → { enabled, ready, port, stats }; server fetches the proxy's /stats and normalizes it (getHeadroomStats in proxy-manager)
+- Files affected: server/src/headroom/proxy-manager.ts, server/src/routes/headroom.ts (new), server/src/index.ts, client/src/api.ts, client/src/components/Sidebar/SettingsModal.tsx
+
+## 2026-07-03 15:10
+- Feature: Headroom context-compression proxy integrated for token savings across all bots
+- Works with Max-plan subscription auth (NO API key): the local Headroom proxy forwards Claude Code's own OAuth bearer token to Anthropic. Verified with `claude -p` through the proxy returning correctly.
+- New supervised side-process: server spawns `headroom proxy --port 8787` on startup, health-checks /livez, auto-restarts on crash (max 5), reuses an existing proxy if one is already running, and kills it on graceful shutdown.
+- Bot `claude` spawns (and the summarizer) get ANTHROPIC_BASE_URL + ENABLE_TOOL_SEARCH injected only when the proxy is ready AND provider is Claude (not Kimi) — otherwise {} → direct Anthropic. Fails safe; bots never break if Headroom is absent/down.
+- Config: HEADROOM_ENABLED (default true), HEADROOM_PORT (default 8787).
+- Prereqs installed on this machine: Homebrew python@3.13 + pipx; `pipx install "headroom-ai[all]"` (v0.29.0) at ~/.local/bin/headroom.
+- Files affected: server/src/headroom/proxy-manager.ts (new), server/src/config.ts, server/src/claude/process-manager.ts, server/src/chat/conversation-summarizer.ts, server/src/index.ts
+
+## 2026-07-03 12:43
+- Feature: Per-bot model selector in the "Edit Bot" modal
+- Model dropdown (Auto / Haiku / Sonnet / Opus / Fable) persists via existing PATCH /api/sessions/:id (model field)
+- On save, if the model changed, a confirm popup ("Must restart server to implement the model change. Restart now?") offers a server restart (exit 75 → macOS app auto-relaunch)
+- Removed the bottom "⚠️ Offline — reconnecting…" banner from both the Medusa chat and Hub feed input areas (was displaying incorrectly); dropped now-unused `connected` destructure + `offlineBanner` styles
+- Files affected: client/src/types/session.ts, client/src/api.ts, client/src/stores/sessionStore.ts, client/src/components/Sidebar/SessionEditor.tsx, client/src/components/Hub/MedusaChat.tsx, client/src/components/Hub/HubFeed.tsx
+
 ## 2026-04-05
 - Feature: Microsoft OneNote integration for Medusa Mac desktop app (mu-onenote-001)
 - OAuth 2.0 device code flow — no redirect URI needed, works in desktop context

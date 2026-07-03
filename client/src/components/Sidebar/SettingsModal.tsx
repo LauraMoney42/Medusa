@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import * as api from '../../api';
-import type { SettingsResponse, OneNoteStatus, OneNoteDeviceCode } from '../../api';
+import type { SettingsResponse, OneNoteStatus, OneNoteDeviceCode, HeadroomStatus } from '../../api';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -16,6 +16,20 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
   const [oneNoteStatus, setOneNoteStatus] = useState<OneNoteStatus | null>(null);
   const [deviceCode, setDeviceCode] = useState<OneNoteDeviceCode | null>(null);
   const [authPolling, setAuthPolling] = useState(false);
+
+  // Headroom compression status — polled live while the modal is open.
+  const [headroom, setHeadroom] = useState<HeadroomStatus | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const poll = () =>
+      api.fetchHeadroomStatus()
+        .then((s) => { if (!cancelled) setHeadroom(s); })
+        .catch(() => { if (!cancelled) setHeadroom(null); });
+    poll();
+    const id = setInterval(poll, 5000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
 
   useEffect(() => {
     api.fetchSettings().then(setSettings).catch(console.error);
@@ -220,6 +234,57 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
           </div>
         </div>
 
+        {/* Headroom compression */}
+        <div style={{ ...styles.section, marginTop: 8 }}>
+          <span style={styles.sectionLabel}>Token Compression</span>
+
+          <div style={styles.accountCard}>
+            <div style={styles.accountHeader}>
+              <span style={styles.accountName}>Headroom Proxy</span>
+              {headroom?.ready ? (
+                <span style={styles.activeBadge}>Active</span>
+              ) : headroom?.enabled ? (
+                <span style={{ ...styles.activeBadge, color: '#f0b429', background: 'rgba(240,180,41,0.15)' }}>
+                  Starting…
+                </span>
+              ) : (
+                <span style={{ ...styles.activeBadge, color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.08)' }}>
+                  Off
+                </span>
+              )}
+            </div>
+
+            {headroom?.ready && headroom.stats ? (
+              <div style={styles.statGrid}>
+                <div style={styles.statItem}>
+                  <span style={styles.statValue}>{Math.round(headroom.stats.avgCompressionPct)}%</span>
+                  <span style={styles.statLabel}>avg compression</span>
+                </div>
+                <div style={styles.statItem}>
+                  <span style={styles.statValue}>{headroom.stats.totalTokensSaved.toLocaleString()}</span>
+                  <span style={styles.statLabel}>tokens saved</span>
+                </div>
+                <div style={styles.statItem}>
+                  <span style={styles.statValue}>${headroom.stats.savedUsd.toFixed(2)}</span>
+                  <span style={styles.statLabel}>est. saved</span>
+                </div>
+                <div style={styles.statItem}>
+                  <span style={styles.statValue}>{headroom.stats.requestsCompressed}</span>
+                  <span style={styles.statLabel}>reqs compressed</span>
+                </div>
+              </div>
+            ) : (
+              <p style={styles.headroomHint}>
+                {headroom?.ready
+                  ? 'Waiting for traffic — savings appear as bots handle large outputs.'
+                  : headroom?.enabled
+                    ? 'Proxy starting… routes bot traffic through Headroom to cut tokens.'
+                    : 'Disabled. Set HEADROOM_ENABLED=true and restart to enable.'}
+              </p>
+            )}
+          </div>
+        </div>
+
         <button onClick={handleRestart} disabled={restarting} style={styles.restartBtn}>
           {restarting ? 'Restarting…' : 'Restart App'}
         </button>
@@ -369,6 +434,39 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
     color: 'var(--text-secondary)',
     padding: '8px 0',
+  },
+  statGrid: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: 8,
+    marginTop: 4,
+  },
+  statItem: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 2,
+    padding: '8px 10px',
+    background: 'rgba(74, 186, 106, 0.08)',
+    border: '1px solid rgba(74, 186, 106, 0.18)',
+    borderRadius: 6,
+  },
+  statValue: {
+    fontSize: 16,
+    fontWeight: 700,
+    color: '#4aba6a',
+    lineHeight: 1.1,
+  },
+  statLabel: {
+    fontSize: 10,
+    color: 'var(--text-secondary)',
+    textTransform: 'uppercase',
+    letterSpacing: '0.04em',
+  },
+  headroomHint: {
+    fontSize: 11,
+    color: 'var(--text-secondary)',
+    margin: '2px 0 0 0',
+    lineHeight: 1.4,
   },
   restartBtn: {
     display: 'block',

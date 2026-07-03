@@ -62,6 +62,10 @@ export interface Config {
   claudeConfigDir: string;
   /** KIMI_CONFIG_DIR path (default: ~/.kimi) */
   kimiConfigDir: string;
+  /** Route bot `claude` traffic through the Headroom compression proxy (default: true) */
+  headroomEnabled: boolean;
+  /** Local port for the Headroom proxy (default: 8787) */
+  headroomPort: number;
 }
 
 const config: Config = {
@@ -129,6 +133,8 @@ const config: Config = {
   ),
   claudeConfigDir: process.env.CLAUDE_CONFIG_DIR || "~/.claude",
   kimiConfigDir: process.env.KIMI_CONFIG_DIR || "~/.kimi",
+  headroomEnabled: process.env.HEADROOM_ENABLED !== "false",
+  headroomPort: parseInt(process.env.HEADROOM_PORT || "8787", 10),
 };
 
 export default config;

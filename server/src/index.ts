@@ -42,6 +42,8 @@ import { createOneNoteRouter } from "./routes/onenote.js";
 import { createDevControlRouter } from "./routes/dev-control.js";
 import { devControlStore } from "./dev-control/store.js";
 import { DevControlController } from "./dev-control/controller.js";
+import { startHeadroomProxy, stopHeadroomProxy } from "./headroom/proxy-manager.js";
+import { createHeadroomRouter } from "./routes/headroom.js";
 import { z } from "zod";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -162,6 +164,7 @@ app.use("/api/metrics", generalLimiter, metricsRouter);
 app.get("/api/token-usage", generalLimiter, tokenUsageHandler);
 app.use("/api/caffeine", generalLimiter, createCaffeineRouter());
 app.use("/api/settings", generalLimiter, createSettingsRouter(processManager, io));
+app.use("/api/headroom", generalLimiter, createHeadroomRouter());
 app.use("/api/dev-control", generalLimiter, createDevControlRouter(devControlController));
 app.use("/api/onenote", generalLimiter, createOneNoteRouter());
 // TicTalk proxy — forwards TicBuddy/TicTamer iOS app messages to Anthropic Claude API.
@@ -176,6 +179,9 @@ async function gracefulShutdown(signal: string) {
   isShuttingDown = true;
 
   console.log(`[medusa] ${signal} received — starting graceful shutdown`);
+
+  // 0. Stop the Headroom proxy if we own it (safe no-op if reused/never started)
+  stopHeadroomProxy();
 
   // 1. Stop accepting new connections
   server.close();
@@ -453,6 +459,10 @@ server.listen(config.port, config.host, () => {
     console.log(`  Token:   ${config.authToken.slice(0, 8)}...${config.authToken.slice(-4)}`);
   }
   console.log("");
+
+  // Start the Headroom compression proxy (fire-and-forget). Bots pick it up on
+  // their next spawn once it's ready; if it never comes up they run direct.
+  void startHeadroomProxy();
 
   // Hot-reload projects.json when it changes on disk (e.g., a bot edits it directly).
   // Broadcasts projects:updated to all clients so the Projects Pane refreshes without restart.

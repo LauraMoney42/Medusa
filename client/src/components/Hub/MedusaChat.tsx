@@ -11,7 +11,8 @@ interface MedusaChatProps {
 }
 
 export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
-  const { connected } = useSocket();
+  // useSocket sets up the shared socket connection + listeners (side effect).
+  useSocket();
   const sessions = useSessionStore((s) => s.sessions);
   const setActiveSession = useSessionStore((s) => s.setActiveSession);
   const messages = useChatStore((s) => s.messages);
@@ -149,11 +150,6 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
 
       {/* Input area */}
       <div style={styles.inputContainer}>
-        {!connected && (
-          <div style={styles.offlineBanner}>
-            ⚠️ Offline — reconnecting… messages will queue and send automatically
-          </div>
-        )}
         {/* Image previews */}
         {images && images.length > 0 && (
           <div style={styles.imageRow}>
@@ -429,13 +425,4 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     transition: 'all 0.15s',
   } as React.CSSProperties,
-  offlineBanner: {
-    padding: '6px 12px',
-    fontSize: 12,
-    color: '#f5a623',
-    background: 'rgba(245, 166, 35, 0.12)',
-    borderBottom: '1px solid rgba(245, 166, 35, 0.2)',
-    textAlign: 'center',
-    flexShrink: 0,
-  },
 };

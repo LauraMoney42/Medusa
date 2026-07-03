@@ -6,7 +6,7 @@ import { useDraftStore } from '../../stores/draftStore';
 import { useInputHistoryStore } from '../../stores/inputHistoryStore';
 import { getSocket } from '../../socket';
 import { useSocket } from '../../hooks/useSocket';
-import { uploadImage, uploadFile } from '../../api';
+import { uploadImage, uploadFile, pauseSession, resumeSession, requestSessionStatus } from '../../api';
 import HubMessage from './HubMessage';
 import AttachmentPreview from '../Input/AttachmentPreview';
 import ScreenshotButton from '../Input/ScreenshotButton';
@@ -39,8 +39,23 @@ function getMentionQuery(input: string, cursor: number): string | null {
 
 const HUB_DRAFT_KEY = 'hub'; // Special key in draftStore for Hub input persistence
 
+interface SlashCommand {
+  command: 'pause' | 'resume' | 'status';
+  target: string;
+}
+
+function parseSlashCommand(text: string): SlashCommand | null {
+  const trimmed = text.trim();
+  const match = trimmed.match(/^\/(pause|resume|status)\s+@?(\S+)$/i);
+  if (!match) return null;
+  const command = match[1].toLowerCase() as SlashCommand['command'];
+  const target = match[2];
+  return { command, target };
+}
+
 export default function HubFeed({ onMenuToggle }: HubFeedProps) {
-  const { connected } = useSocket();
+  // useSocket sets up the shared socket connection + listeners (side effect).
+  useSocket();
   const messages = useHubStore((s) => s.messages);
   const markAllSeen = useHubStore((s) => s.markAllSeen);
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
@@ -148,6 +163,28 @@ export default function HubFeed({ onMenuToggle }: HubFeedProps) {
   const handleSend = useCallback(async () => {
     const text = input.trim();
     if (!text && attachments.length === 0) return;
+
+    // Slash commands for per-dev controls
+    const slash = parseSlashCommand(text);
+    if (slash) {
+      const session = sessions.find(
+        (s) => s.name.toLowerCase() === slash.target.toLowerCase()
+      );
+      if (!session) {
+        setInput('');
+        return;
+      }
+      try {
+        if (slash.command === 'pause') await pauseSession(session.id);
+        else if (slash.command === 'resume') await resumeSession(session.id);
+        else if (slash.command === 'status') await requestSessionStatus(session.id);
+      } catch (err) {
+        console.error('[HubFeed] dev-control slash command failed:', err);
+      }
+      setInput('');
+      clearDraft(HUB_DRAFT_KEY);
+      return;
+    }
 
     const socket = getSocket();
     if (!socket.connected) {
@@ -396,11 +433,6 @@ export default function HubFeed({ onMenuToggle }: HubFeedProps) {
             ))}
           </div>
         )}
-        {!connected && (
-          <div style={styles.offlineBanner}>
-            ⚠️ Offline — reconnecting… messages will queue and send automatically
-          </div>
-        )}
         <div style={styles.inputAreaOuter}>
           {/* @-mention autocomplete popup */}
           {/* selectedIndex + onSelectedIndexChange wire HubFeed's keyboard state
@@ -603,14 +635,5 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
     color: 'var(--text-muted)',
     padding: '8px 0',
-  },
-  offlineBanner: {
-    padding: '6px 12px',
-    fontSize: 12,
-    color: '#f5a623',
-    background: 'rgba(245, 166, 35, 0.12)',
-    borderBottom: '1px solid rgba(245, 166, 35, 0.2)',
-    textAlign: 'center',
-    flexShrink: 0,
   },
 };
