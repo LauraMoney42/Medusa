@@ -6,13 +6,14 @@
  * - opus: Architecture decisions, complex reviews, multi-step planning
  */
 
-export type ModelTier = "haiku" | "sonnet" | "opus";
+export type ModelTier = "haiku" | "sonnet" | "opus" | "fable";
 
 /** Map tier to next tier up on escalation (for retry on failure) */
 export const NEXT_TIER: Record<ModelTier, ModelTier | null> = {
   haiku: "sonnet",
   sonnet: "opus",
   opus: null, // Already at max tier
+  fable: "sonnet", // Fable fallback to sonnet if unavailable
 };
 
 /** Interaction context used to classify the appropriate model tier. */
@@ -58,8 +59,8 @@ export function selectModel(ctx: RoutingContext): ModelTier {
   // Explicit override always wins
   if (ctx.modelOverride) {
     const lower = ctx.modelOverride.toLowerCase();
-    if (lower === "haiku" || lower === "sonnet" || lower === "opus") {
-      return lower;
+    if (lower === "haiku" || lower === "sonnet" || lower === "opus" || lower === "fable") {
+      return lower as ModelTier;
     }
     // If it's a full model name, pass it through (handled by caller)
     return "sonnet";

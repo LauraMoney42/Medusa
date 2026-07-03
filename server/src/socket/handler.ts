@@ -737,11 +737,11 @@ export function setupSocketHandler(
     finalSystemPrompt = compress(finalSystemPrompt, "moderate").compressed;
 
     try {
-      // Select model based on routing config
+      // Select model based on routing config (per-session model override takes priority)
       const routingEnabled = config.modelRoutingEnabled !== false;
       let selectedModel: ModelTier = routingEnabled
-        ? selectModel({ prompt: text, source: "user" })
-        : "sonnet";
+        ? selectModel({ prompt: text, source: "user", modelOverride: meta?.model })
+        : (meta?.model as ModelTier | undefined) ?? "sonnet";
 
       // Send message with tier escalation on failure
       let exitCode: number | null = await processManager.sendMessage(

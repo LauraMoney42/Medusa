@@ -129,6 +129,21 @@ export function deleteSession(id: string): Promise<void> {
   return request<void>(`/api/sessions/${id}`, { method: 'DELETE' });
 }
 
+/**
+ * Sets (or clears) the per-bot model override.
+ * Pass a tier string ("haiku" | "sonnet" | "opus" | "fable"), or null to clear
+ * the override and fall back to automatic model routing.
+ */
+export function setSessionModel(
+  id: string,
+  model: string | null,
+): Promise<SessionMeta> {
+  return request<SessionMeta>(`/api/sessions/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ model }),
+  });
+}
+
 export function reorderSessions(order: string[]): Promise<void> {
   return request<void>('/api/sessions/reorder', {
     method: 'PUT',
@@ -276,6 +291,29 @@ export function shutdown(): Promise<void> {
 /** Triggers a server restart (exits with code 75 so the macOS app auto-relaunches). */
 export function restartApp(): Promise<void> {
   return request<void>('/api/health/restart', { method: 'POST' });
+}
+
+// ---- Headroom compression proxy ----
+
+export interface HeadroomStats {
+  apiRequests: number;
+  primaryModel: string;
+  requestsCompressed: number;
+  avgCompressionPct: number;
+  totalTokensSaved: number;
+  savedUsd: number;
+  savingsPct: number;
+}
+
+export interface HeadroomStatus {
+  enabled: boolean;
+  ready: boolean;
+  port: number;
+  stats: HeadroomStats | null;
+}
+
+export function fetchHeadroomStatus(): Promise<HeadroomStatus> {
+  return request<HeadroomStatus>('/api/headroom/stats');
 }
 
 export interface SettingsResponse {

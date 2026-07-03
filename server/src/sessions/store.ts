@@ -21,6 +21,8 @@ const SessionMetaSchema = z.object({
    *  ~50% shorter than full systemPrompt. Auto-generated from role if not set. */
   compactSystemPrompt: z.string().optional(),
   skills: z.array(z.string()).optional(),
+  /** Per-session model override — bypasses routing if set (e.g. "fable", "haiku", "opus") */
+  model: z.string().optional(),
 });
 
 const SessionsFileSchema = z.array(SessionMetaSchema);
@@ -190,6 +192,15 @@ export class SessionStore {
     const session = this.sessions.find((s) => s.id === id);
     if (!session) return undefined;
     session.compactSystemPrompt = compactSystemPrompt || undefined;
+    this.persist();
+    return session;
+  }
+
+  /** Set per-session model override (e.g. "fable", "haiku", "opus"). Pass null to clear. */
+  setModel(id: string, model: string | null): SessionMeta | undefined {
+    const session = this.sessions.find((s) => s.id === id);
+    if (!session) return undefined;
+    session.model = model ?? undefined;
     this.persist();
     return session;
   }

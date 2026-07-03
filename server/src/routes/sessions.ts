@@ -124,16 +124,17 @@ export function createSessionsRouter(
     res.json({ updated, skipped, sessions: results });
   });
 
-  // PATCH /:id -- update a session (name, systemPrompt, and/or compactSystemPrompt)
+  // PATCH /:id -- update a session (name, systemPrompt, compactSystemPrompt, and/or model)
   router.patch("/:id", (req: Request, res: Response) => {
-    const { name, systemPrompt, compactSystemPrompt } = req.body as {
+    const { name, systemPrompt, compactSystemPrompt, model } = req.body as {
       name?: string;
       systemPrompt?: string;
       compactSystemPrompt?: string;
+      model?: string | null;
     };
 
-    if (!name && systemPrompt === undefined && compactSystemPrompt === undefined) {
-      res.status(400).json({ error: "At least one of name, systemPrompt, or compactSystemPrompt is required" });
+    if (!name && systemPrompt === undefined && compactSystemPrompt === undefined && model === undefined) {
+      res.status(400).json({ error: "At least one of name, systemPrompt, compactSystemPrompt, or model is required" });
       return;
     }
 
@@ -153,6 +154,10 @@ export function createSessionsRouter(
     // TC-4B: Allow setting compact system prompt per session
     if (compactSystemPrompt !== undefined) {
       session = store.updateCompactSystemPrompt(id, compactSystemPrompt) ?? session;
+    }
+    // Allow setting per-session model override (e.g. "fable", "haiku", "opus"; null to clear)
+    if (model !== undefined) {
+      session = store.setModel(id, model) ?? session;
     }
 
     res.json(session);

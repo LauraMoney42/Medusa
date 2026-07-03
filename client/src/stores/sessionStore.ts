@@ -17,6 +17,7 @@ interface SessionActions {
   fetchSessions: () => Promise<void>;
   createSession: (name: string, workingDir?: string, systemPrompt?: string) => Promise<SessionMeta>;
   renameSession: (id: string, name: string) => Promise<void>;
+  setSessionModel: (id: string, model: string | null) => Promise<void>;
   deleteSession: (id: string) => Promise<void>;
   reorderSessions: (order: string[]) => void;
   setActiveSession: (id: string | null) => void;
@@ -75,6 +76,15 @@ export const useSessionStore = create<SessionState & SessionActions>(
 
     renameSession: async (id, name) => {
       const updated = await api.renameSession(id, name);
+      set((s) => ({
+        sessions: s.sessions.map((sess) =>
+          sess.id === id ? updated : sess,
+        ),
+      }));
+    },
+
+    setSessionModel: async (id, model) => {
+      const updated = await api.setSessionModel(id, model);
       set((s) => ({
         sessions: s.sessions.map((sess) =>
           sess.id === id ? updated : sess,

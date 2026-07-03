@@ -7,4 +7,6 @@ export interface SessionMeta {
   yoloMode?: boolean;
   systemPrompt?: string;
   skills?: string[];
+  /** Per-bot model override tier: "haiku" | "sonnet" | "opus" | "fable". Undefined = auto-routing. */
+  model?: string;
 }

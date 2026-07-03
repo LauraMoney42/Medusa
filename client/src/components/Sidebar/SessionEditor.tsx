@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSessionStore } from '../../stores/sessionStore';
 import { getSocket } from '../../socket';
+import { restartApp } from '../../api';
 import SkillPicker from '../Chat/SkillPicker';
 import type { SessionMeta } from '../../types/session';
 
@@ -9,15 +10,28 @@ interface SessionEditorProps {
   onClose: () => void;
 }
 
+// Model options shown in the per-bot model selector. Empty value = automatic
+// tier routing (server decides per interaction). The tier strings are passed
+// straight to the `claude` CLI as `--model` aliases.
+const MODEL_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: '', label: 'Auto (smart routing)' },
+  { value: 'haiku', label: 'Haiku — fastest, cheapest' },
+  { value: 'sonnet', label: 'Sonnet — balanced (default)' },
+  { value: 'opus', label: 'Opus — most capable' },
+  { value: 'fable', label: 'Fable' },
+];
+
 export default function SessionEditor({ session, onClose }: SessionEditorProps) {
   const deleteSession = useSessionStore((s) => s.deleteSession);
   const renameSession = useSessionStore((s) => s.renameSession);
+  const setSessionModel = useSessionStore((s) => s.setSessionModel);
 
   const [name, setName] = useState(session.name);
   const [instructions, setInstructions] = useState(session.systemPrompt ?? '');
   const [workingDir, setWorkingDir] = useState(session.workingDir);
   const [yolo, setYolo] = useState(session.yoloMode ?? false);
   const [skills, setSkills] = useState(session.skills ?? []);
+  const [model, setModel] = useState(session.model ?? '');
   const [showSkillPicker, setShowSkillPicker] = useState(false);
   // isSaving: true while ACKs from server are pending — blocks accidental close mid-save.
   const [isSaving, setIsSaving] = useState(false);
@@ -30,8 +44,9 @@ export default function SessionEditor({ session, onClose }: SessionEditorProps) 
     instructions.trim() !== (session.systemPrompt ?? '') ||
     workingDir.trim() !== session.workingDir.trim() ||
     yolo !== (session.yoloMode ?? false) ||
+    model !== (session.model ?? '') ||
     JSON.stringify(skills) !== JSON.stringify(session.skills ?? [])
-  ), [name, instructions, workingDir, yolo, skills, session]);
+  ), [name, instructions, workingDir, yolo, model, skills, session]);
 
   // Only reset form when opening a DIFFERENT session — never on socket-driven prop updates.
   // If we depended on session.name/systemPrompt etc., any socket event updating the session
@@ -43,6 +58,7 @@ export default function SessionEditor({ session, onClose }: SessionEditorProps) 
     setWorkingDir(session.workingDir);
     setYolo(session.yoloMode ?? false);
     setSkills(session.skills ?? []);
+    setModel(session.model ?? '');
   }, [session.id]);
 
   const handleSave = useCallback(() => {
@@ -109,21 +125,49 @@ export default function SessionEditor({ session, onClose }: SessionEditorProps) 
       );
     }
 
+    // Model change persists via REST PATCH (not a socket event) and requires a
+    // server restart to take effect on the bot's next spawn.
+    const modelChanged = model !== (session.model ?? '');
+    if (modelChanged) {
+      emits.push(() => setSessionModel(session.id, model || null));
+    }
+
     if (emits.length === 0) {
       // Nothing changed — close immediately
       onClose();
       return;
     }
 
+    // After all saves land: if the model changed, offer to restart the server
+    // (the new model only applies to freshly spawned bot processes).
+    // Guard against double-firing — both the ACK resolution and the timeout
+    // fallback can call finish(); only the first should run.
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      if (modelChanged) {
+        const restartNow = window.confirm(
+          'Must restart server to implement the model change.\n\nRestart now?'
+        );
+        if (restartNow) {
+          // Fire-and-forget: the server exits with code 75 and the macOS app
+          // auto-relaunches + reloads the WebView.
+          restartApp().catch(() => { /* server is already going down */ });
+        }
+      }
+      onClose();
+    };
+
     // Wait for all server ACKs before closing.
     // 3-second timeout fallback in case a socket ACK is never received.
     setIsSaving(true);
-    const timeout = setTimeout(onClose, 3000);
+    const timeout = setTimeout(finish, 3000);
     Promise.all(emits.map((fn) => fn())).then(() => {
       clearTimeout(timeout);
-      onClose();
+      finish();
     });
-  }, [session, name, instructions, workingDir, yolo, skills, renameSession, onClose]);
+  }, [session, name, instructions, workingDir, yolo, model, skills, renameSession, setSessionModel, onClose]);
 
   const handleToggleSkill = useCallback(
     (slug: string) => {
@@ -190,6 +234,23 @@ export default function SessionEditor({ session, onClose }: SessionEditorProps) 
             style={styles.textarea}
             rows={5}
           />
+
+          {/* Model */}
+          <label style={styles.label}>Model</label>
+          <select
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            style={styles.select}
+          >
+            {MODEL_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+          <span style={styles.fieldHint}>
+            Changing the model requires a server restart to take effect.
+          </span>
 
           {/* Working Directory */}
           <label style={styles.label}>Working Directory</label>
@@ -393,6 +454,23 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
     fontFamily: 'var(--font-mono)',
     boxSizing: 'border-box' as const,
+  },
+  select: {
+    width: '100%',
+    padding: '8px 10px',
+    background: 'rgba(0, 0, 0, 0.2)',
+    border: '1px solid var(--border)',
+    borderRadius: 'var(--radius-sm)',
+    color: 'var(--text-primary)',
+    fontSize: 13,
+    fontFamily: 'inherit',
+    boxSizing: 'border-box' as const,
+    cursor: 'pointer',
+  },
+  fieldHint: {
+    fontSize: 11,
+    color: 'var(--text-muted)',
+    marginTop: -6,
   },
   toggleRow: {
     display: 'flex',

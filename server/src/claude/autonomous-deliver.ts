@@ -357,11 +357,11 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
     // "resume" and "bot-to-bot" use "mention" tier — re-triggered or internal tasks
     const modelSource = source === "resume" || source === "bot-to-bot" || source === "status-check" || source === "status-request" ? "mention" : source;
 
-    // Select model based on routing config
+    // Select model based on routing config (per-session model override takes priority)
     const routingEnabled = config.modelRoutingEnabled !== false;
     let selectedModel: ModelTier = routingEnabled
-      ? selectModel({ prompt, source: modelSource })
-      : "sonnet";
+      ? selectModel({ prompt, source: modelSource, modelOverride: meta.model })
+      : (meta.model as ModelTier | undefined) ?? "sonnet";
 
     const imageArgs = sanitizedImages.length > 0 ? sanitizedImages : undefined;
     const fileArgs = sanitizedFiles.length > 0 ? sanitizedFiles : undefined;
