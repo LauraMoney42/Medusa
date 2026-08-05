@@ -8,7 +8,9 @@
     "dev:server": "cd server && npx tsx watch src/index.ts",
     "dev:client": "cd client && npm run dev",
     "build": "bash scripts/build.sh",
-    "start": "cd server && node dist/index.js"
+    "start": "cd server && node dist/index.js",
+    "test": "cd server && npm test",
+    "test:coverage": "cd server && npx vitest run --coverage"
   },
   "dependencies": {
     "@playwright/mcp": "^0.0.70"

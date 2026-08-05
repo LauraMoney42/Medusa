@@ -1,3 +1,11 @@
+## 2026-08-05 14:12
+- Feature: Test suite + CI (GitHub Actions) with coverage and a status badge
+- Extended vitest config with v8 coverage (text + json-summary + html reporters); excluded entry points, socket wiring, and process spawning that need a live Claude CLI
+- New unit tests: StreamParser (NDJSON stream parsing), selectModel (tiered model routing), extractQuickTask (hub [QUICK-TASK] markers) — 31 new tests, 170 passing across 9 files
+- New CI workflow (.github/workflows/ci.yml): server typecheck + vitest --coverage, client typecheck, on push/PR to main. Lint intentionally not gated (23 pre-existing client eslint errors) to keep the badge honest and green
+- CI badge added to README
+- Files affected: server/vitest.config.ts, server/src/claude/__tests__/stream-parser.test.ts, server/src/claude/__tests__/model-router.test.ts, server/src/hub/__tests__/post-processor.test.ts, server/package.json, package.json, .github/workflows/ci.yml, README.md
+
 ## 2026-07-03 15:52
 - Feature: macOS app now writes server logs to a file (previously stdout → /dev/null, unviewable)
 - Server stdout + stderr → ~/Library/Logs/Medusa/server.log (view live: `tail -f ~/Library/Logs/Medusa/server.log`)

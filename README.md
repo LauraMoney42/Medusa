@@ -1,5 +1,7 @@
 # Medusa
 
+[![CI](https://github.com/LauraMoney42/Medusa/actions/workflows/ci.yml/badge.svg)](https://github.com/LauraMoney42/Medusa/actions/workflows/ci.yml)
+
 Multi-bot AI orchestration platform — run parallel Claude sessions with real-time Hub coordination, @mention routing, and project management.
 
 ![Architecture](docs/medusa_architecture.png)
