@@ -1,3 +1,11 @@
+## 2026-08-05 16:06
+- Feature: Supervised take-over in the Browser view — click, scroll, and type in the live browser (Features.md #2)
+- CoworkPane captures mouse (down/up/move), wheel, and keyboard on the frame, maps to normalized [0,1] coords (accounting for object-fit letterboxing), and emits cowork:input
+- screencast.ts tracks frame metadata and dispatches CDP Input.dispatchMouseEvent / mouseWheel / insertText / dispatchKeyEvent (sendCoworkInput); scales normalized coords to CSS pixels
+- Clean shutdown: stopScreencast() wired into gracefulShutdown so restarts don't leave stale CDP connections
+- Verified end-to-end: clicking a link in the pane navigated the real Chrome (example.com → iana.org)
+- Files affected: server/src/cowork/screencast.ts, client/src/components/Cowork/CoworkPane.tsx, server/src/socket/handler.ts, server/src/index.ts
+
 ## 2026-08-05 15:41
 - Feature: Live computer-use "Browser" view — watch the CDP-controlled Chrome inside Medusa (Features.md #2, Cowork parity)
 - Server cowork/screencast.ts: connects to Chrome DevTools Protocol on :9222, runs Page.startScreencast, and broadcasts JPEG frames over Socket.IO (cowork:frame / cowork:status); adopts the first page target; fails safe when no automation browser is running

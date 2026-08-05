@@ -6,7 +6,7 @@ import { v4 as uuidv4 } from "uuid";
 import config from "../config.js";
 import { compress, assembleSystemPrompt, estimateTokens } from "../compressor/engine.js";
 import { loadCompressorConfig } from "../compressor/config.js";
-import { startScreencast, stopScreencast } from "../cowork/screencast.js";
+import { startScreencast, stopScreencast, sendCoworkInput, type CoworkInput } from "../cowork/screencast.js";
 
 // P2-9: Validate that every image path is within the uploads directory.
 // Accepts URL paths (/uploads/filename) and converts them to filesystem paths
@@ -923,6 +923,9 @@ export function setupSocketHandler(
     });
     socket.on("cowork:stop", () => {
       stopScreencast();
+    });
+    socket.on("cowork:input", (input: CoworkInput) => {
+      sendCoworkInput(input);
     });
 
     // -- Send a message --

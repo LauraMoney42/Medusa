@@ -45,6 +45,7 @@ import { devControlStore } from "./dev-control/store.js";
 import { DevControlController } from "./dev-control/controller.js";
 import { startHeadroomProxy, stopHeadroomProxy } from "./headroom/proxy-manager.js";
 import { startWhisperServer, stopWhisperServer } from "./stt/whisper-manager.js";
+import { stopScreencast } from "./cowork/screencast.js";
 import { createHeadroomRouter } from "./routes/headroom.js";
 import { z } from "zod";
 
@@ -187,6 +188,7 @@ async function gracefulShutdown(signal: string) {
   //    (safe no-op if reused/never started)
   stopHeadroomProxy();
   stopWhisperServer();
+  stopScreencast();
 
   // 1. Stop accepting new connections
   server.close();

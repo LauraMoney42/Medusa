@@ -27,6 +27,10 @@ let ws: WebSocket | null = null;
 let active = false;
 // Monotonic CDP message id counter. Each CDP command must carry a unique id.
 let messageId = 0;
+// Reference to the active socket's send() helper, for forwarding user input.
+let sendCmd: ((method: string, params?: Record<string, unknown>) => void) | null = null;
+// Last screencast frame metadata — used to map normalized input coords to CSS px.
+let lastMeta: { deviceWidth: number; deviceHeight: number; offsetTop: number } | null = null;
 
 // --- Types describing the small slices of CDP data we actually read ----------
 
@@ -45,8 +49,35 @@ interface CdpMessage {
   params?: {
     data?: string;
     sessionId?: number;
+    metadata?: {
+      deviceWidth?: number;
+      deviceHeight?: number;
+      offsetTop?: number;
+      pageScaleFactor?: number;
+    };
   };
 }
+
+// Input forwarded from a client's Cowork pane for supervised take-over.
+// Coordinates are normalized [0,1] against the visible frame content.
+export type CoworkInput =
+  | {
+      kind: "mouse";
+      type: "mousePressed" | "mouseReleased" | "mouseMoved";
+      nx: number;
+      ny: number;
+      button?: "left" | "right" | "middle" | "none";
+      clickCount?: number;
+    }
+  | { kind: "wheel"; nx: number; ny: number; dx: number; dy: number }
+  | { kind: "text"; text: string }
+  | {
+      kind: "key";
+      type: "keyDown" | "keyUp";
+      key: string;
+      code?: string;
+      windowsVirtualKeyCode?: number;
+    };
 
 /**
  * Start streaming a live read-only view of the CDP-controlled Chrome.
@@ -96,6 +127,7 @@ export async function startScreencast(io: IOServer): Promise<void> {
     socket.onopen = (): void => {
       try {
         active = true;
+        sendCmd = send;
         send("Page.enable");
         send("Page.startScreencast", {
           format: "jpeg",
@@ -123,6 +155,15 @@ export async function startScreencast(io: IOServer): Promise<void> {
         const msg = JSON.parse(String(ev.data)) as CdpMessage;
 
         if (msg.method === "Page.screencastFrame" && msg.params?.data) {
+          // Track frame metadata so input coords can be mapped to CSS pixels.
+          const m = msg.params.metadata;
+          if (m && m.deviceWidth && m.deviceHeight) {
+            lastMeta = {
+              deviceWidth: m.deviceWidth,
+              deviceHeight: m.deviceHeight,
+              offsetTop: m.offsetTop ?? 0,
+            };
+          }
           // Forward the base64 JPEG frame to all connected clients.
           io.emit("cowork:frame", msg.params.data);
           // Acknowledge so Chrome sends the next frame.
@@ -138,6 +179,8 @@ export async function startScreencast(io: IOServer): Promise<void> {
       console.error("[cowork] Screencast WebSocket error.");
       active = false;
       ws = null;
+      sendCmd = null;
+      lastMeta = null;
       io.emit("cowork:status", {
         available: false,
         message: "Browser view disconnected.",
@@ -148,6 +191,8 @@ export async function startScreencast(io: IOServer): Promise<void> {
       console.log("[cowork] Screencast WebSocket closed.");
       active = false;
       ws = null;
+      sendCmd = null;
+      lastMeta = null;
       io.emit("cowork:status", {
         available: false,
         message: "Browser view disconnected.",
@@ -182,9 +227,53 @@ export function stopScreencast(): void {
   }
   active = false;
   ws = null;
+  sendCmd = null;
+  lastMeta = null;
 }
 
 /** Whether a screencast session is currently active. */
 export function isScreencastActive(): boolean {
   return active;
+}
+
+/**
+ * Forward a user input event from the Cowork pane to the live browser
+ * (supervised take-over). No-op unless a screencast is active. Never throws.
+ */
+export function sendCoworkInput(input: CoworkInput): void {
+  if (!active || !sendCmd || !lastMeta) return;
+  try {
+    if (input.kind === "mouse") {
+      const x = Math.round(input.nx * lastMeta.deviceWidth);
+      const y = Math.round(input.ny * lastMeta.deviceHeight);
+      const moving = input.type === "mouseMoved";
+      sendCmd("Input.dispatchMouseEvent", {
+        type: input.type,
+        x,
+        y,
+        button: input.button ?? (moving ? "none" : "left"),
+        buttons: input.type === "mousePressed" ? 1 : 0,
+        clickCount: moving ? 0 : input.clickCount ?? 1,
+      });
+    } else if (input.kind === "wheel") {
+      sendCmd("Input.dispatchMouseEvent", {
+        type: "mouseWheel",
+        x: Math.round(input.nx * lastMeta.deviceWidth),
+        y: Math.round(input.ny * lastMeta.deviceHeight),
+        deltaX: input.dx,
+        deltaY: input.dy,
+      });
+    } else if (input.kind === "text") {
+      sendCmd("Input.insertText", { text: input.text });
+    } else if (input.kind === "key") {
+      sendCmd("Input.dispatchKeyEvent", {
+        type: input.type,
+        key: input.key,
+        code: input.code,
+        windowsVirtualKeyCode: input.windowsVirtualKeyCode,
+      });
+    }
+  } catch (err) {
+    console.error("[cowork] input dispatch failed:", err);
+  }
 }

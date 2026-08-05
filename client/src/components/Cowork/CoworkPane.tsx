@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { getSocket } from '../../socket';
 
 interface CoworkPaneProps {
@@ -51,6 +51,20 @@ const styles: Record<string, React.CSSProperties> = {
     objectFit: 'contain',
     borderRadius: 6,
     boxShadow: '0 4px 24px rgba(0,0,0,0.5)',
+    cursor: 'crosshair',
+    display: 'block',
+    userSelect: 'none',
+  },
+  frameWrap: {
+    outline: 'none',
+    maxWidth: '100%',
+    maxHeight: '100%',
+    display: 'flex',
+  },
+  driveHint: {
+    marginLeft: 'auto',
+    fontSize: 11,
+    color: 'var(--text-muted)',
   },
   placeholder: {
     display: 'flex',
@@ -74,6 +88,9 @@ const styles: Record<string, React.CSSProperties> = {
 export default function CoworkPane({ onMenuToggle }: CoworkPaneProps) {
   const [frame, setFrame] = useState<string | null>(null);
   const [status, setStatus] = useState<{ available: boolean; message?: string } | null>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const lastMoveRef = useRef(0);
 
   useEffect(() => {
     const socket = getSocket();
@@ -89,6 +106,67 @@ export default function CoworkPane({ onMenuToggle }: CoworkPaneProps) {
     };
   }, []);
 
+  // Map a pointer position over the <img> to normalized [0,1] coords of the
+  // actual frame content, accounting for object-fit: contain letterboxing.
+  const norm = useCallback((clientX: number, clientY: number): { nx: number; ny: number } | null => {
+    const img = imgRef.current;
+    if (!img || !img.naturalWidth || !img.naturalHeight) return null;
+    const rect = img.getBoundingClientRect();
+    const scale = Math.min(rect.width / img.naturalWidth, rect.height / img.naturalHeight);
+    const dispW = img.naturalWidth * scale;
+    const dispH = img.naturalHeight * scale;
+    const offX = rect.left + (rect.width - dispW) / 2;
+    const offY = rect.top + (rect.height - dispH) / 2;
+    const x = clientX - offX;
+    const y = clientY - offY;
+    if (x < 0 || y < 0 || x > dispW || y > dispH) return null;
+    return { nx: x / dispW, ny: y / dispH };
+  }, []);
+
+  const emit = useCallback((input: unknown) => {
+    getSocket().emit('cowork:input', input);
+  }, []);
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    wrapRef.current?.focus();
+    const p = norm(e.clientX, e.clientY);
+    if (p) emit({ kind: 'mouse', type: 'mousePressed', nx: p.nx, ny: p.ny, button: 'left', clickCount: 1 });
+  }, [norm, emit]);
+
+  const handleMouseUp = useCallback((e: React.MouseEvent) => {
+    const p = norm(e.clientX, e.clientY);
+    if (p) emit({ kind: 'mouse', type: 'mouseReleased', nx: p.nx, ny: p.ny, button: 'left', clickCount: 1 });
+  }, [norm, emit]);
+
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    const now = Date.now();
+    if (now - lastMoveRef.current < 50) return; // throttle to ~20/s
+    lastMoveRef.current = now;
+    const p = norm(e.clientX, e.clientY);
+    if (p) emit({ kind: 'mouse', type: 'mouseMoved', nx: p.nx, ny: p.ny });
+  }, [norm, emit]);
+
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    const p = norm(e.clientX, e.clientY);
+    if (p) emit({ kind: 'wheel', nx: p.nx, ny: p.ny, dx: e.deltaX, dy: e.deltaY });
+  }, [norm, emit]);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    const special: Record<string, number> = {
+      Enter: 13, Backspace: 8, Tab: 9, Escape: 27,
+      ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Delete: 46,
+    };
+    if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      e.preventDefault();
+      emit({ kind: 'text', text: e.key });
+    } else if (special[e.key] !== undefined) {
+      e.preventDefault();
+      const vk = special[e.key];
+      emit({ kind: 'key', type: 'keyDown', key: e.key, code: e.code, windowsVirtualKeyCode: vk });
+      emit({ kind: 'key', type: 'keyUp', key: e.key, code: e.code, windowsVirtualKeyCode: vk });
+    }
+  }, [emit]);
+
   return (
     <div style={styles.container}>
       <div style={styles.header}>
@@ -100,10 +178,23 @@ export default function CoworkPane({ onMenuToggle }: CoworkPaneProps) {
           </svg>
         </button>
         <h2 style={styles.title}>Browser</h2>
+        {frame && <span style={styles.driveHint}>live · click, scroll, type to control</span>}
       </div>
       <div style={styles.body}>
         {frame ? (
-          <img src={`data:image/jpeg;base64,${frame}`} alt="Live browser" style={styles.frame} />
+          <div ref={wrapRef} tabIndex={0} onKeyDown={handleKeyDown} style={styles.frameWrap}>
+            <img
+              ref={imgRef}
+              src={`data:image/jpeg;base64,${frame}`}
+              alt="Live browser"
+              draggable={false}
+              style={styles.frame}
+              onMouseDown={handleMouseDown}
+              onMouseUp={handleMouseUp}
+              onMouseMove={handleMouseMove}
+              onWheel={handleWheel}
+            />
+          </div>
         ) : (
           <div style={styles.placeholder}>
             <div style={styles.placeholderMessage}>{status?.message ?? 'Connecting to the browser…'}</div>

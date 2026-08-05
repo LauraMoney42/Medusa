@@ -22,12 +22,13 @@ Ranking favors: evals rigor, multi-agent systems, computer-use, and product craf
    `extractQuickTask` (hub markers); 170 tests across 9 files; GitHub Actions CI
    (server typecheck + tests, client typecheck) and a badge in the README.
 
-2. **Live computer-use view: CDP screencast pane + supervised take-over** — ✅ live view done (2026-08-05); take-over pending
+2. **Live computer-use view: CDP screencast pane + supervised take-over** — ✅ done (2026-08-05)
    Maps directly to the *Computer Use* role and is the most visual proof of agentic
    control (Claude Cowork parity). Shipped: server `cowork/screencast.ts` (CDP
    `Page.startScreencast` → Socket.IO `cowork:frame`), client `Cowork/CoworkPane.tsx`
-   + a "Browser" sidebar view. Verified streaming a live Chrome tab.
-   **Remaining:** forward pane clicks/keys back as CDP `Input.dispatch*` for take-over.
+   + a "Browser" sidebar view. **Take-over** also done: the pane forwards mouse/wheel/
+   keyboard as CDP `Input.dispatch*` / `insertText` — click, scroll, and type in the
+   live browser. Verified end-to-end (a click navigated the real Chrome).
 
 3. **Multi-machine agent orchestration: brain on the mini + a runner per machine + task routing**
    The *Research Engineer, Agents* story: a real distributed multi-agent system. One
