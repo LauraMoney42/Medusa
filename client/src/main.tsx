@@ -1,8 +1,11 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
+import { registerServiceWorker } from './registerServiceWorker';
 import './styles/global.css';
 import 'highlight.js/styles/github-dark.css';
+
+registerServiceWorker();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

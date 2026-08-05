@@ -50,6 +50,7 @@ import { startHeadroomProxy, stopHeadroomProxy } from "./headroom/proxy-manager.
 import { startWhisperServer, stopWhisperServer } from "./stt/whisper-manager.js";
 import { startTtsServer, stopTtsServer } from "./tts/tts-manager.js";
 import { stopScreencast } from "./cowork/screencast.js";
+import { stopSimulatorStream } from "./cowork/simulator-stream.js";
 import { createHeadroomRouter } from "./routes/headroom.js";
 import { z } from "zod";
 
@@ -197,6 +198,7 @@ async function gracefulShutdown(signal: string) {
   stopWhisperServer();
   stopTtsServer();
   stopScreencast();
+  stopSimulatorStream();
 
   // 1. Stop accepting new connections
   server.close();

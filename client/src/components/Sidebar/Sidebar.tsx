@@ -71,6 +71,12 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
     setActiveView('cowork');
   };
 
+  const handleSimulatorClick = () => {
+    if (activeView === 'simulator') return;
+    setActiveSession(null);
+    setActiveView('simulator');
+  };
+
   const handleShutdown = useCallback(async () => {
     setShutdownLoading(true);
     try {
@@ -235,6 +241,26 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
             <line x1="12" y1="17" x2="12" y2="21" />
           </svg>
           <span>Browser</span>
+        </button>
+
+        {/* Simulator button */}
+        <button
+          onClick={handleSimulatorClick}
+          style={{
+            ...styles.hubBtn,
+            background: activeView === 'simulator'
+              ? 'rgba(26, 122, 60, 0.15)'
+              : 'transparent',
+            color: activeView === 'simulator'
+              ? '#4aba6a'
+              : 'var(--text-secondary)',
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="7" y="2" width="10" height="20" rx="2" />
+            <line x1="11" y1="18" x2="13" y2="18" />
+          </svg>
+          <span>Simulator</span>
         </button>
 
         {/* Projects button */}

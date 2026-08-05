@@ -52,10 +52,16 @@ Ranking favors: evals rigor, multi-agent systems, computer-use, and product craf
    config, so a global `PreToolUse` hook there would affect their normal CLI usage, not
    just Medusa's bots. That would need a dedicated per-bot config dir first.
 
-5. **Native Mac + iOS Simulator control (cua + Simulator MCP) into the same pane**
-   Extends the computer-use narrative to driving real dev tools end to end. Pairs with
-   the existing `ios-bot` xcodebuild wrapper: a bot builds the app, boots the Simulator,
-   and you watch + take over.
+5. **Native iOS Simulator control into the same pane** — ✅ **done (2026-08-05)**
+   Extends the computer-use narrative to driving real dev tools end to end. Shipped via
+   `idb` (Facebook's iOS Development Bridge) rather than cua/Simulator MCP: a new
+   "Simulator" sidebar view streams the booted simulator's screen (`idb screenshot`
+   polling) and forwards tap/swipe/text/hardware-button input (`idb ui *`), correctly
+   converting normalized coords to the simulator's POINT space (not pixel space).
+   Validated end-to-end against a real booted simulator, cross-checked with independent
+   `idb screenshot` calls. **Remaining:** pair with the existing `ios-bot` xcodebuild
+   wrapper so a bot can build + boot + you watch, all in one flow (currently you boot
+   the simulator yourself; the view attaches to whatever's already booted).
 
 6. **Cowork-like UI overhaul** (see detailed spec below)
    Strong *Applied AI* / frontend-craft signal and the most immediately visible upgrade.
@@ -67,9 +73,14 @@ Ranking favors: evals rigor, multi-agent systems, computer-use, and product craf
    *Applied AI* product polish. Replaces the robotic on-device voice with streamed
    neural TTS, and adds a mic button with speech-to-text so you can talk out ideas.
 
-8. **Voice-enabled PWA of the existing UI, then native iOS app**
+8. **Voice-enabled PWA of the existing UI, then native iOS app** — ✅ **PWA shell done (2026-08-05)**
    Turn the client into an installable PWA reachable over Tailscale; evolve to a native
    iOS app reusing the same backend (live view + tap-to-approve). Skip chat channels.
+   Shipped: manifest.json + generated icons + a deliberately no-cache service worker
+   (installability only — no risk of stale cached responses in a live chat/socket app).
+   Validated live: manifest/icons/meta-tags/service-worker registration all verified.
+   **Remaining:** reachable over Tailscale (needs #9 first); native iOS app is a
+   separate, later effort.
 
 9. **Tailscale remote access**
    Supporting infra hygiene that makes 2–8 reachable from the phone.
@@ -172,12 +183,16 @@ claude-code-router (github.com/musistudio/claude-code-router).
 ## Status snapshot (2026-08-05)
 
 **Done:** #1 test suite + CI · #2 live computer-use Browser view + supervised take-over ·
+#4 human-in-the-loop approval guardrail (Approve/Deny UI for bot escalations) ·
+#5 native iOS Simulator live view + take-over (via idb) ·
 #6 Cowork-like UI (search, rename, agent selector, provider/model selector, token ring) ·
 #7 voice loop complete — STT (mic + progressive dictation) + Whisper auto-start AND
-TTS voice-out (Kokoro + auto-start + speaker toggle).
+TTS voice-out (Kokoro + auto-start + speaker toggle + Settings voice controls) ·
+#8 installable PWA shell (manifest + icons + service worker).
 
-**Not started / deferred:** #3 multi-machine runners · #4 human-in-the-loop guardrails ·
-#5 native Mac + iOS Simulator control · #8 PWA · #9 Tailscale · #10 Railway ·
-#11 model gateway (MVP2+).
+**Not started / deferred:** #3 multi-machine runners · #9 Tailscale · #10 Railway ·
+#11 model gateway (MVP2+). Remaining follow-ups noted inline above (e.g. #4's real
+tool-call gating needs a dedicated bot config dir; #5's ios-bot integration; #8's
+Tailscale reachability + native iOS app).
 
 Current model support: **Anthropic + Kimi only** (by choice, for now).

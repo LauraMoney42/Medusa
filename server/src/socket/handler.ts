@@ -7,6 +7,7 @@ import config from "../config.js";
 import { compress, assembleSystemPrompt, estimateTokens } from "../compressor/engine.js";
 import { loadCompressorConfig } from "../compressor/config.js";
 import { startScreencast, stopScreencast, sendCoworkInput, type CoworkInput } from "../cowork/screencast.js";
+import { startSimulatorStream, stopSimulatorStream, sendSimulatorInput, type SimulatorInput } from "../cowork/simulator-stream.js";
 
 // P2-9: Validate that every image path is within the uploads directory.
 // Accepts URL paths (/uploads/filename) and converts them to filesystem paths
@@ -927,6 +928,17 @@ export function setupSocketHandler(
     });
     socket.on("cowork:input", (input: CoworkInput) => {
       sendCoworkInput(input);
+    });
+
+    // -- Simulator live view: start/stop/input for the booted iOS Simulator --
+    socket.on("simulator:start", () => {
+      void startSimulatorStream(io);
+    });
+    socket.on("simulator:stop", () => {
+      stopSimulatorStream();
+    });
+    socket.on("simulator:input", (input: SimulatorInput) => {
+      sendSimulatorInput(input);
     });
 
     // -- Send a message --
