@@ -4,6 +4,8 @@ import { useChatStore } from '../../stores/chatStore';
 import { getSocket } from '../../socket';
 import { useSocket } from '../../hooks/useSocket';
 import ScreenshotButton from '../Input/ScreenshotButton';
+import MicButton from '../Input/MicButton';
+import { useDictationInsert } from '../../hooks/useDictationInsert';
 import { uploadImage } from '../../api';
 
 interface MedusaChatProps {
@@ -87,6 +89,9 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
   const handleScreenshot = useCallback((file: File, preview: string) => {
     setImages((prev) => [...(prev ?? []), { file, preview }]);
   }, []);
+
+  // Insert progressive dictation into the input (auto-resize effect handles height).
+  const handleTranscript = useDictationInsert(setText);
 
   const handleRemoveImage = useCallback((idx: number) => {
     setImages((prev) => {
@@ -185,6 +190,7 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
           />
 
           <div style={styles.buttonRow}>
+            <MicButton onTranscript={handleTranscript} disabled={false} />
             <ScreenshotButton
               onCapture={handleScreenshot}
               disabled={false}

@@ -284,6 +284,39 @@ export async function uploadFile(
   return res.json() as Promise<{ filePath: string }>;
 }
 
+// ---- Speech-to-text (mic button) ----
+
+/** Whether the server has a transcription backend configured. */
+export function fetchSttStatus(): Promise<{ enabled: boolean }> {
+  return request<{ enabled: boolean }>('/api/stt/status');
+}
+
+/** Upload a mic recording and get back the transcribed text. */
+export async function transcribeAudio(blob: Blob): Promise<{ text: string }> {
+  const formData = new FormData();
+  const ext = blob.type.includes('mp4') || blob.type.includes('mpeg') ? 'mp4' : 'webm';
+  formData.append('audio', blob, `recording.${ext}`);
+
+  const res = await fetch('/api/stt', {
+    method: 'POST',
+    credentials: 'include', // httpOnly cookie auth
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    try {
+      const parsed = JSON.parse(body) as { error?: string };
+      if (parsed.error) throw new Error(parsed.error);
+    } catch (e) {
+      if (e instanceof SyntaxError === false) throw e;
+    }
+    throw new Error(`Transcription failed ${res.status}`);
+  }
+
+  return res.json() as Promise<{ text: string }>;
+}
+
 export function shutdown(): Promise<void> {
   return request<void>('/api/health/shutdown', { method: 'POST' });
 }

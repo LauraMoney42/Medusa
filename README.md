@@ -4,6 +4,9 @@
 
 Multi-bot AI orchestration platform — run parallel Claude sessions with real-time Hub coordination, @mention routing, and project management.
 
+> ## 🎙️ New: Talk to Medusa, hands-free
+> Hit the mic and start talking. Your words stream into the message box **live as you speak**, transcribed on-device by a free, fully offline local Whisper server. No API keys, nothing leaves your Mac. Works in the Hub and Medusa Chat, and inside the packaged macOS app.
+
 ![Architecture](docs/medusa_architecture.png)
 
 ## What It Does

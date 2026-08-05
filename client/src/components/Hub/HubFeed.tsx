@@ -10,6 +10,8 @@ import { uploadImage, uploadFile, pauseSession, resumeSession, requestSessionSta
 import HubMessage from './HubMessage';
 import AttachmentPreview from '../Input/AttachmentPreview';
 import ScreenshotButton from '../Input/ScreenshotButton';
+import MicButton from '../Input/MicButton';
+import { useDictationInsert } from '../../hooks/useDictationInsert';
 import MentionAutocomplete from './MentionAutocomplete';
 const HUB_MAX_HEIGHT = 150;
 
@@ -377,6 +379,9 @@ export default function HubFeed({ onMenuToggle }: HubFeedProps) {
     setAttachments((prev) => [...prev, { file, preview, isImage: true }]);
   }, []);
 
+  // Insert progressive dictation into the hub input.
+  const handleTranscript = useDictationInsert(setInput);
+
   const canSend = input.trim() || attachments.length > 0;
 
   return (
@@ -459,6 +464,7 @@ export default function HubFeed({ onMenuToggle }: HubFeedProps) {
               rows={1}
               style={styles.textarea}
             />
+            <MicButton onTranscript={handleTranscript} disabled={false} />
             <ScreenshotButton
               onCapture={handleScreenshot}
               disabled={false}

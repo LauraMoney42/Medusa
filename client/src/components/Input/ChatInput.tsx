@@ -14,6 +14,7 @@ import { useDraftStore } from '../../stores/draftStore';
 import { useInputHistoryStore } from '../../stores/inputHistoryStore';
 import AttachmentPreview from './AttachmentPreview';
 import ScreenshotButton from './ScreenshotButton';
+import MicButton from './MicButton';
 
 interface ChatInputProps {
   sessionId: string;
@@ -65,6 +66,22 @@ export default function ChatInput({ sessionId, botName }: ChatInputProps) {
   const handleScreenshot = useCallback((file: File, preview: string) => {
     setAttachments((prev) => [...prev, { file, preview, isImage: true }]);
   }, []);
+
+  // Insert dictated text into the input, appending to whatever is already there.
+  const handleTranscript = useCallback((transcript: string) => {
+    setText((prev) => {
+      const next = prev.trim() ? `${prev.trimEnd()} ${transcript}` : transcript;
+      setDraft(sessionId, next);
+      return next;
+    });
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      el.style.height = 'auto';
+      el.style.height = `${Math.min(el.scrollHeight, 150)}px`;
+    });
+  }, [sessionId, setDraft]);
 
   const send = useCallback(async () => {
     const trimmed = text.trim();
@@ -266,6 +283,8 @@ export default function ChatInput({ sessionId, botName }: ChatInputProps) {
           rows={1}
           style={styles.textarea}
         />
+
+        <MicButton onTranscript={handleTranscript} disabled={isBusy} />
 
         <ScreenshotButton onCapture={handleScreenshot} disabled={isBusy} />
 

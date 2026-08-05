@@ -101,11 +101,15 @@ Goal: make Medusa's UI resemble Claude Cowork.
   identical on Mac and iOS. ElevenLabs Flash v2.5 as default, Kokoro-on-the-mini as the
   free local fallback, per-bot `voice` toggle (`flash` / `kokoro` / off). Replaces the
   robotic on-device synth. Playback via `<audio>` on web, `AVAudioPlayer` on iOS.
-- **STT (mic in)** — a **mic button** in the chat input with speech-to-text so you can
-  talk out ideas. (User recalls partially adding a mic/STT option already — verify what
-  exists in `client/src/components/Input/` and finish/repair it.) Prefer a good STT over
-  the mediocre browser `SpeechRecognition`: native dictation on iOS, or stream audio to
-  a Whisper/Parakeet service on the mini for accuracy.
+- **STT (mic in)** — ✅ **DONE (2026-08-05)**. A mic button in the chat input
+  (`MicButton.tsx`) records with MediaRecorder and posts to `/api/stt`, which forwards to
+  any OpenAI-compatible `/audio/transcriptions` endpoint (OpenAI, Groq, or a local
+  whisper.cpp / faster-whisper server on the mini). The transcript is appended to the
+  input. Chosen over the browser `SpeechRecognition` API because that doesn't work in the
+  packaged WKWebView app. To enable: set `STT_API_KEY` (button hidden until then) and
+  rebuild the macOS app so the mic permission takes effect.
+  **Remaining:** for best accuracy, point `STT_API_BASE_URL` at a local Whisper/Parakeet
+  server on the mini; optionally add live/streaming transcription later.
 
 ---
 

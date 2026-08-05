@@ -15,6 +15,7 @@ import { createAuthRouter } from "./routes/auth.js";
 import { createSessionsRouter } from "./routes/sessions.js";
 import imagesRouter from "./routes/images.js";
 import filesRouter from "./routes/files.js";
+import sttRouter from "./routes/stt.js";
 import { createSkillsRouter } from "./routes/skills.js";
 import { setupSocketHandler } from "./socket/handler.js";
 import { ProcessManager } from "./claude/process-manager.js";
@@ -153,6 +154,7 @@ app.use("/api/health", generalLimiter, createHealthRouter(processManager, pollSc
 app.use("/api/sessions", sessionCreateLimiter, createSessionsRouter(sessionStore, processManager, chatStore, mentionRouter, pollScheduler));
 app.use("/api/images", uploadLimiter, imagesRouter);
 app.use("/api/files", uploadLimiter, filesRouter);
+app.use("/api/stt", uploadLimiter, sttRouter);
 app.use("/api/skills", generalLimiter, createSkillsRouter(skillCatalog));
 app.use("/api/chat", generalLimiter, createChatRouter(chatStore));
 app.use("/api/hub", generalLimiter, createHubRouter(hubStore, io, mentionRouter, sessionStore));
@@ -477,7 +479,7 @@ server.listen(config.port, config.host, () => {
 
   // ---- BOT-ANNOUNCE: Post startup announcement for all bot sessions ----
   // Fixes visibility gap: after server restart / session compaction, bots appear
-  // "dead" to PM because they don't auto-announce. This ensures every bot session
+  // "dead" to Medusa because they don't auto-announce. This ensures every bot session
   // posts a "back online" message to Hub on every server start.
   setTimeout(() => {
     const sessions = sessionStore.loadAll();

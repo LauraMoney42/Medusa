@@ -416,4 +416,19 @@ class WebViewController: NSWindowController, WKNavigationDelegate, WKUIDelegate,
             completionHandler(response == .OK ? panel.urls : nil)
         }
     }
+
+    // Grant microphone access for the in-app mic / speech-to-text button.
+    // Without this WKUIDelegate method, WKWebView denies getUserMedia by default.
+    // TCC still prompts the user once (gated by NSMicrophoneUsageDescription in Info.plist).
+    @available(macOS 12.0, *)
+    func webView(
+        _ webView: WKWebView,
+        requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+        initiatedByFrame frame: WKFrameInfo,
+        type: WKMediaCaptureType,
+        decisionHandler: @escaping (WKPermissionDecision) -> Void
+    ) {
+        // Only the local Medusa UI runs here — grant microphone, deny camera.
+        decisionHandler(type == .camera ? .deny : .grant)
+    }
 }

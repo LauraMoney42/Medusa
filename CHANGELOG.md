@@ -1,3 +1,11 @@
+## 2026-08-05 14:23
+- Feature: Speech-to-text mic button in the chat input (Features.md #7)
+- Client records via MediaRecorder (works in Chrome and the packaged WKWebView app, unlike the SpeechRecognition API) and POSTs to a new /api/stt; the returned transcript is appended to the message input
+- Server /api/stt forwards audio to any OpenAI-compatible /audio/transcriptions endpoint (OpenAI, Groq, or a local whisper.cpp / faster-whisper server); the mic button stays hidden until configured (GET /api/stt/status)
+- macOS app: added NSMicrophoneUsageDescription + a WKUIDelegate media-capture grant so the mic works inside WKWebView (requires an app rebuild via app/build-app.sh)
+- Config: STT_ENABLED, STT_API_BASE_URL, STT_API_KEY, STT_MODEL (documented in .env.example)
+- Files affected: server/src/routes/stt.ts (new), server/src/config.ts, server/src/index.ts, client/src/components/Input/MicButton.tsx (new), client/src/components/Input/ChatInput.tsx, client/src/api.ts, app/Sources/WebViewController.swift, app/Resources/Info.plist, .env.example
+
 ## 2026-08-05 14:12
 - Feature: Test suite + CI (GitHub Actions) with coverage and a status badge
 - Extended vitest config with v8 coverage (text + json-summary + html reporters); excluded entry points, socket wiring, and process spawning that need a live Claude CLI

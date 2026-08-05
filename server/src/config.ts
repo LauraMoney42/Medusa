@@ -66,6 +66,14 @@ export interface Config {
   headroomEnabled: boolean;
   /** Local port for the Headroom proxy (default: 8787) */
   headroomPort: number;
+  /** Enable the speech-to-text (mic) endpoint (default: true) */
+  sttEnabled: boolean;
+  /** OpenAI-compatible base URL for audio transcription (default: OpenAI) */
+  sttApiBaseUrl: string;
+  /** API key for the transcription endpoint (empty = mic button stays hidden) */
+  sttApiKey: string;
+  /** Transcription model name (default: whisper-1) */
+  sttModel: string;
 }
 
 const config: Config = {
@@ -135,6 +143,10 @@ const config: Config = {
   kimiConfigDir: process.env.KIMI_CONFIG_DIR || "~/.kimi",
   headroomEnabled: process.env.HEADROOM_ENABLED !== "false",
   headroomPort: parseInt(process.env.HEADROOM_PORT || "8787", 10),
+  sttEnabled: process.env.STT_ENABLED !== "false",
+  sttApiBaseUrl: process.env.STT_API_BASE_URL || "https://api.openai.com/v1",
+  sttApiKey: process.env.STT_API_KEY || "",
+  sttModel: process.env.STT_MODEL || "whisper-1",
 };
 
 export default config;
