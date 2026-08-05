@@ -68,6 +68,11 @@ Ranking favors: evals rigor, multi-agent systems, computer-use, and product craf
     Only if Medusa needs to be reachable when both Macs are off; the always-on mini
     mostly solves this already.
 
+11. **(MVP2+) Provider/model-agnostic model gateway** (see detailed spec below)
+    Run ANY model behind Medusa's Claude Code engine via a gateway (LiteLLM) that speaks
+    the Anthropic API to the `claude` CLI. **Deferred — staying on Anthropic + Kimi for
+    now.** Also fixes multi-provider cost accuracy for the token ring.
+
 ---
 
 ## Detailed spec — #6 Cowork-like UI overhaul
@@ -116,13 +121,47 @@ Goal: make Medusa's UI resemble Claude Cowork.
   **Remaining:** for best accuracy, point `STT_API_BASE_URL` at a local Whisper/Parakeet
   server on the mini; optionally add live/streaming transcription later.
 
+## Detailed spec — #11 Provider/model-agnostic model gateway (MVP2+, deferred)
+
+Goal: run Medusa's bots on ANY model (OpenAI, Gemini, Bedrock, DeepSeek, local Ollama, …)
+without rewriting the engine. Medusa's power (skills, tools, MCP, subagents, streaming,
+Hub, the `usage`/cost result events) all come from the `claude` CLI, so we keep that and
+only swap the model behind it — exactly how Kimi already works via `ANTHROPIC_BASE_URL`.
+
+**Approach:** a **LiteLLM** proxy in front of the CLI (recommended over claude-code-router
+because LiteLLM also does per-model cost tracking and exposes `GET /v1/models`).
+
+**Work items:**
+- **LiteLLM manager** — a supervised side-process like `stt/whisper-manager.ts` /
+  `headroom/proxy-manager.ts`: spawn/adopt LiteLLM, health-check, config mapping friendly
+  model names → provider models + keys.
+- **Bot env routing** — extend the existing `ANTHROPIC_BASE_URL` injection in
+  `claude/process-manager.ts` (see `getHeadroomEnv`): a bot's selected model maps to a
+  LiteLLM model, injected per-spawn. Decide Headroom×LiteLLM interaction (chain, or
+  mutually exclusive for non-Anthropic).
+- **Dynamic model picker** — `ChatHeaderControls` reads `GET /v1/models` from LiteLLM
+  instead of the hardcoded Anthropic/Kimi list, so whatever is configured shows up.
+- **Accurate cost** — pull spend from LiteLLM (or compute `usage × per-model price`), and
+  tag each `TokenUsageEntry` with model/provider so the ring + popover are correct for
+  every backend. (This is the fix for the "ring is Anthropic-only" limitation.)
+
+**Caveats:** you're swapping the brain, not the harness (a feature). Tool-use quality
+varies by model — Kimi K2 / GPT-5.x / Gemini 3 are solid; small local models struggle.
+API keys go in the LiteLLM config (the user adds them; keys can't be entered by the agent).
+
+**Refs:** LiteLLM (docs.litellm.ai/docs/tutorials/claude_non_anthropic_models),
+claude-code-router (github.com/musistudio/claude-code-router).
+
 ---
 
-## First milestone
+## Status snapshot (2026-08-05)
 
-Items 1–4 hit three of the four target roles at once (evals/CI + visible computer-use +
-multi-agent orchestration + a safety layer). Items 6–7 are the highest-visibility
-product upgrades and pair naturally with the PWA/app work.
+**Done:** #1 test suite + CI · #2 live computer-use Browser view + supervised take-over ·
+#6 Cowork-like UI (search, rename, agent selector, provider/model selector, token ring) ·
+#7 STT (mic + progressive dictation) + Whisper auto-start · TTS spec ready.
 
-**Status:** #1 Test suite + CI badge — ✅ done. Next up: pick between #2 (computer-use
-view) and #6 (UI overhaul).
+**Not started / deferred:** #3 multi-machine runners · #4 human-in-the-loop guardrails ·
+#5 native Mac + iOS Simulator control · #6 TTS voice-out wiring · #8 PWA · #9 Tailscale ·
+#10 Railway · #11 model gateway (MVP2+).
+
+Current model support: **Anthropic + Kimi only** (by choice, for now).
