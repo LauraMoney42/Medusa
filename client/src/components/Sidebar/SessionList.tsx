@@ -139,6 +139,13 @@ export default function SessionList() {
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
 
+  // Chat search filter
+  const [query, setQuery] = useState('');
+  const q = query.trim().toLowerCase();
+  const visibleSessions = q
+    ? sessions.filter((s) => s.name.toLowerCase().includes(q))
+    : sessions;
+
   // Close context menu on outside click
   useEffect(() => {
     if (!contextMenu) return;
@@ -256,11 +263,38 @@ export default function SessionList() {
 
   return (
     <div style={styles.container}>
+      {sessions.length > 0 && (
+        <div style={styles.searchWrap}>
+          <svg
+            width="13" height="13" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+            style={{ color: 'var(--text-muted)', flexShrink: 0 }}
+          >
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search chats..."
+            style={styles.searchInput}
+          />
+          {query && (
+            <button onClick={() => setQuery('')} style={styles.searchClear} title="Clear search">
+              ✕
+            </button>
+          )}
+        </div>
+      )}
+
       {sessions.length === 0 && (
         <p style={styles.empty}>No bots yet</p>
       )}
+      {sessions.length > 0 && visibleSessions.length === 0 && (
+        <p style={styles.empty}>No chats match &ldquo;{query}&rdquo;</p>
+      )}
 
-      {sessions.map((session) => {
+      {visibleSessions.map((session) => {
         const status = (statuses[session.id] ?? 'idle') as 'idle' | 'busy';
         const control = devControl[session.id];
         const isDragOver = dragOverId === session.id && dragId !== session.id;
@@ -270,7 +304,7 @@ export default function SessionList() {
         return (
           <div
             key={session.id}
-            draggable={!renamingId}
+            draggable={!renamingId && !q}
             onDragStart={(e) => handleDragStart(e, session.id)}
             onDragEnd={handleDragEnd}
             onDragOver={(e) => handleDragOver(e, session.id)}
@@ -417,6 +451,35 @@ const styles: Record<string, React.CSSProperties> = {
     textAlign: 'center',
     padding: '24px 16px',
   },
+  searchWrap: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    margin: '0 10px 8px',
+    padding: '6px 10px',
+    background: 'rgba(0, 0, 0, 0.22)',
+    border: '1px solid rgba(255, 255, 255, 0.08)',
+    borderRadius: 'var(--radius-sm)',
+  } as React.CSSProperties,
+  searchInput: {
+    flex: 1,
+    minWidth: 0,
+    background: 'transparent',
+    border: 'none',
+    outline: 'none',
+    color: 'var(--text-primary)',
+    fontSize: 13,
+  } as React.CSSProperties,
+  searchClear: {
+    background: 'transparent',
+    border: 'none',
+    color: 'var(--text-muted)',
+    cursor: 'pointer',
+    fontSize: 11,
+    padding: 2,
+    lineHeight: 1,
+    flexShrink: 0,
+  } as React.CSSProperties,
   item: {
     display: 'flex',
     alignItems: 'center',

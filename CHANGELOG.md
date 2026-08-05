@@ -1,3 +1,8 @@
+## 2026-08-05 15:13
+- Feature: Search box to filter the chat/bot list in the sidebar (Features.md #6, UI overhaul)
+- Filters bots by name as you type; drag-reorder disabled while a query is active; "No chats match" empty state. (Rename was already available via right-click → Rename and the pencil → editor.)
+- Files affected: client/src/components/Sidebar/SessionList.tsx
+
 ## 2026-08-05 15:10
 - Feature: Medusa auto-starts the local Whisper STT server on boot
 - New supervised side-process (server/src/stt/whisper-manager.ts) mirroring the Headroom proxy: spawns ~/.medusa-stt/run.sh on startup when STT_API_BASE_URL is loopback, health-checks /v1/models, adopts an already-running server, auto-restarts on crash (max 5), kills it on graceful shutdown

@@ -74,10 +74,10 @@ Ranking favors: evals rigor, multi-agent systems, computer-use, and product craf
 Goal: make Medusa's UI resemble Claude Cowork.
 
 - **Left chat pane**
-  - Chat/session list down the left side (Cowork/Discord-style layout).
-  - **Rename** a chat inline (double-click or a context-menu "Rename").
-  - **Search bar** at the top of the pane to filter chats by title (and ideally message
-    content).
+  - Chat/session list down the left side (Cowork/Discord-style layout). (exists)
+  - **Rename** a chat — ✅ done (right-click → Rename, or pencil → editor).
+  - **Search bar** — ✅ done (2026-08-05). Filters the bot list by name in `SessionList.tsx`.
+    Future: also match message content.
 - **Agent selector**
   - Pick which agent/bot to work with when desired.
   - **Always starts with Medusa** as the default agent on a new chat.
