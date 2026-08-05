@@ -13,6 +13,7 @@ import MedusaChat from './components/Hub/MedusaChat';
 import LaunchScreen from './components/Hub/LaunchScreen';
 import UsagePane from './components/Usage/UsagePane';
 import ArcadePane from './components/Arcade/ArcadePane';
+import CoworkPane from './components/Cowork/CoworkPane';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import CaffeineToggle from './components/Caffeine/CaffeineToggle';
 import OnboardingView from './components/Onboarding/OnboardingView';
@@ -212,6 +213,10 @@ function AuthenticatedApp() {
         ) : activeView === 'arcade' ? (
           <ErrorBoundary>
             <ArcadePane />
+          </ErrorBoundary>
+        ) : activeView === 'cowork' ? (
+          <ErrorBoundary>
+            <CoworkPane onMenuToggle={() => setSidebarOpen((o) => !o)} />
           </ErrorBoundary>
         ) : (
           <ErrorBoundary>

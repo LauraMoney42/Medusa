@@ -156,7 +156,7 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
           </div>
         ) : (
           chatMessages.map((msg) => (
-            <MessageBubble key={msg.id} message={msg} />
+            <MessageBubble key={msg.id} message={msg} botName={activeSession.name} />
           ))
         )}
       </div>
@@ -222,9 +222,9 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
 }
 
 /** Render a single message bubble */
-function MessageBubble({ message }: { message: any }) {
+function MessageBubble({ message, botName }: { message: any; botName: string }) {
   const isUser = message.role === 'user';
-  const displayName = isUser ? 'You' : 'Medusa';
+  const displayName = isUser ? 'You' : botName;
   const timestamp = new Date(message.timestamp).toLocaleTimeString([], {
     hour: 'numeric',
     minute: '2-digit',

@@ -5,7 +5,7 @@ import * as api from '../api';
 interface SessionState {
   sessions: SessionMeta[];
   activeSessionId: string | null;
-  activeView: 'hub' | 'project' | 'usage' | 'medusa' | 'arcade';
+  activeView: 'hub' | 'project' | 'usage' | 'medusa' | 'arcade' | 'cowork';
   statuses: Record<string, 'idle' | 'busy'>;
   pendingTasks: Record<string, boolean>;
   devControl: Record<string, { paused: boolean; statusRequested: boolean; interrupted: boolean }>;
@@ -29,7 +29,7 @@ interface SessionActions {
   setPendingTask: (id: string, hasPending: boolean) => void;
   setDevControl: (id: string, state: { paused: boolean; statusRequested: boolean; interrupted: boolean }) => void;
   removeDevControl: (id: string) => void;
-  setActiveView: (view: 'hub' | 'project' | 'usage' | 'medusa' | 'arcade') => void;
+  setActiveView: (view: 'hub' | 'project' | 'usage' | 'medusa' | 'arcade' | 'cowork') => void;
   setServerShuttingDown: (busySessions: { id: string; name: string }[]) => void;
 }
 
@@ -44,8 +44,8 @@ export const useSessionStore = create<SessionState & SessionActions>(
     activeView: (() => {
       const stored = localStorage.getItem('medusa_active_view');
       // Restore last saved view if valid; otherwise land on 'medusa' home screen
-      if (stored === 'project' || stored === 'usage' || stored === 'hub' || stored === 'medusa') {
-        return stored as 'hub' | 'project' | 'usage' | 'medusa';
+      if (stored === 'project' || stored === 'usage' || stored === 'hub' || stored === 'medusa' || stored === 'cowork') {
+        return stored as 'hub' | 'project' | 'usage' | 'medusa' | 'cowork';
       }
       return 'medusa';
     })(),

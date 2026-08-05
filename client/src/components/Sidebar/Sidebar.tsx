@@ -65,6 +65,12 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
     setActiveView('arcade');
   };
 
+  const handleCoworkClick = () => {
+    if (activeView === 'cowork') return;
+    setActiveSession(null);
+    setActiveView('cowork');
+  };
+
   const handleShutdown = useCallback(async () => {
     setShutdownLoading(true);
     try {
@@ -208,6 +214,27 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
             <path d="M10 14h4" />
           </svg>
           <span>Arcade</span>
+        </button>
+
+        {/* Cowork / Browser button */}
+        <button
+          onClick={handleCoworkClick}
+          style={{
+            ...styles.hubBtn,
+            background: activeView === 'cowork'
+              ? 'rgba(26, 122, 60, 0.15)'
+              : 'transparent',
+            color: activeView === 'cowork'
+              ? '#4aba6a'
+              : 'var(--text-secondary)',
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="2" y="3" width="20" height="14" rx="2" />
+            <line x1="8" y1="21" x2="16" y2="21" />
+            <line x1="12" y1="17" x2="12" y2="21" />
+          </svg>
+          <span>Browser</span>
         </button>
 
         {/* Projects button */}

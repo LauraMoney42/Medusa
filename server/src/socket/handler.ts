@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from "uuid";
 import config from "../config.js";
 import { compress, assembleSystemPrompt, estimateTokens } from "../compressor/engine.js";
 import { loadCompressorConfig } from "../compressor/config.js";
+import { startScreencast, stopScreencast } from "../cowork/screencast.js";
 
 // P2-9: Validate that every image path is within the uploads directory.
 // Accepts URL paths (/uploads/filename) and converts them to filesystem paths
@@ -914,6 +915,14 @@ export function setupSocketHandler(
     // -- Leave a session room --
     socket.on("session:leave", ({ sessionId }: { sessionId: string }) => {
       socket.leave(sessionId);
+    });
+
+    // -- Cowork live browser view: start/stop the CDP screencast --
+    socket.on("cowork:start", () => {
+      void startScreencast(io);
+    });
+    socket.on("cowork:stop", () => {
+      stopScreencast();
     });
 
     // -- Send a message --

@@ -1,3 +1,12 @@
+## 2026-08-05 15:41
+- Feature: Live computer-use "Browser" view — watch the CDP-controlled Chrome inside Medusa (Features.md #2, Cowork parity)
+- Server cowork/screencast.ts: connects to Chrome DevTools Protocol on :9222, runs Page.startScreencast, and broadcasts JPEG frames over Socket.IO (cowork:frame / cowork:status); adopts the first page target; fails safe when no automation browser is running
+- Client Cowork/CoworkPane.tsx + a "Browser" sidebar view (activeView 'cowork'): renders the live frames; shows a "launch Chrome with --remote-debugging-port=9222" placeholder otherwise
+- Socket handler wires cowork:start/stop. Read-only for now (take-over/input forwarding is a follow-up)
+- Polish: chat reply bubbles now show the selected agent's name instead of always "Medusa"
+- Verified end-to-end via the in-app browser: the Browser view streamed a live Chrome tab (example.com)
+- Files affected: server/src/cowork/screencast.ts (new), client/src/components/Cowork/CoworkPane.tsx (new), server/src/socket/handler.ts, client/src/App.tsx, client/src/components/Sidebar/Sidebar.tsx, client/src/stores/sessionStore.ts, client/src/components/Hub/MedusaChat.tsx
+
 ## 2026-08-05 15:25
 - Feature: Cowork-like UI overhaul — token-usage ring, provider+model selector, agent selector (Features.md #6)
 - TokenRing widget in the sidebar header: circular spend gauge (today vs a soft daily budget from localStorage medusa-daily-budget, default $20); click-expands a popover with Today/Week/Month cost + top bots
