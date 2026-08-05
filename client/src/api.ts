@@ -317,6 +317,29 @@ export async function transcribeAudio(blob: Blob): Promise<{ text: string }> {
   return res.json() as Promise<{ text: string }>;
 }
 
+// ---- Text-to-speech (voice-out) ----
+
+/** Whether the server has a TTS backend configured. */
+export function fetchTtsStatus(): Promise<{ enabled: boolean }> {
+  return request<{ enabled: boolean }>('/api/tts/status');
+}
+
+/** Synthesize speech for text; returns an object URL for an Audio element. */
+export async function synthesizeSpeech(text: string, voice?: string): Promise<string> {
+  const res = await fetch('/api/tts', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, voice }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`TTS failed ${res.status}: ${body}`);
+  }
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
+
 export function shutdown(): Promise<void> {
   return request<void>('/api/health/shutdown', { method: 'POST' });
 }

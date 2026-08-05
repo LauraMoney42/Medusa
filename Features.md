@@ -107,10 +107,12 @@ Goal: make Medusa's UI resemble Claude Cowork.
 
 ## Detailed spec — #7 Voice I/O
 
-- **TTS (her voice out)** — server-side neural TTS, streamed to clients so she sounds
-  identical on Mac and iOS. ElevenLabs Flash v2.5 as default, Kokoro-on-the-mini as the
-  free local fallback, per-bot `voice` toggle (`flash` / `kokoro` / off). Replaces the
-  robotic on-device synth. Playback via `<audio>` on web, `AVAudioPlayer` on iOS.
+- **TTS (her voice out)** — ✅ **DONE (2026-08-05)**. Server-side neural TTS via the local
+  Kokoro server (`~/.medusa-tts`, auto-started by `tts-manager.ts`), `/api/tts` route,
+  pluggable to ElevenLabs/OpenAI via `TTS_API_BASE_URL/KEY/MODEL/VOICE`. Client speaker
+  toggle in the Medusa Chat header auto-speaks each completed reply (+ per-message play
+  button); playback via `Audio()`. Replaces the robotic on-device synth.
+  **Remaining:** per-bot voice selection; native `AVAudioPlayer` path in the future iOS app.
 - **STT (mic in)** — ✅ **DONE (2026-08-05)**. A mic button in the chat input
   (`MicButton.tsx`) records with MediaRecorder and posts to `/api/stt`, which forwards to
   any OpenAI-compatible `/audio/transcriptions` endpoint (OpenAI, Groq, or a local
@@ -158,10 +160,11 @@ claude-code-router (github.com/musistudio/claude-code-router).
 
 **Done:** #1 test suite + CI · #2 live computer-use Browser view + supervised take-over ·
 #6 Cowork-like UI (search, rename, agent selector, provider/model selector, token ring) ·
-#7 STT (mic + progressive dictation) + Whisper auto-start · TTS spec ready.
+#7 voice loop complete — STT (mic + progressive dictation) + Whisper auto-start AND
+TTS voice-out (Kokoro + auto-start + speaker toggle).
 
 **Not started / deferred:** #3 multi-machine runners · #4 human-in-the-loop guardrails ·
-#5 native Mac + iOS Simulator control · #6 TTS voice-out wiring · #8 PWA · #9 Tailscale ·
-#10 Railway · #11 model gateway (MVP2+).
+#5 native Mac + iOS Simulator control · #8 PWA · #9 Tailscale · #10 Railway ·
+#11 model gateway (MVP2+).
 
 Current model support: **Anthropic + Kimi only** (by choice, for now).

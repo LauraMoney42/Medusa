@@ -78,6 +78,20 @@ export interface Config {
   sttAutostart: boolean;
   /** Path to the local STT server run script */
   sttRunScript: string;
+  /** Enable the text-to-speech (voice-out) endpoint (default: true) */
+  ttsEnabled: boolean;
+  /** OpenAI-compatible base URL for speech synthesis (default: local Kokoro) */
+  ttsApiBaseUrl: string;
+  /** API key for the TTS endpoint (empty allowed for a local server) */
+  ttsApiKey: string;
+  /** TTS model name (default: kokoro) */
+  ttsModel: string;
+  /** Default TTS voice (default: af_heart) */
+  ttsVoice: string;
+  /** Auto-start a local TTS server when Medusa boots (default: true) */
+  ttsAutostart: boolean;
+  /** Path to the local TTS server run script */
+  ttsRunScript: string;
 }
 
 const config: Config = {
@@ -155,6 +169,17 @@ const config: Config = {
   sttRunScript: process.env.STT_RUN_SCRIPT || path.join(
     process.env.HOME || process.env.USERPROFILE || "~",
     ".medusa-stt",
+    "run.sh"
+  ),
+  ttsEnabled: process.env.TTS_ENABLED !== "false",
+  ttsApiBaseUrl: process.env.TTS_API_BASE_URL || "http://localhost:8001/v1",
+  ttsApiKey: process.env.TTS_API_KEY || "local",
+  ttsModel: process.env.TTS_MODEL || "kokoro",
+  ttsVoice: process.env.TTS_VOICE || "af_heart",
+  ttsAutostart: process.env.TTS_AUTOSTART !== "false",
+  ttsRunScript: process.env.TTS_RUN_SCRIPT || path.join(
+    process.env.HOME || process.env.USERPROFILE || "~",
+    ".medusa-tts",
     "run.sh"
   ),
 };

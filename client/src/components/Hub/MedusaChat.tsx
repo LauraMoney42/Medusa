@@ -7,7 +7,7 @@ import ScreenshotButton from '../Input/ScreenshotButton';
 import MicButton from '../Input/MicButton';
 import { useDictationInsert } from '../../hooks/useDictationInsert';
 import ChatHeaderControls from './ChatHeaderControls';
-import { uploadImage } from '../../api';
+import { uploadImage, synthesizeSpeech, fetchTtsStatus } from '../../api';
 
 interface MedusaChatProps {
   onMenuToggle?: () => void;
@@ -20,6 +20,7 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
   const setActiveSession = useSessionStore((s) => s.setActiveSession);
   const messages = useChatStore((s) => s.messages);
   const loadMessages = useChatStore((s) => s.loadMessages);
+  const streamingId = useChatStore((s) => s.streamingMessageId);
 
   const [text, setText] = useState('');
   const [images, setImages] = useState<{ file: File; preview: string }[]>();
@@ -32,6 +33,12 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
   // Agent selector — which bot this chat targets. Defaults to Medusa.
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const activeSession = sessions.find((s) => s.id === selectedId) ?? medusaSession;
+
+  // Voice-out (TTS): speak the agent's replies aloud when enabled.
+  const [speak, setSpeak] = useState(() => localStorage.getItem('medusa-speak') === '1');
+  const [ttsAvailable, setTtsAvailable] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const prevStreamingRef = useRef<string | null>(null);
 
   // On mount, load messages and set as active session
   useEffect(() => {
@@ -57,6 +64,57 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
       el.scrollTop = el.scrollHeight;
     }
   }, [chatMessagesForScroll]);
+
+  // Detect whether a TTS backend is configured (hide the toggle otherwise).
+  useEffect(() => {
+    let cancelled = false;
+    fetchTtsStatus()
+      .then((s) => { if (!cancelled) setTtsAvailable(s.enabled); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  // Speak a reply — strip markdown/code and cap length for snappy speech.
+  const playTTS = useCallback(async (raw: string) => {
+    const clean = raw
+      .replace(/```[\s\S]*?```/g, ' ')
+      .replace(/`[^`]*`/g, ' ')
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .replace(/[*_#>|]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 1000);
+    if (!clean) return;
+    try {
+      const url = await synthesizeSpeech(clean);
+      if (audioRef.current) audioRef.current.pause();
+      const audio = new Audio(url);
+      audioRef.current = audio;
+      audio.onended = () => URL.revokeObjectURL(url);
+      await audio.play();
+    } catch (err) {
+      console.error('TTS playback failed:', err);
+    }
+  }, []);
+
+  // Auto-speak the active agent's reply once it finishes streaming.
+  useEffect(() => {
+    const prev = prevStreamingRef.current;
+    prevStreamingRef.current = streamingId;
+    if (!prev || streamingId || !speak || !activeSession) return;
+    const list = messages[activeSession.id] ?? [];
+    const msg = list.find((m) => m.id === prev);
+    if (msg && msg.role !== 'user' && msg.text?.trim()) void playTTS(msg.text);
+  }, [streamingId, speak, activeSession, messages, playTTS]);
+
+  const toggleSpeak = useCallback(() => {
+    setSpeak((prev) => {
+      const next = !prev;
+      localStorage.setItem('medusa-speak', next ? '1' : '0');
+      if (!next && audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+      return next;
+    });
+  }, []);
 
   const handleSendMessage = useCallback(async () => {
     if (!activeSession) return;
@@ -136,6 +194,26 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
           activeSessionId={activeSession?.id ?? null}
           onSelectAgent={setSelectedId}
         />
+        {ttsAvailable && (
+          <button
+            onClick={toggleSpeak}
+            title={speak ? 'Mute replies' : 'Speak replies'}
+            style={{ ...styles.speakBtn, color: speak ? '#4aba6a' : 'var(--text-muted)' }}
+          >
+            {speak ? (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07" />
+              </svg>
+            ) : (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                <line x1="23" y1="9" x2="17" y2="15" />
+                <line x1="17" y1="9" x2="23" y2="15" />
+              </svg>
+            )}
+          </button>
+        )}
       </div>
 
       {/* Messages */}
@@ -156,7 +234,12 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
           </div>
         ) : (
           chatMessages.map((msg) => (
-            <MessageBubble key={msg.id} message={msg} botName={activeSession.name} />
+            <MessageBubble
+              key={msg.id}
+              message={msg}
+              botName={activeSession.name}
+              onSpeak={ttsAvailable ? playTTS : undefined}
+            />
           ))
         )}
       </div>
@@ -222,7 +305,7 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
 }
 
 /** Render a single message bubble */
-function MessageBubble({ message, botName }: { message: any; botName: string }) {
+function MessageBubble({ message, botName, onSpeak }: { message: any; botName: string; onSpeak?: (text: string) => void }) {
   const isUser = message.role === 'user';
   const displayName = isUser ? 'You' : botName;
   const timestamp = new Date(message.timestamp).toLocaleTimeString([], {
@@ -244,6 +327,18 @@ function MessageBubble({ message, botName }: { message: any; botName: string }) 
         <div style={styles.bubbleHeader}>
           <span style={{ color: '#4aba6a' }}>{displayName}</span>
           <span style={styles.time}>{timestamp}</span>
+          {!isUser && onSpeak && message.text && (
+            <button
+              onClick={() => onSpeak(message.text)}
+              title="Play aloud"
+              style={styles.bubbleSpeakBtn}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+              </svg>
+            </button>
+          )}
         </div>
         <div style={styles.bubbleText}>{message.text}</div>
         {message.images && message.images.length > 0 && (
@@ -350,6 +445,25 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-muted)',
     marginLeft: 'auto',
   },
+  speakBtn: {
+    marginLeft: 'auto',
+    background: 'transparent',
+    border: 'none',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    padding: 4,
+    transition: 'color 0.15s',
+  } as React.CSSProperties,
+  bubbleSpeakBtn: {
+    background: 'transparent',
+    border: 'none',
+    cursor: 'pointer',
+    color: 'var(--text-muted)',
+    display: 'flex',
+    alignItems: 'center',
+    padding: 0,
+  } as React.CSSProperties,
   bubbleText: {
     fontSize: 13,
     color: 'var(--text-primary)',

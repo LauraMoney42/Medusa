@@ -16,6 +16,7 @@ import { createSessionsRouter } from "./routes/sessions.js";
 import imagesRouter from "./routes/images.js";
 import filesRouter from "./routes/files.js";
 import sttRouter from "./routes/stt.js";
+import ttsRouter from "./routes/tts.js";
 import { createSkillsRouter } from "./routes/skills.js";
 import { setupSocketHandler } from "./socket/handler.js";
 import { ProcessManager } from "./claude/process-manager.js";
@@ -45,6 +46,7 @@ import { devControlStore } from "./dev-control/store.js";
 import { DevControlController } from "./dev-control/controller.js";
 import { startHeadroomProxy, stopHeadroomProxy } from "./headroom/proxy-manager.js";
 import { startWhisperServer, stopWhisperServer } from "./stt/whisper-manager.js";
+import { startTtsServer, stopTtsServer } from "./tts/tts-manager.js";
 import { stopScreencast } from "./cowork/screencast.js";
 import { createHeadroomRouter } from "./routes/headroom.js";
 import { z } from "zod";
@@ -157,6 +159,7 @@ app.use("/api/sessions", sessionCreateLimiter, createSessionsRouter(sessionStore
 app.use("/api/images", uploadLimiter, imagesRouter);
 app.use("/api/files", uploadLimiter, filesRouter);
 app.use("/api/stt", uploadLimiter, sttRouter);
+app.use("/api/tts", generalLimiter, ttsRouter);
 app.use("/api/skills", generalLimiter, createSkillsRouter(skillCatalog));
 app.use("/api/chat", generalLimiter, createChatRouter(chatStore));
 app.use("/api/hub", generalLimiter, createHubRouter(hubStore, io, mentionRouter, sessionStore));
@@ -188,6 +191,7 @@ async function gracefulShutdown(signal: string) {
   //    (safe no-op if reused/never started)
   stopHeadroomProxy();
   stopWhisperServer();
+  stopTtsServer();
   stopScreencast();
 
   // 1. Stop accepting new connections
@@ -473,6 +477,9 @@ server.listen(config.port, config.host, () => {
 
   // Start (or adopt) the local Whisper STT server that backs the mic button.
   void startWhisperServer();
+
+  // Start (or adopt) the local Kokoro TTS server that voices Medusa's replies.
+  void startTtsServer();
 
   // Hot-reload projects.json when it changes on disk (e.g., a bot edits it directly).
   // Broadcasts projects:updated to all clients so the Projects Pane refreshes without restart.

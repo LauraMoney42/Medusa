@@ -1,3 +1,10 @@
+## 2026-08-05 16:46
+- Feature: Voice-out — Medusa speaks her replies aloud, completing the voice loop with STT (Features.md #6/#7)
+- Local Kokoro TTS server (~/.medusa-tts, OpenAI-compatible /v1/audio/speech); Medusa auto-starts/adopts it on boot (server/src/tts/tts-manager.ts, mirrors whisper-manager); new /api/tts + /api/tts/status routes; pluggable to ElevenLabs/OpenAI via TTS_API_BASE_URL/KEY/MODEL/VOICE
+- Client: speaker toggle in the Medusa Chat header that auto-speaks each completed reply, plus a per-message play button; strips markdown + caps length for snappy speech; playback via Audio()
+- Verified end-to-end: /api/tts returns WAV over bearer + cookie auth; toggle renders when a TTS backend is available
+- Files affected: server/src/tts/tts-manager.ts (new), server/src/routes/tts.ts (new), server/src/config.ts, server/src/index.ts, client/src/api.ts, client/src/components/Hub/MedusaChat.tsx, .env.example
+
 ## 2026-08-05 16:06
 - Feature: Supervised take-over in the Browser view — click, scroll, and type in the live browser (Features.md #2)
 - CoworkPane captures mouse (down/up/move), wheel, and keyboard on the frame, maps to normalized [0,1] coords (accounting for object-fit letterboxing), and emits cowork:input
