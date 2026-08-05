@@ -1,3 +1,11 @@
+## 2026-08-05 15:25
+- Feature: Cowork-like UI overhaul — token-usage ring, provider+model selector, agent selector (Features.md #6)
+- TokenRing widget in the sidebar header: circular spend gauge (today vs a soft daily budget from localStorage medusa-daily-budget, default $20); click-expands a popover with Today/Week/Month cost + top bots
+- ChatHeaderControls in the Medusa Chat header: agent selector (defaults to Medusa, switches which bot the chat targets and loads its history), provider selector (Anthropic/Kimi), per-bot model selector (Auto/Haiku/Sonnet/Opus/Fable)
+- MedusaChat generalized from the hardwired Medusa session to a selectable active session
+- New components scaffolded via parallel subagents, then integrated + verified
+- Files affected: client/src/components/Usage/TokenRing.tsx (new), client/src/components/Hub/ChatHeaderControls.tsx (new), client/src/components/Hub/MedusaChat.tsx, client/src/components/Sidebar/Sidebar.tsx
+
 ## 2026-08-05 15:13
 - Feature: Search box to filter the chat/bot list in the sidebar (Features.md #6, UI overhaul)
 - Filters bots by name as you type; drag-reorder disabled while a query is active; "No chats match" empty state. (Rename was already available via right-click → Rename and the pencil → editor.)

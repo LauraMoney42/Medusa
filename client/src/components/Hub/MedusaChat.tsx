@@ -6,6 +6,7 @@ import { useSocket } from '../../hooks/useSocket';
 import ScreenshotButton from '../Input/ScreenshotButton';
 import MicButton from '../Input/MicButton';
 import { useDictationInsert } from '../../hooks/useDictationInsert';
+import ChatHeaderControls from './ChatHeaderControls';
 import { uploadImage } from '../../api';
 
 interface MedusaChatProps {
@@ -28,13 +29,17 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
   // Find the Medusa session
   const medusaSession = sessions.find((s) => s.name.toLowerCase() === 'medusa');
 
+  // Agent selector — which bot this chat targets. Defaults to Medusa.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const activeSession = sessions.find((s) => s.id === selectedId) ?? medusaSession;
+
   // On mount, load messages and set as active session
   useEffect(() => {
-    if (!medusaSession) return;
+    if (!activeSession) return;
 
-    setActiveSession(medusaSession.id);
-    loadMessages(medusaSession.id).catch(console.error);
-  }, [medusaSession, setActiveSession, loadMessages]);
+    setActiveSession(activeSession.id);
+    loadMessages(activeSession.id).catch(console.error);
+  }, [activeSession, setActiveSession, loadMessages]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -45,7 +50,7 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
   }, [text]);
 
   // Scroll to bottom when messages change or on mount
-  const chatMessagesForScroll = medusaSession ? messages[medusaSession.id] : undefined;
+  const chatMessagesForScroll = activeSession ? messages[activeSession.id] : undefined;
   useEffect(() => {
     const el = messageListRef.current;
     if (el) {
@@ -54,7 +59,7 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
   }, [chatMessagesForScroll]);
 
   const handleSendMessage = useCallback(async () => {
-    if (!medusaSession) return;
+    if (!activeSession) return;
     if (!text.trim() && (!images || images.length === 0)) return;
 
     const socket = getSocket();
@@ -74,7 +79,7 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
     }
 
     socket.emit('message:send', {
-      sessionId: medusaSession.id,
+      sessionId: activeSession.id,
       text: text.trim(),
       ...(uploadedPaths.length > 0 ? { images: uploadedPaths } : {}),
     });
@@ -84,7 +89,7 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
-  }, [text, images, medusaSession]);
+  }, [text, images, activeSession]);
 
   const handleScreenshot = useCallback((file: File, preview: string) => {
     setImages((prev) => [...(prev ?? []), { file, preview }]);
@@ -101,7 +106,7 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
     });
   }, []);
 
-  if (!medusaSession) {
+  if (!activeSession) {
     return (
       <div style={styles.container}>
         <div style={styles.empty}>Medusa bot not found</div>
@@ -109,12 +114,12 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
     );
   }
 
-  const chatMessages = messages[medusaSession.id] ?? [];
+  const chatMessages = messages[activeSession.id] ?? [];
 
   return (
     <div style={styles.container}>
       {/* Header */}
-      <div style={styles.header}>
+      <div style={{ ...styles.header, justifyContent: 'flex-start', gap: 12 }}>
         <button
           onClick={onMenuToggle}
           style={styles.menuBtn}
@@ -126,8 +131,11 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
             <line x1="3" y1="18" x2="21" y2="18" />
           </svg>
         </button>
-        <h2 style={styles.title}>Medusa</h2>
-        <div style={{ width: 28 }} />
+        <ChatHeaderControls
+          sessions={sessions}
+          activeSessionId={activeSession?.id ?? null}
+          onSelectAgent={setSelectedId}
+        />
       </div>
 
       {/* Messages */}

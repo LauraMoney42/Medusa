@@ -78,17 +78,21 @@ Goal: make Medusa's UI resemble Claude Cowork.
   - **Rename** a chat — ✅ done (right-click → Rename, or pencil → editor).
   - **Search bar** — ✅ done (2026-08-05). Filters the bot list by name in `SessionList.tsx`.
     Future: also match message content.
-- **Agent selector**
-  - Pick which agent/bot to work with when desired.
-  - **Always starts with Medusa** as the default agent on a new chat.
-- **Provider + model selector**
+- **Agent selector** — ✅ done (2026-08-05)
+  - Pick which agent/bot to work with when desired (dropdown in the Medusa Chat header).
+  - **Always starts with Medusa** as the default agent. Switching loads that bot's history
+    and routes messages to it (`MedusaChat` generalized from the hardwired Medusa session).
+- **Provider + model selector** — ✅ done (2026-08-05; `ChatHeaderControls`). OpenAI/other
+  providers still need backend support (bots are Claude CLI or Kimi today).
   - Choose the **provider**: Anthropic, Kimi (Moonshot), OpenAI, others.
   - Choose the **model** within the provider: e.g. Anthropic → Sonnet / Opus; OpenAI →
     GPT-4o / o-series; Kimi → K2 / latest. (Model list should be provider-scoped.)
   - Note: per-bot model selection already exists (Auto / Haiku / Sonnet / Opus / Fable)
     and Kimi provider routing already exists in the backend — this extends both into a
     unified provider+model picker in the chat header.
-- **Token-usage ring**
+- **Token-usage ring** — ✅ done (2026-08-05; `TokenRing` in the sidebar header). Uses a
+  soft daily budget (localStorage `medusa-daily-budget`, default $20) since the Max plan
+  exposes no hard "tokens left"; shows logged API cost.
   - Small circular/ring gauge showing spend vs. remaining (tokens and/or plan limits).
   - **Click to expand** into a detailed popover like Cowork: context-window usage,
     5-hour and weekly limits with reset times, and credit/dollar balance.
