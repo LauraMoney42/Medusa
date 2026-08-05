@@ -37,10 +37,20 @@ Ranking favors: evals rigor, multi-agent systems, computer-use, and product craf
    routing so one Medusa dispatches to `mac-mini` or `laptop`. Single shared memory at
    the brain (no dual-instance sync).
 
-4. **Human-in-the-loop safety / guardrails**
-   Anthropic's core value; shows a safety-first agent design mindset. Approvals for
-   irreversible actions (send / publish / delete / purchase), isolated automation Chrome
-   profile, no auto-run of untrusted community skills, mTLS / ACL on the runner link.
+4. **Human-in-the-loop safety / guardrails** — ✅ **approval workflow DONE (2026-08-05)**
+   Anthropic's core value; shows a safety-first agent design mindset. Shipped: bot
+   escalations (`[HUB-POST: @You APPROVAL NEEDED: ...]`) are detected server-side and
+   turned into structured requests with a dedicated Approve/Deny UI (`ApprovalBanner`)
+   in the Hub and Medusa Chat — no more relying on the user to notice a plain chat
+   message. Resolving posts the decision back to the bot via the existing mention
+   pipeline. Validated end-to-end (approve + deny paths, live socket push, no
+   false-positive detection, persists across restart).
+   **Remaining:** isolated automation Chrome profile / no auto-run of untrusted
+   community skills / mTLS+ACL on the runner link (these apply to items #3/#9, not yet
+   built). Deliberately did **not** touch global Claude Code hooks/settings for this —
+   the default `CLAUDE_CONFIG_DIR` (`~/.claude`) is the user's everyday Claude Code
+   config, so a global `PreToolUse` hook there would affect their normal CLI usage, not
+   just Medusa's bots. That would need a dedicated per-bot config dir first.
 
 5. **Native Mac + iOS Simulator control (cua + Simulator MCP) into the same pane**
    Extends the computer-use narrative to driving real dev tools end to end. Pairs with

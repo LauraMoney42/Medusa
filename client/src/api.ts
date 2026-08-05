@@ -3,6 +3,7 @@ import type { ChatMessage } from './types/message';
 import type { HubMessage } from './types/hub';
 import type { CompletedTask } from './types/task';
 import type { ProjectSummary, Project, QuickTask } from './types/project';
+import type { ApprovalRequest } from './types/approval';
 
 // Auth is now handled via httpOnly cookie (set by /api/auth/login).
 // credentials: 'include' tells the browser to send that cookie automatically.
@@ -238,6 +239,20 @@ export function updateQuickTask(
 
 export function deleteQuickTask(id: string): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>(`/api/quick-tasks/${id}`, { method: 'DELETE' });
+}
+
+// ── Approvals (human-in-the-loop guardrail) ──
+
+export function fetchApprovals(): Promise<ApprovalRequest[]> {
+  return request<ApprovalRequest[]>('/api/approvals');
+}
+
+export function approveRequest(id: string): Promise<ApprovalRequest> {
+  return request<ApprovalRequest>(`/api/approvals/${id}/approve`, { method: 'POST' });
+}
+
+export function denyRequest(id: string): Promise<ApprovalRequest> {
+  return request<ApprovalRequest>(`/api/approvals/${id}/deny`, { method: 'POST' });
 }
 
 export function fetchSkills(): Promise<{ skills: SkillInfo[]; ready: boolean }> {

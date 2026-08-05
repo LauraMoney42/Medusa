@@ -6,6 +6,7 @@ import type { HubStore } from "./store.js";
 import type { MentionRouter } from "./mention-router.js";
 import type { TokenLogger } from "../metrics/token-logger.js";
 import type { QuickTaskStore } from "../projects/quick-task-store.js";
+import type { ApprovalStore } from "./approval-store.js";
 import type { DevControlStore } from "../dev-control/store.js";
 import { autonomousDeliver } from "../claude/autonomous-deliver.js";
 import config from "../config.js";
@@ -46,6 +47,7 @@ export class HubPollScheduler {
   private chatStore: ChatStore;
   private tokenLogger?: TokenLogger;
   private quickTaskStore?: QuickTaskStore;
+  private approvalStore?: ApprovalStore;
   private devControlStore?: DevControlStore;
   private deliverStatusRequest?: (sessionId: string) => Promise<void>;
 
@@ -73,7 +75,8 @@ export class HubPollScheduler {
     tokenLogger?: TokenLogger,
     quickTaskStore?: QuickTaskStore,
     devControlStore?: DevControlStore,
-    deliverStatusRequest?: (sessionId: string) => Promise<void>
+    deliverStatusRequest?: (sessionId: string) => Promise<void>,
+    approvalStore?: ApprovalStore
   ) {
     this.processManager = processManager;
     this.sessionStore = sessionStore;
@@ -85,6 +88,7 @@ export class HubPollScheduler {
     this.quickTaskStore = quickTaskStore;
     this.devControlStore = devControlStore;
     this.deliverStatusRequest = deliverStatusRequest;
+    this.approvalStore = approvalStore;
   }
 
   start(): void {
@@ -244,6 +248,7 @@ export class HubPollScheduler {
       mentionRouter: this.mentionRouter,
       tokenLogger: this.tokenLogger,
       quickTaskStore: this.quickTaskStore,
+      approvalStore: this.approvalStore,
     }).then(() => {
       this.recordHeartbeat(sessionId);
     }).catch((err) => {
@@ -291,6 +296,7 @@ export class HubPollScheduler {
         mentionRouter: this.mentionRouter,
         tokenLogger: this.tokenLogger,
         quickTaskStore: this.quickTaskStore,
+        approvalStore: this.approvalStore,
       }).then(() => {
         this.recordHeartbeat(session.id);
       }).catch((err) => {
@@ -441,6 +447,7 @@ export class HubPollScheduler {
       mentionRouter: this.mentionRouter,
       tokenLogger: this.tokenLogger,
       quickTaskStore: this.quickTaskStore,
+      approvalStore: this.approvalStore,
       // TC-5: Pass last-seen message ID for delta hub context
       sinceMessageId,
     }).then(() => {

@@ -8,6 +8,7 @@ import ScreenshotButton from '../Input/ScreenshotButton';
 import MicButton from '../Input/MicButton';
 import { useDictationInsert } from '../../hooks/useDictationInsert';
 import ChatHeaderControls from './ChatHeaderControls';
+import ApprovalBanner from './ApprovalBanner';
 import { uploadImage, synthesizeSpeech, fetchTtsStatus } from '../../api';
 
 interface MedusaChatProps {
@@ -216,6 +217,9 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
           </button>
         )}
       </div>
+
+      {/* Human-in-the-loop guardrail: pending bot escalations, Approve/Deny */}
+      <ApprovalBanner />
 
       {/* Messages */}
       <div ref={messageListRef} style={styles.messageList}>

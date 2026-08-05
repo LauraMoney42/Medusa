@@ -1,3 +1,13 @@
+## 2026-08-05 18:21
+- Feature: Human-in-the-loop approval guardrail (Features.md #4) — bot escalations become actionable Approve/Deny requests instead of a plain hub message the user could miss
+- New hub/approval-store.ts (mirrors quick-task-store.ts: Zod schema, atomic JSON writes) persisting ApprovalRequest { from, description, sessionId, hubMessageId, status, createdAt, resolvedAt }
+- Detection: extractApprovalRequest() in post-processor.ts parses `[HUB-POST: @You APPROVAL NEEDED: <what>]` (the existing bot-escalation convention already in the system prompt); wired into the bot-stream path (processHubPosts, threaded through autonomous-deliver/mention-router/poll-scheduler/dev-control/socket-handler) AND the external POST /api/hub path, so it fires regardless of source
+- New GET/POST /api/approvals routes; resolving an approval posts a reply to the Hub as an @mention to the bot ("@BotName ✅ APPROVED: ..." / "❌ DENIED: ..."), reusing the existing mention-routing pipeline — zero new bot-side plumbing
+- Client: ApprovalBanner.tsx — amber card(s) with Approve/Deny buttons, self-contained socket subscription (mirrors CoworkPane), mounted in both the Hub and Medusa Chat views so a request can't be missed regardless of which tab is open
+- Unit tests for extractApprovalRequest (5 new, 175 total passing)
+- Validated end-to-end via a subagent + direct verification: both Approve and Deny paths, live socket push of new requests, correct Hub reply posted and routed to the target bot, no false-positive detection on ordinary hub messages, and approvals persist correctly across a server restart
+- Files affected: server/src/hub/approval-store.ts (new), server/src/routes/approvals.ts (new), client/src/components/Hub/ApprovalBanner.tsx (new), client/src/types/approval.ts (new), server/src/hub/post-processor.ts, server/src/config.ts, server/src/index.ts, server/src/routes/hub.ts, server/src/claude/autonomous-deliver.ts, server/src/hub/mention-router.ts, server/src/hub/poll-scheduler.ts, server/src/dev-control/controller.ts, server/src/socket/handler.ts, client/src/api.ts, client/src/components/Hub/HubFeed.tsx, client/src/components/Hub/MedusaChat.tsx
+
 ## 2026-08-05 17:05
 - Feature: Voice settings — Settings modal has a "Voice" section with on/off, a voice picker, and a speed slider
 - New shared client store (stores/ttsStore.ts, localStorage-backed) keeps the header speaker toggle and Settings in sync

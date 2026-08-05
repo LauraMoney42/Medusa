@@ -458,7 +458,8 @@ export function setupSocketHandler(
   hubStore: HubStore,
   mentionRouter: MentionRouter,
   tokenLogger?: TokenLogger,
-  quickTaskStore?: import("../projects/quick-task-store.js").QuickTaskStore
+  quickTaskStore?: import("../projects/quick-task-store.js").QuickTaskStore,
+  approvalStore?: import("../hub/approval-store.js").ApprovalStore
 ): void {
   // ---- Auth middleware (rate-limited + constant-time comparison) ----
   io.use((socket, next) => {
@@ -570,7 +571,7 @@ export function setupSocketHandler(
 
     // Helper: process extracted hub posts via shared post-processor
     const handleHubPosts = (posts: string[]) =>
-      processHubPosts(posts, { from: meta.name, sessionId, hubStore, mentionRouter, io, quickTaskStore });
+      processHubPosts(posts, { from: meta.name, sessionId, hubStore, mentionRouter, io, quickTaskStore, approvalStore });
 
     // Helper: route [BOT-TASK: ...] tokens directly to target bots (no Hub write)
     const handleBotTasks = (tasks: string[]) => {

@@ -30,6 +30,8 @@ export interface Config {
   hubFile: string;
   projectsFile: string;
   quickTasksFile: string;
+  /** Path to persist human-in-the-loop approval requests (bot escalations) */
+  approvalsFile: string;
   /** Path to persist interrupted session state for auto-resume on next startup */
   interruptedSessionsFile: string;
   /** Path to persist per-session dev control state (pause / interrupt / status request) */
@@ -126,6 +128,11 @@ const config: Config = {
     process.env.HOME || process.env.USERPROFILE || "~",
     ".claude-chat",
     "quick-tasks.json"
+  ),
+  approvalsFile: path.join(
+    process.env.HOME || process.env.USERPROFILE || "~",
+    ".claude-chat",
+    "approvals.json"
   ),
   interruptedSessionsFile: path.join(
     process.env.HOME || process.env.USERPROFILE || "~",

@@ -6,6 +6,7 @@ import type { HubStore } from "../hub/store.js";
 import type { MentionRouter } from "../hub/mention-router.js";
 import type { TokenLogger } from "../metrics/token-logger.js";
 import type { QuickTaskStore } from "../projects/quick-task-store.js";
+import type { ApprovalStore } from "../hub/approval-store.js";
 import { DevControlStore } from "./store.js";
 import { autonomousDeliver } from "../claude/autonomous-deliver.js";
 
@@ -27,7 +28,8 @@ export class DevControlController {
     private hubStore: HubStore,
     private mentionRouter?: MentionRouter,
     private tokenLogger?: TokenLogger,
-    private quickTaskStore?: QuickTaskStore
+    private quickTaskStore?: QuickTaskStore,
+    private approvalStore?: ApprovalStore
   ) {}
 
   private broadcast(sessionId: string): void {
@@ -145,6 +147,7 @@ export class DevControlController {
         mentionRouter: this.mentionRouter,
         tokenLogger: this.tokenLogger,
         quickTaskStore: this.quickTaskStore,
+        approvalStore: this.approvalStore,
       });
       console.log(`[dev-control] Status request delivered to ${meta.name} (${sessionId})`);
     } catch (err) {

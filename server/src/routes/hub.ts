@@ -3,12 +3,15 @@ import type { Server as IOServer } from "socket.io";
 import type { HubStore } from "../hub/store.js";
 import type { MentionRouter } from "../hub/mention-router.js";
 import type { SessionStore } from "../sessions/store.js";
+import type { ApprovalStore } from "../hub/approval-store.js";
+import { extractApprovalRequest } from "../hub/post-processor.js";
 
 export function createHubRouter(
   hubStore: HubStore,
   io: IOServer,
   mentionRouter: MentionRouter,
-  sessionStore: SessionStore
+  sessionStore: SessionStore,
+  approvalStore?: ApprovalStore
 ): Router {
   const router = Router();
 
@@ -63,6 +66,21 @@ export function createHubRouter(
 
     // Route any @mentions
     mentionRouter.processMessage(hubMsg);
+
+    // Human-in-the-loop guardrail: turn an escalation into a structured,
+    // actionable Approve/Deny request (same detection used for bot streams).
+    if (approvalStore) {
+      const approvalReq = extractApprovalRequest(hubMsg.text);
+      if (approvalReq) {
+        const approval = approvalStore.create({
+          from: displayName.trim(),
+          description: approvalReq.description,
+          sessionId: sessionId || "",
+          hubMessageId: hubMsg.id,
+        });
+        io.emit("approval:new", approval);
+      }
+    }
 
     res.status(201).json(hubMsg);
   });

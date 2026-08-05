@@ -5,6 +5,7 @@ import type { ChatStore } from "../chat/store.js";
 import type { HubStore, HubMessage } from "./store.js";
 import type { TokenLogger } from "../metrics/token-logger.js";
 import type { QuickTaskStore } from "../projects/quick-task-store.js";
+import type { ApprovalStore } from "./approval-store.js";
 import { autonomousDeliver } from "../claude/autonomous-deliver.js";
 import {
   hasMention,
@@ -49,6 +50,7 @@ export class MentionRouter {
   private io: IOServer;
   private tokenLogger?: TokenLogger;
   private quickTaskStore?: QuickTaskStore;
+  private approvalStore?: ApprovalStore;
 
   /** sessionId -> FIFO queue of pending mentions (max MAX_PENDING per bot) */
   private pendingMentions = new Map<string, PendingMention[]>();
@@ -76,7 +78,8 @@ export class MentionRouter {
     chatStore: ChatStore,
     io: IOServer,
     tokenLogger?: TokenLogger,
-    quickTaskStore?: QuickTaskStore
+    quickTaskStore?: QuickTaskStore,
+    approvalStore?: ApprovalStore
   ) {
     this.processManager = processManager;
     this.sessionStore = sessionStore;
@@ -85,6 +88,7 @@ export class MentionRouter {
     this.io = io;
     this.tokenLogger = tokenLogger;
     this.quickTaskStore = quickTaskStore;
+    this.approvalStore = approvalStore;
   }
 
   /**
@@ -342,6 +346,7 @@ export class MentionRouter {
       chainDepth,
       tokenLogger: this.tokenLogger,
       quickTaskStore: this.quickTaskStore,
+      approvalStore: this.approvalStore,
     }).catch((err) => {
       console.error(`[mention-router] bot-to-bot delivery failed for ${sessionId}:`, err);
     });
@@ -432,6 +437,7 @@ export class MentionRouter {
       chainDepth,
       tokenLogger: this.tokenLogger,
       quickTaskStore: this.quickTaskStore,
+      approvalStore: this.approvalStore,
       images,
       files,
     }).catch((err) => {

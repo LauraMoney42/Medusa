@@ -13,6 +13,7 @@ import ScreenshotButton from '../Input/ScreenshotButton';
 import MicButton from '../Input/MicButton';
 import { useDictationInsert } from '../../hooks/useDictationInsert';
 import MentionAutocomplete from './MentionAutocomplete';
+import ApprovalBanner from './ApprovalBanner';
 const HUB_MAX_HEIGHT = 150;
 
 interface HubFeedProps {
@@ -408,6 +409,9 @@ export default function HubFeed({ onMenuToggle }: HubFeedProps) {
 
       {/* Message list + input */}
       {<>
+      {/* Human-in-the-loop guardrail: pending bot escalations, Approve/Deny */}
+      <ApprovalBanner />
+
       {/* Message feed */}
       <div style={styles.feed}>
         {messages.length === 0 ? (

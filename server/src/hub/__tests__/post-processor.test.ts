@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractQuickTask } from "../post-processor.js";
+import { extractQuickTask, extractApprovalRequest } from "../post-processor.js";
 
 describe("extractQuickTask", () => {
   it("parses a title and assignee split on the pipe", () => {
@@ -38,5 +38,34 @@ describe("extractQuickTask", () => {
 
   it("returns null for an empty marker body", () => {
     expect(extractQuickTask("[QUICK-TASK:   ]")).toBeNull();
+  });
+});
+
+describe("extractApprovalRequest", () => {
+  it("extracts the description after APPROVAL NEEDED:", () => {
+    expect(extractApprovalRequest("@You 🚨🚨🚨 APPROVAL NEEDED: Should I delete the old branch?")).toEqual({
+      description: "Should I delete the old branch?",
+    });
+  });
+
+  it("is case-insensitive and tolerant of extra whitespace", () => {
+    expect(extractApprovalRequest("approval   needed:   push to production?")).toEqual({
+      description: "push to production?",
+    });
+  });
+
+  it("works without the emoji/mention prefix", () => {
+    expect(extractApprovalRequest("APPROVAL NEEDED: force-push main")).toEqual({
+      description: "force-push main",
+    });
+  });
+
+  it("returns null when there is no marker", () => {
+    expect(extractApprovalRequest("just a normal hub message")).toBeNull();
+  });
+
+  it("returns null when the description is empty", () => {
+    expect(extractApprovalRequest("APPROVAL NEEDED:")).toBeNull();
+    expect(extractApprovalRequest("APPROVAL NEEDED:    ")).toBeNull();
   });
 });

@@ -45,6 +45,8 @@ export interface AutonomousDeliverParams {
   sinceMessageId?: string;
   /** Enables [QUICK-TASK:] pattern detection in hub posts */
   quickTaskStore?: import("../projects/quick-task-store.js").QuickTaskStore;
+  /** Enables APPROVAL NEEDED detection (human-in-the-loop guardrail) */
+  approvalStore?: import("../hub/approval-store.js").ApprovalStore;
   /** Image paths to pass to the Claude process (e.g. from Hub messages with images) */
   images?: string[];
   /** Non-image file paths to pass to the Claude process */
@@ -72,6 +74,7 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
     tokenLogger,
     sinceMessageId,
     quickTaskStore,
+    approvalStore,
     images,
     files,
   } = params;
@@ -149,6 +152,7 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
       io,
       chainDepth: nextChainDepth,
       quickTaskStore,
+      approvalStore,
     });
   };
 

@@ -31,6 +31,8 @@ import { ProjectStore } from "./projects/store.js";
 import { createProjectsRouter } from "./routes/projects.js";
 import { QuickTaskStore } from "./projects/quick-task-store.js";
 import { createQuickTasksRouter } from "./routes/quick-tasks.js";
+import { ApprovalStore } from "./hub/approval-store.js";
+import { createApprovalsRouter } from "./routes/approvals.js";
 import { createCaffeineRouter, shutdownCaffeine } from "./routes/caffeine.js";
 import { createSettingsRouter } from "./routes/settings.js";
 import { createTicTalkRouter } from "./routes/tictalk.js";
@@ -63,6 +65,7 @@ const chatStore = new ChatStore(path.dirname(config.sessionsFile));
 const hubStore = new HubStore(config.hubFile);
 const projectStore = new ProjectStore(config.projectsFile);
 const quickTaskStore = new QuickTaskStore(config.quickTasksFile);
+const approvalStore = new ApprovalStore(config.approvalsFile);
 const tokenLogger = new TokenLogger(config.tokenUsageLogFile);
 
 // Pre-load existing sessions into the process manager so that
@@ -110,19 +113,19 @@ const io = new IOServer(server, {
 } as any);
 
 // MentionRouter needs io for streaming responses to session rooms
-const mentionRouter = new MentionRouter(processManager, sessionStore, hubStore, chatStore, io, tokenLogger, quickTaskStore);
+const mentionRouter = new MentionRouter(processManager, sessionStore, hubStore, chatStore, io, tokenLogger, quickTaskStore, approvalStore);
 
-setupSocketHandler(io, processManager, sessionStore, skillCatalog, chatStore, hubStore, mentionRouter, tokenLogger, quickTaskStore);
+setupSocketHandler(io, processManager, sessionStore, skillCatalog, chatStore, hubStore, mentionRouter, tokenLogger, quickTaskStore, approvalStore);
 
 // ---- Per-session dev control (pause / interrupt / status) ----
 const devControlController = new DevControlController(
-  devControlStore, processManager, sessionStore, io, chatStore, hubStore, mentionRouter, tokenLogger, quickTaskStore
+  devControlStore, processManager, sessionStore, io, chatStore, hubStore, mentionRouter, tokenLogger, quickTaskStore, approvalStore
 );
 
 // ---- Background hub polling + stale assignment tracking ----
 const pollScheduler = new HubPollScheduler(
   processManager, sessionStore, hubStore, mentionRouter, io, chatStore, tokenLogger, quickTaskStore,
-  devControlStore, devControlController.deliverStatusRequest.bind(devControlController)
+  devControlStore, devControlController.deliverStatusRequest.bind(devControlController), approvalStore
 );
 
 // ---- P2-2: HTTP rate limiting ----
@@ -162,9 +165,10 @@ app.use("/api/stt", uploadLimiter, sttRouter);
 app.use("/api/tts", generalLimiter, ttsRouter);
 app.use("/api/skills", generalLimiter, createSkillsRouter(skillCatalog));
 app.use("/api/chat", generalLimiter, createChatRouter(chatStore));
-app.use("/api/hub", generalLimiter, createHubRouter(hubStore, io, mentionRouter, sessionStore));
+app.use("/api/hub", generalLimiter, createHubRouter(hubStore, io, mentionRouter, sessionStore, approvalStore));
 app.use("/api/projects", generalLimiter, createProjectsRouter(projectStore));
 app.use("/api/quick-tasks", generalLimiter, createQuickTasksRouter(quickTaskStore));
+app.use("/api/approvals", generalLimiter, createApprovalsRouter(approvalStore, hubStore, mentionRouter, io));
 const { metricsRouter, tokenUsageHandler } = createMetricsRouter(tokenLogger);
 app.use("/api/metrics", generalLimiter, metricsRouter);
 // Clean alias: GET /api/token-usage?period=day|week|month (for Token Usage Dashboard)
@@ -450,6 +454,7 @@ async function resumeInterruptedSessions(): Promise<InterruptedSession[]> {
       mentionRouter,
       tokenLogger,
       quickTaskStore,
+      approvalStore,
     }).catch((err) => {
       console.error(`[medusa] AR2: autonomousDeliver failed for ${botName} (${sessionId}):`, err);
     });

@@ -2,6 +2,7 @@ import type { Server as IOServer } from "socket.io";
 import type { HubStore } from "./store.js";
 import type { MentionRouter } from "./mention-router.js";
 import type { QuickTaskStore } from "../projects/quick-task-store.js";
+import type { ApprovalStore } from "./approval-store.js";
 import { extractTaskDone } from "../socket/handler.js";
 
 /**
@@ -26,6 +27,23 @@ export function extractQuickTask(
 }
 
 /**
+ * Extract an escalation from `[HUB-POST: @You 🚨🚨🚨 APPROVAL NEEDED: <what>]`.
+ * Returns { description } or null if no match.
+ *
+ * Human-in-the-loop guardrail: bots are instructed (see handler.ts system prompt)
+ * to use this exact phrasing when they need a human decision on something
+ * irreversible or uncertain. This turns that free-text convention into a
+ * structured request the user can Approve/Deny from a dedicated UI.
+ */
+export function extractApprovalRequest(text: string): { description: string } | null {
+  const match = text.match(/APPROVAL\s+NEEDED:\s*(.+)/i);
+  if (!match) return null;
+  const description = match[1].trim();
+  if (!description) return null;
+  return { description };
+}
+
+/**
  * Shared hub post processing logic used across handler.ts, mention-router.ts,
  * and poll-scheduler.ts.
  *
@@ -42,6 +60,8 @@ export interface HubPostProcessorOptions {
   io: IOServer;
   /** Optional: enables [QUICK-TASK:] pattern detection in hub posts */
   quickTaskStore?: QuickTaskStore;
+  /** Optional: enables APPROVAL NEEDED detection (human-in-the-loop guardrail) */
+  approvalStore?: ApprovalStore;
   /** Optional callback for chain-routing (mention-router sets its own depth) */
   onPost?: (hubMsgId: string) => void;
   /** Chain depth for mention routing (default 0) */
@@ -80,6 +100,20 @@ export function processHubPosts(
       io.emit("task:done", task);
       // Clear pending-task tracking — returns bot to hibernation mode per coordination spec
       io.emit("bot:task-cleared", { sessionId });
+    }
+
+    // Detect an escalation and turn it into a structured, actionable request.
+    if (opts.approvalStore) {
+      const approvalReq = extractApprovalRequest(rawText);
+      if (approvalReq) {
+        const approval = opts.approvalStore.create({
+          from,
+          description: approvalReq.description,
+          sessionId,
+          hubMessageId: hubMsg.id,
+        });
+        io.emit("approval:new", approval);
+      }
     }
 
     // Detect [QUICK-TASK: title | assignee] and auto-create quick tasks
