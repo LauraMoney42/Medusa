@@ -44,6 +44,7 @@ import { createDevControlRouter } from "./routes/dev-control.js";
 import { devControlStore } from "./dev-control/store.js";
 import { DevControlController } from "./dev-control/controller.js";
 import { startHeadroomProxy, stopHeadroomProxy } from "./headroom/proxy-manager.js";
+import { startWhisperServer, stopWhisperServer } from "./stt/whisper-manager.js";
 import { createHeadroomRouter } from "./routes/headroom.js";
 import { z } from "zod";
 
@@ -182,8 +183,10 @@ async function gracefulShutdown(signal: string) {
 
   console.log(`[medusa] ${signal} received — starting graceful shutdown`);
 
-  // 0. Stop the Headroom proxy if we own it (safe no-op if reused/never started)
+  // 0. Stop the Headroom proxy + local Whisper STT server if we own them
+  //    (safe no-op if reused/never started)
   stopHeadroomProxy();
+  stopWhisperServer();
 
   // 1. Stop accepting new connections
   server.close();
@@ -465,6 +468,9 @@ server.listen(config.port, config.host, () => {
   // Start the Headroom compression proxy (fire-and-forget). Bots pick it up on
   // their next spawn once it's ready; if it never comes up they run direct.
   void startHeadroomProxy();
+
+  // Start (or adopt) the local Whisper STT server that backs the mic button.
+  void startWhisperServer();
 
   // Hot-reload projects.json when it changes on disk (e.g., a bot edits it directly).
   // Broadcasts projects:updated to all clients so the Projects Pane refreshes without restart.

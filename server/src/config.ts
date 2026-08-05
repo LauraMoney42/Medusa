@@ -74,6 +74,10 @@ export interface Config {
   sttApiKey: string;
   /** Transcription model name (default: whisper-1) */
   sttModel: string;
+  /** Auto-start a local Whisper STT server when Medusa boots (default: true) */
+  sttAutostart: boolean;
+  /** Path to the local STT server run script */
+  sttRunScript: string;
 }
 
 const config: Config = {
@@ -147,6 +151,12 @@ const config: Config = {
   sttApiBaseUrl: process.env.STT_API_BASE_URL || "https://api.openai.com/v1",
   sttApiKey: process.env.STT_API_KEY || "",
   sttModel: process.env.STT_MODEL || "whisper-1",
+  sttAutostart: process.env.STT_AUTOSTART !== "false",
+  sttRunScript: process.env.STT_RUN_SCRIPT || path.join(
+    process.env.HOME || process.env.USERPROFILE || "~",
+    ".medusa-stt",
+    "run.sh"
+  ),
 };
 
 export default config;

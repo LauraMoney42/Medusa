@@ -1,3 +1,9 @@
+## 2026-08-05 15:10
+- Feature: Medusa auto-starts the local Whisper STT server on boot
+- New supervised side-process (server/src/stt/whisper-manager.ts) mirroring the Headroom proxy: spawns ~/.medusa-stt/run.sh on startup when STT_API_BASE_URL is loopback, health-checks /v1/models, adopts an already-running server, auto-restarts on crash (max 5), kills it on graceful shutdown
+- Config: STT_AUTOSTART (default true), STT_RUN_SCRIPT (default ~/.medusa-stt/run.sh)
+- Files affected: server/src/stt/whisper-manager.ts (new), server/src/config.ts, server/src/index.ts, .env.example
+
 ## 2026-08-05 14:23
 - Feature: Speech-to-text mic button in the chat input (Features.md #7)
 - Client records via MediaRecorder (works in Chrome and the packaged WKWebView app, unlike the SpeechRecognition API) and POSTs to a new /api/stt; the returned transcript is appended to the message input
