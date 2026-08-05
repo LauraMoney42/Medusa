@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useChatStore } from '../../stores/chatStore';
+import { useTtsStore } from '../../stores/ttsStore';
 import { getSocket } from '../../socket';
 import { useSocket } from '../../hooks/useSocket';
 import ScreenshotButton from '../Input/ScreenshotButton';
@@ -34,8 +35,11 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const activeSession = sessions.find((s) => s.id === selectedId) ?? medusaSession;
 
-  // Voice-out (TTS): speak the agent's replies aloud when enabled.
-  const [speak, setSpeak] = useState(() => localStorage.getItem('medusa-speak') === '1');
+  // Voice-out (TTS): preferences live in the shared store (synced with Settings).
+  const speak = useTtsStore((s) => s.speak);
+  const setSpeak = useTtsStore((s) => s.setSpeak);
+  const voice = useTtsStore((s) => s.voice);
+  const speed = useTtsStore((s) => s.speed);
   const [ttsAvailable, setTtsAvailable] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const prevStreamingRef = useRef<string | null>(null);
@@ -86,7 +90,7 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
       .slice(0, 1000);
     if (!clean) return;
     try {
-      const url = await synthesizeSpeech(clean);
+      const url = await synthesizeSpeech(clean, voice, speed);
       if (audioRef.current) audioRef.current.pause();
       const audio = new Audio(url);
       audioRef.current = audio;
@@ -95,7 +99,7 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
     } catch (err) {
       console.error('TTS playback failed:', err);
     }
-  }, []);
+  }, [voice, speed]);
 
   // Auto-speak the active agent's reply once it finishes streaming.
   useEffect(() => {
@@ -108,13 +112,10 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
   }, [streamingId, speak, activeSession, messages, playTTS]);
 
   const toggleSpeak = useCallback(() => {
-    setSpeak((prev) => {
-      const next = !prev;
-      localStorage.setItem('medusa-speak', next ? '1' : '0');
-      if (!next && audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
-      return next;
-    });
-  }, []);
+    const next = !speak;
+    setSpeak(next);
+    if (!next && audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+  }, [speak, setSpeak]);
 
   const handleSendMessage = useCallback(async () => {
     if (!activeSession) return;

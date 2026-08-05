@@ -1,3 +1,11 @@
+## 2026-08-05 17:05
+- Feature: Voice settings — Settings modal has a "Voice" section with on/off, a voice picker, and a speed slider
+- New shared client store (stores/ttsStore.ts, localStorage-backed) keeps the header speaker toggle and Settings in sync
+- Server: /api/tts/status now returns a curated Kokoro voice list + default; /api/tts accepts a speed param (0.5–2.0×); local Kokoro server updated to pass speed through to the pipeline
+- Settings > Voice: toggle, voice `<select>` (12 Kokoro voices), speed slider with live ×, and a "Test voice" button that plays a sample with the current settings
+- Verified end-to-end: voice list loads, custom voice + speed both apply, header/Settings toggles stay in sync
+- Files affected: client/src/stores/ttsStore.ts (new), server/src/routes/tts.ts, server/src/routes tts speed passthrough, client/src/api.ts, client/src/components/Hub/MedusaChat.tsx, client/src/components/Sidebar/SettingsModal.tsx, ~/.medusa-tts/server.py
+
 ## 2026-08-05 16:46
 - Feature: Voice-out — Medusa speaks her replies aloud, completing the voice loop with STT (Features.md #6/#7)
 - Local Kokoro TTS server (~/.medusa-tts, OpenAI-compatible /v1/audio/speech); Medusa auto-starts/adopts it on boot (server/src/tts/tts-manager.ts, mirrors whisper-manager); new /api/tts + /api/tts/status routes; pluggable to ElevenLabs/OpenAI via TTS_API_BASE_URL/KEY/MODEL/VOICE

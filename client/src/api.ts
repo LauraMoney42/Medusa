@@ -319,18 +319,24 @@ export async function transcribeAudio(blob: Blob): Promise<{ text: string }> {
 
 // ---- Text-to-speech (voice-out) ----
 
-/** Whether the server has a TTS backend configured. */
-export function fetchTtsStatus(): Promise<{ enabled: boolean }> {
-  return request<{ enabled: boolean }>('/api/tts/status');
+export interface TtsStatus {
+  enabled: boolean;
+  voices: { id: string; label: string }[];
+  defaultVoice: string;
+}
+
+/** TTS availability + the list of selectable voices + the default voice. */
+export function fetchTtsStatus(): Promise<TtsStatus> {
+  return request<TtsStatus>('/api/tts/status');
 }
 
 /** Synthesize speech for text; returns an object URL for an Audio element. */
-export async function synthesizeSpeech(text: string, voice?: string): Promise<string> {
+export async function synthesizeSpeech(text: string, voice?: string, speed?: number): Promise<string> {
   const res = await fetch('/api/tts', {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, voice }),
+    body: JSON.stringify({ text, voice, speed }),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => '');

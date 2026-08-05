@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import * as api from '../../api';
-import type { SettingsResponse, OneNoteStatus, OneNoteDeviceCode, HeadroomStatus } from '../../api';
+import type { SettingsResponse, OneNoteStatus, OneNoteDeviceCode, HeadroomStatus, TtsStatus } from '../../api';
+import { useTtsStore } from '../../stores/ttsStore';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -19,6 +20,16 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
 
   // Headroom compression status — polled live while the modal is open.
   const [headroom, setHeadroom] = useState<HeadroomStatus | null>(null);
+
+  // Voice (TTS) settings — prefs come from the shared store.
+  const [ttsStatus, setTtsStatus] = useState<TtsStatus | null>(null);
+  const speak = useTtsStore((s) => s.speak);
+  const setSpeak = useTtsStore((s) => s.setSpeak);
+  const voice = useTtsStore((s) => s.voice);
+  const setVoice = useTtsStore((s) => s.setVoice);
+  const speed = useTtsStore((s) => s.speed);
+  const setSpeed = useTtsStore((s) => s.setSpeed);
+  const testAudioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -103,6 +114,24 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
       const s = await api.fetchOneNoteStatus();
       setOneNoteStatus(s);
     } catch (err) { console.error(err); }
+  };
+
+  useEffect(() => {
+    api.fetchTtsStatus().then(setTtsStatus).catch(() => setTtsStatus(null));
+  }, []);
+
+  const handleTestVoice = async () => {
+    try {
+      const url = await api.synthesizeSpeech('Hi, this is how I sound.', voice, speed);
+      if (testAudioRef.current) testAudioRef.current.pause();
+      const audio = new Audio(url);
+      testAudioRef.current = audio;
+      audio.onended = () => URL.revokeObjectURL(url);
+      await audio.play();
+    } catch (err) {
+      console.error('Voice test failed:', err);
+      alert('Voice test failed — is the TTS server running?');
+    }
   };
 
   return (
@@ -284,6 +313,51 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
             )}
           </div>
         </div>
+
+        {/* Voice (TTS) */}
+        {ttsStatus?.enabled && (
+          <div style={{ ...styles.section, marginTop: 8 }}>
+            <span style={styles.sectionLabel}>Voice</span>
+            <div style={styles.accountCard}>
+              <div style={styles.ttsRow}>
+                <span style={styles.ttsLabel}>Speak replies aloud</span>
+                <button
+                  onClick={() => setSpeak(!speak)}
+                  style={{ ...styles.toggle, ...(speak ? styles.toggleOn : {}) }}
+                  title={speak ? 'On' : 'Off'}
+                >
+                  <span style={{ ...styles.toggleKnob, ...(speak ? styles.toggleKnobOn : {}) }} />
+                </button>
+              </div>
+
+              <div style={styles.ttsField}>
+                <label style={styles.ttsLabel}>Voice</label>
+                <select value={voice} onChange={(e) => setVoice(e.target.value)} style={styles.ttsSelect}>
+                  {ttsStatus.voices.map((v) => (
+                    <option key={v.id} value={v.id}>{v.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={styles.ttsField}>
+                <label style={styles.ttsLabel}>Speed — {speed.toFixed(2)}×</label>
+                <input
+                  type="range"
+                  min={0.5}
+                  max={2}
+                  step={0.05}
+                  value={speed}
+                  onChange={(e) => setSpeed(Number(e.target.value))}
+                  style={styles.ttsSlider}
+                />
+              </div>
+
+              <button onClick={handleTestVoice} style={{ ...styles.actionBtnPrimary, marginTop: 4 }}>
+                ▶ Test voice
+              </button>
+            </div>
+          </div>
+        )}
 
         <button onClick={handleRestart} disabled={restarting} style={styles.restartBtn}>
           {restarting ? 'Restarting…' : 'Restart App'}
@@ -467,6 +541,66 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-secondary)',
     margin: '2px 0 0 0',
     lineHeight: 1.4,
+  },
+  ttsRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  } as React.CSSProperties,
+  ttsField: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 4,
+    marginBottom: 10,
+  } as React.CSSProperties,
+  ttsLabel: {
+    fontSize: 12,
+    color: 'var(--text-secondary)',
+  },
+  ttsSelect: {
+    width: '100%',
+    background: '#232325',
+    color: 'var(--text-primary)',
+    border: '1px solid rgba(255,255,255,0.10)',
+    borderRadius: 6,
+    padding: '6px 8px',
+    fontSize: 12,
+    cursor: 'pointer',
+    outline: 'none',
+  } as React.CSSProperties,
+  ttsSlider: {
+    width: '100%',
+    accentColor: '#4aba6a',
+    cursor: 'pointer',
+  } as React.CSSProperties,
+  toggle: {
+    width: 38,
+    height: 22,
+    borderRadius: 11,
+    background: 'rgba(255,255,255,0.15)',
+    border: 'none',
+    position: 'relative',
+    cursor: 'pointer',
+    transition: 'background 0.15s',
+    padding: 0,
+    flexShrink: 0,
+  } as React.CSSProperties,
+  toggleOn: {
+    background: 'rgba(74,186,106,0.6)',
+  },
+  toggleKnob: {
+    position: 'absolute',
+    top: 2,
+    left: 2,
+    width: 18,
+    height: 18,
+    borderRadius: '50%',
+    background: '#fff',
+    transition: 'left 0.15s',
+  } as React.CSSProperties,
+  toggleKnobOn: {
+    left: 18,
   },
   restartBtn: {
     display: 'block',

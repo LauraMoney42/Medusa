@@ -112,6 +112,9 @@ Goal: make Medusa's UI resemble Claude Cowork.
   pluggable to ElevenLabs/OpenAI via `TTS_API_BASE_URL/KEY/MODEL/VOICE`. Client speaker
   toggle in the Medusa Chat header auto-speaks each completed reply (+ per-message play
   button); playback via `Audio()`. Replaces the robotic on-device synth.
+  **Settings controls — ✅ done:** on/off toggle, a 12-voice Kokoro picker, and a speed
+  slider (0.5–2.0×), all in Settings > Voice, backed by a shared `ttsStore` so the header
+  toggle and Settings stay in sync; a "Test voice" button previews the current settings.
   **Remaining:** per-bot voice selection; native `AVAudioPlayer` path in the future iOS app.
 - **STT (mic in)** — ✅ **DONE (2026-08-05)**. A mic button in the chat input
   (`MicButton.tsx`) records with MediaRecorder and posts to `/api/stt`, which forwards to
