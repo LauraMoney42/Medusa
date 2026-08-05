@@ -20,7 +20,7 @@ A full-screen onboarding carousel that appears on first launch only. Modeled aft
 - New users understand the core Medusa features before reaching the main UI
 - Onboarding never shows again after the user completes or skips it
 - Visually consistent with Medusa's dark theme and styling
-- Works correctly in the Electron (WKWebView) environment
+- Works correctly in the WKWebView environment
 
 ---
 
@@ -214,7 +214,7 @@ interface OnboardingSlide {
 - [ ] Page indicator dots reflect current slide position with animation
 - [ ] Slides are swipeable (touch/trackpad) in addition to button navigation
 - [ ] Visual styling matches Medusa dark theme — no light mode artifacts
-- [ ] Onboarding renders correctly inside Electron WKWebView (no layout breaks)
+- [ ] Onboarding renders correctly inside the WKWebView (no layout breaks)
 
 ---
 

@@ -902,7 +902,7 @@ useEffect(() => {
 // automatically when projectStore.ts is imported — no extra wiring needed.
 ```
 
-### Desktop App (WKWebView / Electron)
+### Desktop App (Swift / WKWebView)
 
 The desktop app (Medusa.app) is a WKWebView wrapper. It loads the same React bundle served by the Node.js server. No additional project management wiring is needed for desktop — it receives the same `projects:updated` Socket.IO events as the browser client.
 

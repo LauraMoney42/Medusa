@@ -245,7 +245,7 @@ sequenceDiagram
 - Zustand (state management)
 - Socket.IO Client
 - Vite (dev server)
-- Electron (desktop app packaging)
+- Swift/SwiftUI + WKWebView (desktop app packaging)
 
 **Server:**
 - Node.js

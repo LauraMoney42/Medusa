@@ -323,7 +323,7 @@ persist(
 )
 ```
 
-### 4. Desktop apps (WKWebView / Electron)
+### 4. Desktop app (WKWebView)
 
 If your app wraps the web client in a native shell, make sure the **built assets are deployed** to wherever the native app serves them from. In our case, building the client (`npm run build`) outputs to `client/dist/`, but the desktop app serves from `server/dist/public/`. We needed to run the full build script that copies client assets into the server's public directory.
 
