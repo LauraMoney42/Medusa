@@ -1,3 +1,8 @@
+## 2026-08-06 16:57
+- UI: Extended the same bottom toolbar (compact mic, model picker, token-usage ring) to the Hub input, for consistency with Medusa Chat
+- Hub has no single "active bot", so the model picker there controls Medusa's model specifically — she's the default responder for hub posts without an @mention
+- Files affected: client/src/components/Hub/HubFeed.tsx
+
 ## 2026-08-06 16:23
 - UI: Moved the model picker, mic, and token-usage ring into a bottom toolbar under the Medusa Chat input, matching Claude Code's own bar layout (mic bottom-left, model + usage bottom-right) instead of cluttering the top header/sidebar
 - MicButton: new `compact` prop — a small, chrome-less icon variant (22px, no circle) for this toolbar, vs the existing 36px circular button still used in the Hub input

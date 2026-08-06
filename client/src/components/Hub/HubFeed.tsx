@@ -6,7 +6,7 @@ import { useDraftStore } from '../../stores/draftStore';
 import { useInputHistoryStore } from '../../stores/inputHistoryStore';
 import { getSocket } from '../../socket';
 import { useSocket } from '../../hooks/useSocket';
-import { uploadImage, uploadFile, pauseSession, resumeSession, requestSessionStatus } from '../../api';
+import { uploadImage, uploadFile, pauseSession, resumeSession, requestSessionStatus, setSessionModel } from '../../api';
 import HubMessage from './HubMessage';
 import AttachmentPreview from '../Input/AttachmentPreview';
 import ScreenshotButton from '../Input/ScreenshotButton';
@@ -14,6 +14,7 @@ import MicButton from '../Input/MicButton';
 import { useDictationInsert } from '../../hooks/useDictationInsert';
 import MentionAutocomplete from './MentionAutocomplete';
 import ApprovalBanner from './ApprovalBanner';
+import TokenRing from '../Usage/TokenRing';
 const HUB_MAX_HEIGHT = 150;
 
 interface HubFeedProps {
@@ -383,6 +384,16 @@ export default function HubFeed({ onMenuToggle }: HubFeedProps) {
   // Insert progressive dictation into the hub input.
   const handleTranscript = useDictationInsert(setInput);
 
+  // Model picker (bottom bar) — Hub has no single "active bot", so this
+  // controls Medusa's model, since she's the default responder for posts
+  // that don't @mention anyone else.
+  const medusaSession = sessions.find((s) => s.name.toLowerCase() === 'medusa');
+  const modelValue = medusaSession?.model ?? '';
+  const handleModelChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
+    if (!medusaSession) return;
+    void setSessionModel(medusaSession.id, e.target.value || null);
+  }, [medusaSession]);
+
   const canSend = input.trim() || attachments.length > 0;
 
   return (
@@ -468,7 +479,6 @@ export default function HubFeed({ onMenuToggle }: HubFeedProps) {
               rows={1}
               style={styles.textarea}
             />
-            <MicButton onTranscript={handleTranscript} disabled={false} />
             <ScreenshotButton
               onCapture={handleScreenshot}
               disabled={false}
@@ -496,6 +506,30 @@ export default function HubFeed({ onMenuToggle }: HubFeedProps) {
                 <polygon points="22 2 15 22 11 13 2 9 22 2" />
               </svg>
             </button>
+          </div>
+        </div>
+
+        {/* Bottom toolbar — mic (left), model + token usage (right). Mirrors Claude Code's bar. */}
+        <div style={styles.bottomBar}>
+          <div style={styles.bottomBarLeft}>
+            <MicButton onTranscript={handleTranscript} disabled={false} compact />
+          </div>
+          <div style={styles.bottomBarRight}>
+            <select
+              value={modelValue}
+              onChange={handleModelChange}
+              disabled={!medusaSession}
+              title="Medusa's model — applies after a server restart"
+              aria-label="Model"
+              style={styles.modelSelect}
+            >
+              <option value="">Auto</option>
+              <option value="haiku">Haiku</option>
+              <option value="sonnet">Sonnet</option>
+              <option value="opus">Opus</option>
+              <option value="fable">Fable</option>
+            </select>
+            <TokenRing popoverDirection="up" />
           </div>
         </div>
       </div>
@@ -632,6 +666,32 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     transition: 'opacity 0.15s, box-shadow 0.3s, background 0.15s',
     boxShadow: '0 0 12px rgba(26, 122, 60, 0.15), 0 0 24px rgba(26, 122, 60, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.06)',
+  } as React.CSSProperties,
+  bottomBar: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 2,
+  } as React.CSSProperties,
+  bottomBarLeft: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+  } as React.CSSProperties,
+  bottomBarRight: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+  } as React.CSSProperties,
+  modelSelect: {
+    background: 'transparent',
+    color: 'var(--text-muted)',
+    border: 'none',
+    borderRadius: 4,
+    padding: '2px 4px',
+    fontSize: 11,
+    cursor: 'pointer',
+    outline: 'none',
   } as React.CSSProperties,
   noSessionArea: {
     display: 'flex',
