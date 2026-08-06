@@ -9,6 +9,8 @@ interface MicButtonProps {
    */
   onTranscript: (text: string, isFinal: boolean, session: number) => void;
   disabled?: boolean;
+  /** Small, chrome-less icon variant (no circular background) for compact toolbars. */
+  compact?: boolean;
 }
 
 type MicState = 'idle' | 'recording' | 'transcribing';
@@ -25,7 +27,7 @@ const SLICE_MS = 1500;
  * final result on stop. Renders nothing unless the browser can record AND the
  * server reports a transcription backend is configured.
  */
-export default function MicButton({ onTranscript, disabled }: MicButtonProps) {
+export default function MicButton({ onTranscript, disabled, compact }: MicButtonProps) {
   const [state, setState] = useState<MicState>('idle');
   const [available, setAvailable] = useState(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -136,11 +138,16 @@ export default function MicButton({ onTranscript, disabled }: MicButtonProps) {
     else startRecording();
   };
 
+  const iconSize = compact ? 13 : 18;
+
   return (
     <button
       onClick={handleClick}
       disabled={disabled || state === 'transcribing'}
-      style={{ ...styles.btn, ...(state === 'recording' ? styles.recording : {}) }}
+      style={{
+        ...(compact ? styles.btnCompact : styles.btn),
+        ...(state === 'recording' ? (compact ? styles.recordingCompact : styles.recording) : {}),
+      }}
       title={
         state === 'recording'
           ? 'Stop and transcribe'
@@ -150,7 +157,7 @@ export default function MicButton({ onTranscript, disabled }: MicButtonProps) {
       }
     >
       {state === 'transcribing' ? (
-        <svg width="16" height="16" viewBox="0 0 50 50" aria-label="Transcribing">
+        <svg width={iconSize} height={iconSize} viewBox="0 0 50 50" aria-label="Transcribing">
           <circle
             cx="25" cy="25" r="20" fill="none"
             stroke="currentColor" strokeWidth="5" strokeLinecap="round"
@@ -164,7 +171,7 @@ export default function MicButton({ onTranscript, disabled }: MicButtonProps) {
         </svg>
       ) : (
         <svg
-          width="18" height="18" viewBox="0 0 24 24" fill="none"
+          width={iconSize} height={iconSize} viewBox="0 0 24 24" fill="none"
           stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
         >
           <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
@@ -196,5 +203,24 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--danger)',
     color: '#fff',
     boxShadow: '0 0 8px rgba(192, 57, 43, 0.35)',
+  },
+  // Compact: small, chrome-less icon for bottom toolbars (matches Claude Code's inline mic).
+  btnCompact: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 22,
+    height: 22,
+    borderRadius: 5,
+    background: 'transparent',
+    color: 'var(--text-muted)',
+    border: 'none',
+    flexShrink: 0,
+    cursor: 'pointer',
+    padding: 0,
+    transition: 'color 0.15s',
+  },
+  recordingCompact: {
+    color: 'var(--danger)',
   },
 };

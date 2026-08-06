@@ -30,7 +30,13 @@ const RING_RADIUS = (RING_SIZE - RING_STROKE) / 2;
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 const ACCENT_GREEN = '#4aba6a';
 
-export default function TokenRing() {
+interface TokenRingProps {
+  /** Which side the popover opens toward. 'up' for bottom-toolbar placements
+   * (so it doesn't run off the bottom of the viewport). Default 'down'. */
+  popoverDirection?: 'down' | 'up';
+}
+
+export default function TokenRing({ popoverDirection = 'down' }: TokenRingProps) {
   const [day, setDay] = useState<TokenUsagePeriod | null>(null);
   const [week, setWeek] = useState<TokenUsagePeriod | null>(null);
   const [month, setMonth] = useState<TokenUsagePeriod | null>(null);
@@ -162,7 +168,16 @@ export default function TokenRing() {
       </button>
 
       {open && (
-        <div style={styles.popover} role="dialog" aria-label="Usage breakdown">
+        <div
+          style={{
+            ...styles.popover,
+            ...(popoverDirection === 'up'
+              ? { bottom: 'calc(100% + 8px)', top: 'auto' }
+              : {}),
+          }}
+          role="dialog"
+          aria-label="Usage breakdown"
+        >
           <div style={styles.header}>Usage</div>
 
           {renderPeriodRow('Today', day)}

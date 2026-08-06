@@ -1,3 +1,12 @@
+## 2026-08-06 16:23
+- UI: Moved the model picker, mic, and token-usage ring into a bottom toolbar under the Medusa Chat input, matching Claude Code's own bar layout (mic bottom-left, model + usage bottom-right) instead of cluttering the top header/sidebar
+- MicButton: new `compact` prop — a small, chrome-less icon variant (22px, no circle) for this toolbar, vs the existing 36px circular button still used in the Hub input
+- TokenRing: new `popoverDirection` prop (`'up' | 'down'`) so the usage popover opens upward when the ring sits in a bottom bar, instead of running off the bottom of the viewport
+- ChatHeaderControls: removed the model select (kept Agent + Provider) — model now lives solely in the new bottom bar to avoid duplicating the control
+- Sidebar: removed the token-usage ring from the top header (moved to the chat's bottom bar)
+- Verified visually: model select shows the active bot's model, mic still dictates, token popover opens upward and stays fully on-screen
+- Files affected: client/src/components/Hub/MedusaChat.tsx, client/src/components/Hub/ChatHeaderControls.tsx, client/src/components/Input/MicButton.tsx, client/src/components/Usage/TokenRing.tsx, client/src/components/Sidebar/Sidebar.tsx
+
 ## 2026-08-05 18:59
 - Feature: Multi-machine runner protocol MVP — "one brain, many hands" (Features.md #3)
 - New server/src/runner/runner-manager.ts: brain-side manager on an io.of("/runner") Socket.IO namespace, gated by the same AUTH_TOKEN (constant-time compare). Tracks connected runners by name; exec(name, command, cwd) dispatches a shell command and awaits the result (30s timeout)

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { fetchSettings, setProvider, setSessionModel } from '../../api';
+import { fetchSettings, setProvider } from '../../api';
 
 interface ChatHeaderControlsProps {
   sessions: { id: string; name: string; model?: string }[];
@@ -67,8 +67,6 @@ export default function ChatHeaderControls(props: ChatHeaderControlsProps) {
   }, []);
 
   const activeId = resolveActiveId(sessions, activeSessionId);
-  const activeSession = sessions.find((s) => s.id === activeId);
-  const modelValue = activeSession?.model ?? '';
 
   const handleProviderChange = async (
     e: React.ChangeEvent<HTMLSelectElement>,
@@ -80,11 +78,6 @@ export default function ChatHeaderControls(props: ChatHeaderControlsProps) {
       // Ignore errors; still reflect the user's selection locally.
     }
     setProviderState(value);
-  };
-
-  const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    if (!activeId) return;
-    void setSessionModel(activeId, e.target.value || null);
   };
 
   return (
@@ -110,21 +103,6 @@ export default function ChatHeaderControls(props: ChatHeaderControlsProps) {
       >
         <option value="claude">Anthropic</option>
         <option value="kimi">Kimi</option>
-      </select>
-
-      <select
-        style={styles.select}
-        value={modelValue}
-        onChange={handleModelChange}
-        disabled={!activeId}
-        title="Model change applies after a server restart"
-        aria-label="Model"
-      >
-        <option value="">Auto</option>
-        <option value="haiku">Haiku</option>
-        <option value="sonnet">Sonnet</option>
-        <option value="opus">Opus</option>
-        <option value="fable">Fable</option>
       </select>
     </div>
   );

@@ -9,7 +9,8 @@ import MicButton from '../Input/MicButton';
 import { useDictationInsert } from '../../hooks/useDictationInsert';
 import ChatHeaderControls from './ChatHeaderControls';
 import ApprovalBanner from './ApprovalBanner';
-import { uploadImage, synthesizeSpeech, fetchTtsStatus } from '../../api';
+import TokenRing from '../Usage/TokenRing';
+import { uploadImage, synthesizeSpeech, fetchTtsStatus, setSessionModel } from '../../api';
 
 interface MedusaChatProps {
   onMenuToggle?: () => void;
@@ -166,6 +167,13 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
     });
   }, []);
 
+  // Model picker (bottom bar) — applies to the active agent's session.
+  const modelValue = activeSession?.model ?? '';
+  const handleModelChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
+    if (!activeSession) return;
+    void setSessionModel(activeSession.id, e.target.value || null);
+  }, [activeSession]);
+
   if (!activeSession) {
     return (
       <div style={styles.container}>
@@ -286,7 +294,6 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
           />
 
           <div style={styles.buttonRow}>
-            <MicButton onTranscript={handleTranscript} disabled={false} />
             <ScreenshotButton
               onCapture={handleScreenshot}
               disabled={false}
@@ -302,6 +309,30 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
                 <polygon points="22 2 15 22 11 13 2 9 22 2" />
               </svg>
             </button>
+          </div>
+        </div>
+
+        {/* Bottom toolbar — mic (left), model + token usage (right). Mirrors Claude Code's bar. */}
+        <div style={styles.bottomBar}>
+          <div style={styles.bottomBarLeft}>
+            <MicButton onTranscript={handleTranscript} disabled={false} compact />
+          </div>
+          <div style={styles.bottomBarRight}>
+            <select
+              value={modelValue}
+              onChange={handleModelChange}
+              disabled={!activeSession}
+              title="Model change applies after a server restart"
+              aria-label="Model"
+              style={styles.modelSelect}
+            >
+              <option value="">Auto</option>
+              <option value="haiku">Haiku</option>
+              <option value="sonnet">Sonnet</option>
+              <option value="opus">Opus</option>
+              <option value="fable">Fable</option>
+            </select>
+            <TokenRing popoverDirection="up" />
           </div>
         </div>
       </div>
@@ -557,5 +588,31 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#4aba6a',
     cursor: 'pointer',
     transition: 'all 0.15s',
+  } as React.CSSProperties,
+  bottomBar: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 2,
+  } as React.CSSProperties,
+  bottomBarLeft: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+  } as React.CSSProperties,
+  bottomBarRight: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+  } as React.CSSProperties,
+  modelSelect: {
+    background: 'transparent',
+    color: 'var(--text-muted)',
+    border: 'none',
+    borderRadius: 4,
+    padding: '2px 4px',
+    fontSize: 11,
+    cursor: 'pointer',
+    outline: 'none',
   } as React.CSSProperties,
 };
