@@ -1,5 +1,6 @@
 import fs from "fs";
 import http from "http";
+import { createHash, timingSafeEqual } from "crypto";
 import { execFileSync } from "child_process";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -51,6 +52,8 @@ import { startWhisperServer, stopWhisperServer } from "./stt/whisper-manager.js"
 import { startTtsServer, stopTtsServer } from "./tts/tts-manager.js";
 import { stopScreencast } from "./cowork/screencast.js";
 import { stopSimulatorStream } from "./cowork/simulator-stream.js";
+import { RunnerManager } from "./runner/runner-manager.js";
+import { createRunnersRouter } from "./routes/runners.js";
 import { createHeadroomRouter } from "./routes/headroom.js";
 import { z } from "zod";
 
@@ -113,6 +116,29 @@ const io = new IOServer(server, {
   pingTimeout: 8000,
 } as any);
 
+// ---- Multi-machine runner protocol ("one brain, many hands") ----
+// A runner daemon (server/src/runner/runner-client.ts) on each machine dials
+// OUT to this namespace — the brain never dials in. Gated by the same
+// AUTH_TOKEN as the rest of the app (see runner-manager.ts for the security
+// model: exec runs an arbitrary shell command on the connected machine).
+const runnerManager = new RunnerManager();
+// io.of()'s types don't resolve cleanly under this project's TS config (see
+// runner-manager.ts's comment on the same pre-existing socket.io typing quirk).
+const runnerNamespace = (io as any).of("/runner");
+runnerNamespace.use((socket: any, next: (err?: Error) => void) => {
+  if (!config.authToken) return next();
+  const token = socket.handshake.auth?.token as string | undefined;
+  // Constant-time compare (via SHA-256 digests, same technique as the main
+  // socket namespace's auth) to avoid a timing side-channel on the token.
+  const hashA = createHash("sha256").update(token ?? "").digest();
+  const hashB = createHash("sha256").update(config.authToken).digest();
+  if (token && timingSafeEqual(hashA, hashB)) {
+    return next();
+  }
+  next(new Error("Unauthorized"));
+});
+runnerManager.attach(runnerNamespace);
+
 // MentionRouter needs io for streaming responses to session rooms
 const mentionRouter = new MentionRouter(processManager, sessionStore, hubStore, chatStore, io, tokenLogger, quickTaskStore, approvalStore);
 
@@ -170,6 +196,7 @@ app.use("/api/hub", generalLimiter, createHubRouter(hubStore, io, mentionRouter,
 app.use("/api/projects", generalLimiter, createProjectsRouter(projectStore));
 app.use("/api/quick-tasks", generalLimiter, createQuickTasksRouter(quickTaskStore));
 app.use("/api/approvals", generalLimiter, createApprovalsRouter(approvalStore, hubStore, mentionRouter, io));
+app.use("/api/runners", generalLimiter, createRunnersRouter(runnerManager));
 const { metricsRouter, tokenUsageHandler } = createMetricsRouter(tokenLogger);
 app.use("/api/metrics", generalLimiter, metricsRouter);
 // Clean alias: GET /api/token-usage?period=day|week|month (for Token Usage Dashboard)

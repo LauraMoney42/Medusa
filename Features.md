@@ -31,11 +31,22 @@ Ranking favors: evals rigor, multi-agent systems, computer-use, and product craf
    live browser. Verified end-to-end (a click navigated the real Chrome).
 
 3. **Multi-machine agent orchestration: brain on the mini + a runner per machine + task routing**
-   The *Research Engineer, Agents* story: a real distributed multi-agent system. One
-   brain (chat, Hub, memory, projects) on the always-on Mac mini; a lightweight runner
-   daemon per machine (laptop + mini) that dials out and registers a target name; task
-   routing so one Medusa dispatches to `mac-mini` or `laptop`. Single shared memory at
-   the brain (no dual-instance sync).
+   — ✅ **exec primitive done (2026-08-05); bot-session routing not yet built**
+   The *Research Engineer, Agents* story: a real distributed multi-agent system. Shipped:
+   `runner-manager.ts` (brain side, on `io.of("/runner")`, AUTH_TOKEN-gated) +
+   `runner-client.ts` (a standalone daemon any machine runs to dial OUT and register a
+   name — no inbound port needed). `GET/POST /api/runners` lists connected runners and
+   runs a shell command on a named one. Validated locally with two simulated runners
+   ("mac-mini" + "laptop"): register/list, exec with custom cwd, nonzero-exit and
+   unknown-runner error paths, clean disconnect removal, and auth rejection all confirmed.
+   **Remaining (the bigger piece):** actually routing a BOT SESSION to a chosen runner —
+   today `ProcessManager` always spawns `claude`/`kimi` locally; making it dispatch a
+   spawn to a remote runner instead is a larger, more invasive change to the core spawn
+   path, intentionally deferred until this exec primitive had been proven safe and
+   working. Also needs: a "single brain on the always-on mini" deployment (currently
+   still runs wherever you launch it), and real-machine testing (this was validated with
+   two local processes simulating two machines, not the actual laptop + mini pair) once
+   the second Mac is available.
 
 4. **Human-in-the-loop safety / guardrails** — ✅ **approval workflow DONE (2026-08-05)**
    Anthropic's core value; shows a safety-first agent design mindset. Shipped: bot
@@ -183,6 +194,8 @@ claude-code-router (github.com/musistudio/claude-code-router).
 ## Status snapshot (2026-08-05)
 
 **Done:** #1 test suite + CI · #2 live computer-use Browser view + supervised take-over ·
+#3 multi-machine runner protocol exec primitive (brain + daemon, AUTH_TOKEN-gated,
+validated with two simulated runners) ·
 #4 human-in-the-loop approval guardrail (Approve/Deny UI for bot escalations) ·
 #5 native iOS Simulator live view + take-over (via idb) ·
 #6 Cowork-like UI (search, rename, agent selector, provider/model selector, token ring) ·
@@ -190,9 +203,10 @@ claude-code-router (github.com/musistudio/claude-code-router).
 TTS voice-out (Kokoro + auto-start + speaker toggle + Settings voice controls) ·
 #8 installable PWA shell (manifest + icons + service worker).
 
-**Not started / deferred:** #3 multi-machine runners · #9 Tailscale · #10 Railway ·
-#11 model gateway (MVP2+). Remaining follow-ups noted inline above (e.g. #4's real
-tool-call gating needs a dedicated bot config dir; #5's ios-bot integration; #8's
-Tailscale reachability + native iOS app).
+**Not started / deferred:** #9 Tailscale (needs account login, user action) ·
+#10 Railway · #11 model gateway (MVP2+, user chose to defer). Remaining follow-ups noted
+inline above: #3's bot-session-to-runner routing (the bigger, more invasive piece) +
+real two-Mac testing; #4's real tool-call gating needs a dedicated bot config dir;
+#5's ios-bot build+boot integration; #8's Tailscale reachability + native iOS app.
 
 Current model support: **Anthropic + Kimi only** (by choice, for now).

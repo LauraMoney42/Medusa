@@ -1,3 +1,12 @@
+## 2026-08-05 18:59
+- Feature: Multi-machine runner protocol MVP — "one brain, many hands" (Features.md #3)
+- New server/src/runner/runner-manager.ts: brain-side manager on an io.of("/runner") Socket.IO namespace, gated by the same AUTH_TOKEN (constant-time compare). Tracks connected runners by name; exec(name, command, cwd) dispatches a shell command and awaits the result (30s timeout)
+- New server/src/runner/runner-client.ts: standalone daemon (run via `node dist/runner/runner-client.js --name <machine> --brain <url> --token <token>`) that dials OUT to the brain (no inbound port needed on the runner machine), registers under a name, and executes commands via child_process.exec, returning stdout/stderr/exitCode
+- New GET/POST /api/runners routes (list connected runners; POST /:name/exec to run a command)
+- Note: this ships the exec PRIMITIVE only — bot sessions still always spawn locally (ProcessManager unchanged). Routing an actual bot session to a chosen runner is a larger follow-up once this primitive is proven
+- Validated end-to-end locally with two simulated runners ("mac-mini" + "laptop") against the live brain: registration, listing, successful exec with custom cwd, nonzero-exit handling, 404 for an unconnected runner name, clean removal on disconnect, and rejection of a wrong auth token — all confirmed via direct curl + a raw socket.io-client probe
+- Files affected: server/src/runner/runner-manager.ts (new), server/src/runner/runner-client.ts (new), server/src/routes/runners.ts (new), server/src/index.ts, server/package.json (added socket.io-client dependency)
+
 ## 2026-08-05 18:46
 - Feature: Native iOS Simulator live view + take-over (Features.md #5), and installable PWA support (Features.md #8)
 - New "Simulator" sidebar view (server/src/cowork/simulator-stream.ts, client SimulatorPane.tsx): streams a booted iOS Simulator's screen via `idb screenshot` polling (~900ms) over Socket.IO (simulator:frame/status), with tap/swipe/text/hardware-button take-over via `idb ui tap/swipe/text/button` (simulator:input). Correctly converts normalized [0,1] coords to the simulator's POINT space (from `idb describe`'s screen_dimensions.width_points/height_points), not pixel space — the two differ by the device's Retina scale factor
