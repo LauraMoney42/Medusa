@@ -1,3 +1,7 @@
+## 2026-09-15 13:40
+- Docs: added planning doc for Cowork parity, Tauri shell, and model-agnostic engine (Option C: Engine interface with ClaudeCliEngine + open harness engine; OpenRouter first; Tauri sidecar for the Node server). Planning only, no code changed
+- Files affected: docs/2026-09-15_cowork_parity_tauri_agnostic_plan.md (new)
+
 ## 2026-08-06 16:57
 - UI: Extended the same bottom toolbar (compact mic, model picker, token-usage ring) to the Hub input, for consistency with Medusa Chat
 - Hub has no single "active bot", so the model picker there controls Medusa's model specifically — she's the default responder for hub posts without an @mention
