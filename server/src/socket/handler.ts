@@ -341,9 +341,6 @@ export function buildHubPromptSection(
     recentMessages = hubStore.getRecent(messageLimit);
   }
 
-  const allSessions = sessionStore.loadAll();
-  const botNames = allSessions.map((s) => s.name).join(", ");
-
   // Compact mode: minimal instructions for poll checks and routine ops
   if (compactMode) {
     let section = `\n\n--- HUB ---
@@ -351,9 +348,9 @@ You are in COMPACT MODE. Respond in under 100 tokens unless the task requires mo
 Skip preamble, context-setting, and sign-offs. Do not restate the question or assignment.
 If no action needed: [NO-ACTION]. If action needed: do it immediately.
 Post via [HUB-POST: ...]. Task completions: [TASK-DONE: description].
-Escalate: [HUB-POST: @You @Medusa 🚨🚨🚨 APPROVAL NEEDED: <what>]
-For internal bot-to-bot coordination only, use [BOT-TASK: @BotName message] — NOT [HUB-POST: ...]. Routes directly, invisible to user.
-Active bots: ${botNames || "none"}`;
+Escalate: [HUB-POST: @You 🚨🚨🚨 APPROVAL NEEDED: <what>]
+For internal coordination, use [BOT-TASK: @BotName message] — routes directly, invisible to user.
+You may spin up sub-agents using the Agent tool when parallel work helps.`;
 
     if (deltaAnchor) section += deltaAnchor;
 
@@ -368,29 +365,18 @@ Active bots: ${botNames || "none"}`;
   }
 
   let section = `\n\n--- HUB (shared awareness feed) ---
-The Hub is a shared message board where all bots can see each other's posts.
+The Hub is a shared message board for visibility.
 To post a new message to the Hub, include [HUB-POST: your message here] anywhere in your response.
-To tag another bot for help, include their name with @: [HUB-POST: @BotName your question].
-Only use [HUB-POST: ...] when you genuinely need to communicate — examples: flagging uncertainty, asking for help, reporting task completion, handing off work, or coordinating with teammates.
-When you complete an assigned task, include [TASK-DONE: brief description] inside your hub post.
-Always post to the Hub when you finish assigned work or need input from the team.
-If you have assigned tasks, report your progress. If you're stuck or blocked, say so.
+Use [HUB-POST: ...] for: task completions, escalations, blockers, or anything the user needs to see.
+When you complete work, include [TASK-DONE: brief description] inside your hub post.
+If you are stuck or blocked, say so.
 
-IMPORTANT — Auto-continuation:
-- When you finish a task, check the Hub for your next assignment. If you have one, start it immediately. Do NOT wait for the user to tell you to begin.
-- If you are idle and see assigned work for you in the Hub, pick it up and start working.
-- Only stop and wait if you have NO assigned tasks remaining.
-
-IMPORTANT — No Duplicate Work:
-- If a task or bug is already assigned to another bot (e.g., "@Dev3 is fixing rw-bug-001"), do NOT touch it.
-- Do NOT investigate, patch, comment on, or "help with" another bot's assigned task.
-- If you see work discussed in the Hub that is NOT @'ed to you, respond with [NO-ACTION].
-- The ONLY exception: @Medusa explicitly reassigns the task to you.
+You may spin up sub-agents using the Agent tool when parallel work helps.
+You may also use [BOT-TASK: @BotName message] to delegate to another bot session if one exists.
 
 IMPORTANT — Escalation:
-- If you need human approval, a decision, or are blocked on something only the user can resolve, post to the Hub with this exact format:
-  [HUB-POST: @You @Medusa 🚨🚨🚨 APPROVAL NEEDED: <description of what you need>]
-- @Medusa will triage first — if it truly needs the user, Medusa will re-escalate to @You.
+- If you need human approval or are blocked on something only the user can resolve, post to the Hub with this exact format:
+  [HUB-POST: @You 🚨🚨🚨 APPROVAL NEEDED: <description of what you need>]
 - Do NOT silently wait. Always escalate visibly.
 
 IMPORTANT — Token Efficiency:
@@ -398,16 +384,7 @@ IMPORTANT — Token Efficiency:
 - Status updates: state only what changed and what's next. Skip context the reader already has.
 - Acknowledgments: "Acknowledged" or "Confirmed" is sufficient. Do not restate the assignment.
 - [NO-ACTION] responses: respond with exactly "[NO-ACTION]" — no explanation needed.
-- Never open with "Great question!", "Absolutely!", "Thanks for the update!" or similar filler.
-- Bot-to-bot communication is signal, not conversation. Be terse.
-
-IMPORTANT — Bot-to-Bot Coordination:
-- Use [BOT-TASK: @BotName message] for internal coordination: task handoffs, delegation, status between bots. Routes directly. NOT visible in Hub.
-- Use [HUB-POST: ...] ONLY when the user needs to see it (assignments, completions, escalations).
-- Rule: if a human doesn't need to read it → [BOT-TASK:]. If they do → [HUB-POST:].
-- Chain depth limit enforced server-side (max 3).
-
-Active bots: ${botNames || "none"}`;
+- Never open with "Great question!", "Absolutely!", "Thanks for the update!" or similar filler.`;
 
   if (deltaAnchor) section += deltaAnchor;
 
@@ -696,6 +673,10 @@ export function setupSocketHandler(
             durationMs: event.durationMs ?? 0,
             durationApiMs: event.durationApiMs,
             numTurns: event.numTurns,
+            inputTokens: event.usage?.input_tokens,
+            outputTokens: event.usage?.output_tokens,
+            cacheCreationTokens: event.usage?.cache_creation_input_tokens,
+            cacheReadTokens: event.usage?.cache_read_input_tokens,
             success: event.success,
           });
           break;

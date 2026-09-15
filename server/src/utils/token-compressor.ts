@@ -64,7 +64,7 @@ const BOILERPLATE_PHRASES: RegExp[] = [
 // Repeated sign-off patterns bots tend to produce
 const SIGNOFF_PATTERNS: RegExp[] = [
   /(?:Best regards|Cheers|Thanks again|Best|Regards),?\s*$/gim,
-  /(?:— (?:Security|Medusa|Dev1|Dev2|Dev3))\s*$/gim,
+  /(?:— Medusa)\s*$/gim,
 ];
 
 // Redundant acknowledgment patterns (when the full context already contains the assignment)

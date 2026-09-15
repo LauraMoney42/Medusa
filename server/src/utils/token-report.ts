@@ -89,22 +89,38 @@ function printReport(entries: TokenUsageEntry[], since: Date): void {
   let totalCost = 0;
   let totalDuration = 0;
   let successCount = 0;
-  const byBot: Record<string, { cost: number; count: number; duration: number }> = {};
-  const bySource: Record<string, { cost: number; count: number }> = {};
+  const byBot: Record<string, { cost: number; count: number; duration: number; inputTokens: number; outputTokens: number }> = {};
+  const bySource: Record<string, { cost: number; count: number; inputTokens: number; outputTokens: number }> = {};
+
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  let entriesWithTokens = 0;
 
   for (const e of entries) {
     totalCost += e.costUsd;
     totalDuration += e.durationMs;
     if (e.success) successCount++;
 
-    if (!byBot[e.botName]) byBot[e.botName] = { cost: 0, count: 0, duration: 0 };
+    const inputTokens = e.inputTokens ?? 0;
+    const outputTokens = e.outputTokens ?? 0;
+    if (e.inputTokens !== undefined || e.outputTokens !== undefined) {
+      totalInputTokens += inputTokens;
+      totalOutputTokens += outputTokens;
+      entriesWithTokens++;
+    }
+
+    if (!byBot[e.botName]) byBot[e.botName] = { cost: 0, count: 0, duration: 0, inputTokens: 0, outputTokens: 0 };
     byBot[e.botName].cost += e.costUsd;
     byBot[e.botName].count += 1;
     byBot[e.botName].duration += e.durationMs;
+    byBot[e.botName].inputTokens += inputTokens;
+    byBot[e.botName].outputTokens += outputTokens;
 
-    if (!bySource[e.source]) bySource[e.source] = { cost: 0, count: 0 };
+    if (!bySource[e.source]) bySource[e.source] = { cost: 0, count: 0, inputTokens: 0, outputTokens: 0 };
     bySource[e.source].cost += e.costUsd;
     bySource[e.source].count += 1;
+    bySource[e.source].inputTokens += inputTokens;
+    bySource[e.source].outputTokens += outputTokens;
   }
 
   const timeSpanMs =
@@ -121,6 +137,11 @@ function printReport(entries: TokenUsageEntry[], since: Date): void {
   console.log(`Success rate:  ${((successCount / entries.length) * 100).toFixed(1)}%`);
   console.log(`Total cost:    ${formatCost(totalCost)}`);
   console.log(`Avg cost/msg:  ${formatCost(totalCost / entries.length)}`);
+  if (entriesWithTokens > 0) {
+    console.log(`Input tokens:  ${totalInputTokens.toLocaleString()}  (${entriesWithTokens} entries)`);
+    console.log(`Output tokens: ${totalOutputTokens.toLocaleString()}  (${entriesWithTokens} entries)`);
+    console.log(`Avg in+out:    ${((totalInputTokens + totalOutputTokens) / entriesWithTokens).toFixed(0)} tokens/msg`);
+  }
   console.log(`Total time:    ${formatDuration(totalDuration)}`);
   console.log(`Avg time/msg:  ${formatDuration(totalDuration / entries.length)}`);
   console.log(`Msgs/hour:     ${(entries.length / timeSpanHours).toFixed(1)}`);
@@ -130,8 +151,11 @@ function printReport(entries: TokenUsageEntry[], since: Date): void {
   const botEntries = Object.entries(byBot).sort((a, b) => b[1].cost - a[1].cost);
   for (const [bot, data] of botEntries) {
     const pct = ((data.cost / totalCost) * 100).toFixed(1);
+    const tokenInfo = data.inputTokens + data.outputTokens > 0
+      ? `  ${(data.inputTokens + data.outputTokens).toLocaleString()} tokens`
+      : "";
     console.log(
-      `  ${bot.padEnd(20)} ${formatCost(data.cost).padStart(10)}  (${pct}%)  ${data.count} msgs  avg ${formatDuration(data.duration / data.count)}`
+      `  ${bot.padEnd(20)} ${formatCost(data.cost).padStart(10)}  (${pct}%)  ${data.count} msgs  avg ${formatDuration(data.duration / data.count)}${tokenInfo}`
     );
   }
 
@@ -140,8 +164,11 @@ function printReport(entries: TokenUsageEntry[], since: Date): void {
   const sourceEntries = Object.entries(bySource).sort((a, b) => b[1].cost - a[1].cost);
   for (const [source, data] of sourceEntries) {
     const pct = ((data.cost / totalCost) * 100).toFixed(1);
+    const tokenInfo = data.inputTokens + data.outputTokens > 0
+      ? `  ${(data.inputTokens + data.outputTokens).toLocaleString()} tokens`
+      : "";
     console.log(
-      `  ${source.padEnd(20)} ${formatCost(data.cost).padStart(10)}  (${pct}%)  ${data.count} msgs`
+      `  ${source.padEnd(20)} ${formatCost(data.cost).padStart(10)}  (${pct}%)  ${data.count} msgs${tokenInfo}`
     );
   }
 

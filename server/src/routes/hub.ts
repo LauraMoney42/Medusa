@@ -21,7 +21,7 @@ export function createHubRouter(
     res.json(messages);
   });
 
-  // POST / — external tools (PM bot, CLI scripts) can post to the Hub
+  // POST / — external tools (CLI scripts, other bots) can post to the Hub
   router.post("/", (req: Request, res: Response) => {
     const { from, text, sessionId } = req.body as {
       from?: string;

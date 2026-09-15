@@ -4,8 +4,8 @@
       "command": "/opt/homebrew/Cellar/node/25.6.1/bin/node",
       "args": [
         "./node_modules/@playwright/mcp/cli.js",
-        "--browser",
-        "chrome",
+        "--cdp-endpoint",
+        "http://localhost:9222",
         "--caps",
         "screenshots"
       ],

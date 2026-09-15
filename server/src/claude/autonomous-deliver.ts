@@ -296,6 +296,10 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
           durationMs: event.durationMs ?? 0,
           durationApiMs: event.durationApiMs,
           numTurns: event.numTurns,
+          inputTokens: event.usage?.input_tokens,
+          outputTokens: event.usage?.output_tokens,
+          cacheCreationTokens: event.usage?.cache_creation_input_tokens,
+          cacheReadTokens: event.usage?.cache_read_input_tokens,
           success: event.success,
         });
         break;

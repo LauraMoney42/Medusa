@@ -141,6 +141,7 @@ export class StreamParser {
             durationApiMs: ev.duration_api_ms,
             numTurns: ev.num_turns,
             sessionId: ev.session_id,
+            usage: ev.usage,
           };
         }
         return {

@@ -25,6 +25,14 @@ export interface TokenUsageEntry {
   durationApiMs?: number;
   /** Number of conversation turns in this CLI invocation */
   numTurns?: number;
+  /** Input tokens consumed (from Anthropic usage field) */
+  inputTokens?: number;
+  /** Output tokens consumed (from Anthropic usage field) */
+  outputTokens?: number;
+  /** Prompt-cache creation tokens (if any) */
+  cacheCreationTokens?: number;
+  /** Prompt-cache read tokens (if any) */
+  cacheReadTokens?: number;
   /** Whether the CLI call succeeded */
   success: boolean;
 }
@@ -38,8 +46,14 @@ export interface UsageSummary {
   totalDurationMs: number;
   avgCostPerMessage: number;
   avgDurationMs: number;
-  byBot: Record<string, { costUsd: number; messages: number }>;
-  bySource: Record<string, { costUsd: number; messages: number }>;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCacheCreationTokens: number;
+  totalCacheReadTokens: number;
+  avgInputTokens: number;
+  avgOutputTokens: number;
+  byBot: Record<string, { costUsd: number; messages: number; inputTokens: number; outputTokens: number }>;
+  bySource: Record<string, { costUsd: number; messages: number; inputTokens: number; outputTokens: number }>;
 }
 
 /**
@@ -132,32 +146,62 @@ export class TokenLogger {
       totalDurationMs: 0,
       avgCostPerMessage: 0,
       avgDurationMs: 0,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      totalCacheCreationTokens: 0,
+      totalCacheReadTokens: 0,
+      avgInputTokens: 0,
+      avgOutputTokens: 0,
       byBot: {},
       bySource: {},
     };
+
+    let entriesWithTokens = 0;
 
     for (const e of entries) {
       summary.totalCostUsd += e.costUsd;
       summary.totalDurationMs += e.durationMs;
 
+      const inputTokens = e.inputTokens ?? 0;
+      const outputTokens = e.outputTokens ?? 0;
+      const cacheCreationTokens = e.cacheCreationTokens ?? 0;
+      const cacheReadTokens = e.cacheReadTokens ?? 0;
+
+      if (e.inputTokens !== undefined || e.outputTokens !== undefined) {
+        summary.totalInputTokens += inputTokens;
+        summary.totalOutputTokens += outputTokens;
+        summary.totalCacheCreationTokens += cacheCreationTokens;
+        summary.totalCacheReadTokens += cacheReadTokens;
+        entriesWithTokens++;
+      }
+
       // By bot
       if (!summary.byBot[e.botName]) {
-        summary.byBot[e.botName] = { costUsd: 0, messages: 0 };
+        summary.byBot[e.botName] = { costUsd: 0, messages: 0, inputTokens: 0, outputTokens: 0 };
       }
       summary.byBot[e.botName].costUsd += e.costUsd;
       summary.byBot[e.botName].messages += 1;
+      summary.byBot[e.botName].inputTokens += inputTokens;
+      summary.byBot[e.botName].outputTokens += outputTokens;
 
       // By source
       if (!summary.bySource[e.source]) {
-        summary.bySource[e.source] = { costUsd: 0, messages: 0 };
+        summary.bySource[e.source] = { costUsd: 0, messages: 0, inputTokens: 0, outputTokens: 0 };
       }
       summary.bySource[e.source].costUsd += e.costUsd;
       summary.bySource[e.source].messages += 1;
+      summary.bySource[e.source].inputTokens += inputTokens;
+      summary.bySource[e.source].outputTokens += outputTokens;
     }
 
     if (entries.length > 0) {
       summary.avgCostPerMessage = summary.totalCostUsd / entries.length;
       summary.avgDurationMs = summary.totalDurationMs / entries.length;
+    }
+
+    if (entriesWithTokens > 0) {
+      summary.avgInputTokens = summary.totalInputTokens / entriesWithTokens;
+      summary.avgOutputTokens = summary.totalOutputTokens / entriesWithTokens;
     }
 
     return summary;

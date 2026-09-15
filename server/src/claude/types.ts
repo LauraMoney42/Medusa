@@ -75,6 +75,13 @@ export interface AssistantMessage {
   };
 }
 
+export interface UsageInfo {
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
+}
+
 export interface ResultSuccess {
   type: "result";
   subtype: "success";
@@ -84,6 +91,7 @@ export interface ResultSuccess {
   duration_api_ms: number;
   session_id: string;
   num_turns: number;
+  usage?: UsageInfo;
 }
 
 export interface ResultError {
@@ -150,6 +158,7 @@ export interface ParsedResult {
   durationApiMs?: number;
   numTurns?: number;
   sessionId: string;
+  usage?: UsageInfo;
 }
 
 export interface ParsedError {

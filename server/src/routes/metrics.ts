@@ -43,6 +43,12 @@ export function createTokenUsageHandler(tokenLogger: TokenLogger): RequestHandle
       totalCostUsd: summary.totalCostUsd,
       totalMessages: summary.totalMessages,
       totalDurationMs: summary.totalDurationMs,
+      totalInputTokens: summary.totalInputTokens,
+      totalOutputTokens: summary.totalOutputTokens,
+      totalCacheCreationTokens: summary.totalCacheCreationTokens,
+      totalCacheReadTokens: summary.totalCacheReadTokens,
+      avgInputTokens: summary.avgInputTokens,
+      avgOutputTokens: summary.avgOutputTokens,
       byBot: summary.byBot,
       bySource: summary.bySource,
     });
@@ -164,6 +170,8 @@ export function createMetricsRouter(tokenLogger: TokenLogger): { metricsRouter: 
         to: aRange.to.toISOString(),
         totalCostUsd: aSummary.totalCostUsd,
         totalMessages: aSummary.totalMessages,
+        totalInputTokens: aSummary.totalInputTokens,
+        totalOutputTokens: aSummary.totalOutputTokens,
         byBot: aSummary.byBot,
       },
       b: {
@@ -172,6 +180,8 @@ export function createMetricsRouter(tokenLogger: TokenLogger): { metricsRouter: 
         to: bRange.to.toISOString(),
         totalCostUsd: bSummary.totalCostUsd,
         totalMessages: bSummary.totalMessages,
+        totalInputTokens: bSummary.totalInputTokens,
+        totalOutputTokens: bSummary.totalOutputTokens,
         byBot: bSummary.byBot,
       },
     });

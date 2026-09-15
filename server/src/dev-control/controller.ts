@@ -49,7 +49,7 @@ export class DevControlController {
   }
 
   private statusPrompt(): string {
-    return `[Status Request] The PM/user has requested an immediate status update. Stop your current work, summarize what you were doing, what is complete, and what remains. Post your status to the Hub with [HUB-POST: your status]. If you have no active work, respond with [NO-ACTION].`;
+    return `[Status Request] The user has requested an immediate status update. Stop your current work, summarize what you were doing, what is complete, and what remains. Post your status to the Hub with [HUB-POST: your status]. If you have no active work, respond with [NO-ACTION].`;
   }
 
   /**
