@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { spawn, execSync } from "child_process";
 import type { ChildProcess } from "child_process";
+import { buildAcpMcpServers } from "../mcp/config.js";
 import {
   abortChildProcess,
   type ClaudeStreamEvent,
@@ -331,6 +332,12 @@ export class AcpEngine implements Engine {
     const cwd = state.workingDir || this.options.cwd || process.cwd();
     const logPrefix = `[${this.id}]`;
 
+    // ACP takes an ARRAY of named servers with env as name/value pairs, not the
+    // object map the CLIs take. Both spellings come from one descriptor
+    // (mcp/config.ts) so they cannot drift. Empty when no descriptor was passed,
+    // which is the pre-existing behavior.
+    const mcpServers = opts.mcpConfig ? buildAcpMcpServers(opts.mcpConfig) : [];
+
     // The system/info event kind is additive (see engine/types.ts); the socket
     // handler's switch simply ignores kinds it doesn't know.
     const emit = (event: EngineStreamEvent) =>
@@ -642,7 +649,7 @@ export class AcpEngine implements Engine {
             conn.request("session/load", {
               sessionId: previous,
               cwd,
-              mcpServers: [],
+              mcpServers,
             }),
             exited
           );
@@ -662,7 +669,7 @@ export class AcpEngine implements Engine {
         const created = await this.race<{ sessionId?: string }>(
           conn.request<{ sessionId?: string }>("session/new", {
             cwd,
-            mcpServers: [],
+            mcpServers,
           }),
           exited
         );

@@ -3,6 +3,7 @@ import { spawn, execSync } from "child_process";
 import { StreamParser } from "../claude/stream-parser.js";
 import { getActiveConfigDir, getActiveProvider } from "../settings/store.js";
 import { getHeadroomEnv } from "../headroom/proxy-manager.js";
+import { buildMcpConfigJson } from "../mcp/config.js";
 import {
   getAnthropicCompatibleEnv,
   isAnthropicCompatibleProvider,
@@ -172,6 +173,14 @@ export class ClaudeCliEngine implements Engine {
 
     if (model) {
       args.push("--model", model);
+    }
+
+    // The `medusa` MCP server, carrying spawn_agent and (later) the rest of
+    // the Medusa tools layer. `--mcp-config` takes a JSON string as well as a
+    // file path, so no temp file is needed. Deliberately without
+    // `--strict-mcp-config`: the user's own .mcp.json servers stay available.
+    if (opts.mcpConfig) {
+      args.push("--mcp-config", buildMcpConfigJson(opts.mcpConfig));
     }
 
     // Headroom (the compression proxy in front of native Anthropic) and an

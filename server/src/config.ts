@@ -70,6 +70,12 @@ export interface Config {
   staleTaskThresholdMs: number;
   /** Max time in ms to wait for active sessions to finish during shutdown (default: 30000 = 30s) */
   gracefulTimeoutMs: number;
+  /** Max subagents running at once across every chat (default: 6) */
+  maxSubagentsTotal: number;
+  /** Max subagents running at once for one chat (default: 3) */
+  maxSubagentsPerSession: number;
+  /** Directory holding per-subagent JSONL transcripts */
+  subagentsDir: string;
   /** Enable conversation summarization to compress old messages (default: true) */
   summarizationEnabled: boolean;
   /** Message count threshold for triggering summarization (default: 30) */
@@ -176,6 +182,16 @@ const config: Config = {
   hubPollIntervalMs: parseInt(process.env.HUB_POLL_INTERVAL_MS || "120000", 10),
   staleTaskThresholdMs: parseInt(process.env.STALE_TASK_THRESHOLD_MS || "600000", 10),
   gracefulTimeoutMs: parseInt(process.env.GRACEFUL_TIMEOUT_MS || "30000", 10),
+  maxSubagentsTotal: parseInt(process.env.MEDUSA_MAX_SUBAGENTS_TOTAL || "6", 10),
+  maxSubagentsPerSession: parseInt(
+    process.env.MEDUSA_MAX_SUBAGENTS_PER_SESSION || "3",
+    10
+  ),
+  subagentsDir: path.join(
+    process.env.HOME || process.env.USERPROFILE || "~",
+    ".claude-chat",
+    "subagents"
+  ),
   summarizationEnabled: process.env.SUMMARIZATION_ENABLED !== "false",
   summarizationThreshold: parseInt(process.env.SUMMARIZATION_THRESHOLD || "30", 10),
   modelRoutingEnabled: process.env.MODEL_ROUTING_ENABLED !== "false",
