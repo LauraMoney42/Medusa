@@ -1,3 +1,36 @@
+## 2026-09-17 17:05
+- Desktop (Tauri): removed the entry.mjs fs-shim hack. server/src/config.ts now
+  resolves .env/uploads/default-bots.json/static-client-dir through explicit
+  overrides (MEDUSA_ENV_FILE, MEDUSA_DATA_DIR, MEDUSA_STATIC_DIR), defaulting
+  to the prior __dirname-relative behavior when unset. desktop/src-tauri/src/main.rs
+  now passes those three env vars to the sidecar directly, and
+  desktop/scripts/build-sidecar.sh compiles server/dist/index.js straight
+  into the sidecar binary (desktop/src-tauri/sidecar-src/entry.mjs deleted).
+  `cd server && npx vitest run` stays green (175 tests).
+- Desktop: ported the screen/window/region capture pickers to Tauri. New
+  `capture_screen` Rust command (desktop/src-tauri/src/main.rs) shells out to
+  macOS `screencapture` (-x full screen, -i region, -i -w window) and returns
+  base64 PNG. client/src/components/Input/captureScreen.ts gained a Tauri
+  path (window.__TAURI__.core.invoke) tried before the legacy WKWebView
+  bridge, so the same capture buttons work in both shells.
+- Desktop: added a system tray (Show/Hide/Quit), close-to-tray instead of
+  quit (window close now hides; only the tray Quit item kills the sidecar
+  and exits), a global Cmd+Shift+M hotkey to show/focus the window, the
+  notification plugin, and an updater plugin config with a placeholder
+  endpoint/pubkey (no real signing keys generated or committed).
+- Desktop: ported app/Resources/Medusa.entitlements into
+  desktop/src-tauri/Medusa.entitlements (referenced from tauri.conf.json's
+  bundle.macOS.entitlements) and added desktop/src-tauri/Info.plist with the
+  NSScreenCaptureUsageDescription / NSMicrophoneUsageDescription strings.
+- Files affected: server/src/config.ts, server/src/index.ts,
+  server/src/sessions/store.ts, desktop/src-tauri/src/main.rs,
+  desktop/src-tauri/Cargo.toml, desktop/src-tauri/tauri.conf.json,
+  desktop/src-tauri/capabilities/default.json,
+  desktop/src-tauri/Medusa.entitlements (new), desktop/src-tauri/Info.plist
+  (new), desktop/scripts/build-sidecar.sh,
+  desktop/src-tauri/sidecar-src/entry.mjs (deleted),
+  client/src/components/Input/captureScreen.ts, desktop/README.md
+
 ## 2026-09-17 16:40
 - Fix: Parse the real `stream-json` contract (cowork parity audit gaps 1 and 2). Tool cards now show input and output, assistant text streams token by token, and subagent activity is attributed.
 - server/src/claude/types.ts: added the `stream_event` envelope (`StreamEventEnvelope`, `RawApiEvent`), `UserMessage` (how `tool_result` blocks actually arrive), `ContentBlockThinking`, `ThinkingDelta`, message_start/delta/stop events, `is_error` on tool results, and `parentToolUseId` on every parsed event. All previously exported names kept.

@@ -123,31 +123,89 @@ shows the real Medusa UI (login/onboarding, chat, sidebar - all working).
   `desktop/scripts/build-sidecar.sh` target-triple detection and
   `tauri.conf.json` structure are meant to extend to it without rework.
 
+## Path resolution (no more entry.mjs hack)
+
+`server/src/config.ts` used to derive `.env`, `uploadsDir`, and the served
+client's `publicDir` purely from `__dirname` (via `import.meta.url`), which
+broke once the server was compiled into a single `bun build --compile`
+sidecar binary (every bundled module's `import.meta.url` collapses to the
+same virtual bunfs path). That used to be worked around with a shim
+entrypoint (`src-tauri/sidecar-src/entry.mjs`) that monkey-patched `fs` to
+redirect the mis-resolved paths.
+
+That shim is gone. Instead, `server/src/config.ts` reads three optional env
+vars, falling back to the exact old `__dirname`-relative behavior when unset:
+
+- `MEDUSA_ENV_FILE` - full path to the `.env` file (default: repo root).
+- `MEDUSA_DATA_DIR` - directory holding `uploads/` and `default-bots.json`
+  (default: server root).
+- `MEDUSA_STATIC_DIR` - directory the built client is served from (default:
+  `server/dist/public`).
+
+`src-tauri/src/main.rs` sets all three before spawning the sidecar
+(`MEDUSA_DATA_DIR`/`MEDUSA_ENV_FILE` point at a per-user Application Support
+directory, `MEDUSA_STATIC_DIR` at the bundled `resources/public` resource),
+so `desktop/scripts/build-sidecar.sh` now compiles `server/dist/index.js`
+directly - no shim entrypoint needed.
+
+## Screen/window/region capture
+
+Ported from `app/Sources/WindowPickerController.swift` /
+`RegionPickerController.swift`. `src-tauri/src/main.rs` exposes a
+`capture_screen(mode)` Tauri command that shells out to the macOS
+`screencapture` CLI (`-x` full screen, `-i` region, `-i -w` window) and
+returns the PNG as base64. `client/src/components/Input/captureScreen.ts`
+tries `window.__TAURI__.core.invoke('capture_screen', ...)` first, falling
+back to the legacy WKWebView `window.webkit.messageHandlers.captureScreen`
+bridge, then `getDisplayMedia`, then a file picker - so the same
+`captureScreenFrame`/`captureWindowFrame`/`captureRegionFrame` calls work
+unchanged in both shells. This is a first pass (shelling out to
+`screencapture` instead of a native `ScreenCaptureKit` overlay embedded in
+the window); it's synchronous and blocks on the user's interactive
+selection, which is adequate but not as polished as the Swift overlay.
+
+## System tray, hotkey, notifications, auto-update
+
+- **Tray**: Show / Hide / Quit menu. Closing the main window hides it to the
+  tray instead of quitting (`WindowEvent::CloseRequested` calls
+  `api.prevent_close()` unless the tray's Quit item was used); only Quit
+  kills the sidecar and exits the process.
+- **Global hotkey**: Cmd+Shift+M shows/focuses the window from anywhere,
+  via `tauri-plugin-global-shortcut`.
+- **Notifications**: `tauri-plugin-notification` is registered and permitted
+  in `capabilities/default.json`. Note: `client/src` has no
+  `new Notification(...)` call sites today to rewire - there's nothing yet
+  on the client side that needs bridging to it.
+- **Auto-update**: `tauri-plugin-updater` is registered with a placeholder
+  endpoint/pubkey in `tauri.conf.json` (`bundle.updater`... see the `plugins.updater`
+  block). To actually ship updates:
+  1. Generate a signing keypair: `npx @tauri-apps/cli signer generate -w ~/.tauri/medusa.key`
+     (writes a private key file and prints the public key).
+  2. Put the printed public key in `tauri.conf.json`'s `plugins.updater.pubkey`.
+  3. Replace `plugins.updater.endpoints` with your real update-manifest URL(s).
+  4. Set `TAURI_SIGNING_PRIVATE_KEY` (and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
+     if the key is password-protected) when running `tauri build` so it signs
+     the bundle's update artifact.
+  No real key was generated or committed as part of this work - the
+  `pubkey`/`endpoints` in `tauri.conf.json` are placeholders.
+
+## Entitlements
+
+`src-tauri/Medusa.entitlements` ports `app/Resources/Medusa.entitlements`
+verbatim (`com.apple.security.network.client/server`,
+`com.apple.security.files.user-selected.read-write`,
+`com.apple.security.files.downloads.read-write`,
+`com.apple.security.cs.allow-unsigned-executable-memory`,
+`com.apple.security.cs.disable-library-validation`) and is wired into
+`tauri.conf.json`'s `bundle.macOS.entitlements`. Screen capture and
+microphone access don't use entitlement keys on macOS - they're gated by
+Info.plist usage-description strings plus a TCC prompt at runtime, so
+`src-tauri/Info.plist` (merged into the bundle by `tauri-build` at build
+time) carries `NSScreenCaptureUsageDescription` and
+`NSMicrophoneUsageDescription`.
+
 ## Still needs porting from the Swift shell
 
-The Swift app (`app/`) has a few features this scaffold does not yet cover:
-
-- [ ] **Screen/window capture** (`app/Sources/WindowPickerController.swift`,
-      SC5) - system-wide window picker overlay using `ScreenCaptureKit`,
-      triggered from the web UI via a `medusaNativeCapture` custom event.
-      Needs a Tauri command + a native overlay window (Tauri doesn't have a
-      screen-capture API of its own on macOS).
-- [ ] **Region capture** (`app/Sources/RegionPickerController.swift`, SC6) -
-      drag-to-select region screenshot overlay, same `ScreenCaptureKit`
-      dependency as the window picker.
-- [ ] **Entitlements** (`app/Resources/Medusa.entitlements`) - the Swift app
-      requests `com.apple.security.network.client/server`,
-      `com.apple.security.files.user-selected.read-write`,
-      `com.apple.security.files.downloads.read-write`, and (for running an
-      unsigned/ad-hoc-signed sidecar during development)
-      `com.apple.security.cs.allow-unsigned-executable-memory` /
-      `com.apple.security.cs.disable-library-validation`. None of this is
-      wired into `tauri.conf.json` yet (`bundle.macOS.entitlements` is
-      `null`) - needed before hardened-runtime/notarized distribution.
-- [ ] **Screen Recording / Microphone usage strings**
-      (`app/Resources/Info.plist`'s `NSScreenCaptureUsageDescription` /
-      `NSMicrophoneUsageDescription`) - not yet carried over into Tauri's
-      generated `Info.plist`.
 - [ ] **Auto-restart on server crash (exit code 75)** - `ServerManager.swift`
       treats sidecar exit code 75 as "please restart me" (triggered by
       `POST /api/health/restart`) and respawns + reloads the WebView.
@@ -161,3 +219,7 @@ The Swift app (`app/`) has a few features this scaffold does not yet cover:
       menu (needed for copy/paste in the webview), View > Reload, custom
       About panel wiring. Tauri provides menu APIs
       (`tauri::menu`) but none are configured yet.
+- [ ] **Native ScreenCaptureKit overlay** - the current `capture_screen`
+      command shells out to the `screencapture` CLI as a first pass; a
+      polished window/region picker (matching the Swift overlays' UX) would
+      use `ScreenCaptureKit` bindings directly instead.

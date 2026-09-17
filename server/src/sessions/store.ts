@@ -2,12 +2,8 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import crypto from "crypto";
-import { fileURLToPath } from "url";
 import { z } from "zod";
 import config from "../config.js";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const SessionMetaSchema = z.object({
   id: z.string(),
@@ -72,8 +68,9 @@ export class SessionStore {
   /** Load default bot templates from server/default-bots.json. */
   private loadDefaults(): SessionMeta[] {
     try {
-      // default-bots.json is at server root (two levels up from dist/sessions/)
-      const defaultsPath = path.resolve(__dirname, "../../default-bots.json");
+      // default-bots.json lives in config.dataDir (server root by default,
+      // overridable via MEDUSA_DATA_DIR).
+      const defaultsPath = path.join(config.dataDir, "default-bots.json");
       if (!fs.existsSync(defaultsPath)) return [];
 
       const raw = fs.readFileSync(defaultsPath, "utf-8");

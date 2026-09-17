@@ -8,7 +8,7 @@
     "beforeBuildCommand": "npm run build --prefix ../client"
   },
   "app": {
-    "withGlobalTauri": false,
+    "withGlobalTauri": true,
     "windows": [],
     "security": {
       "csp": null
@@ -31,12 +31,19 @@
       "resources/public"
     ],
     "macOS": {
-      "entitlements": null
+      "entitlements": "Medusa.entitlements"
     }
   },
   "plugins": {
     "shell": {
       "open": true
+    },
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://example.com/medusa-updates/{{target}}/{{arch}}/{{current_version}}"
+      ],
+      "pubkey": "REPLACE_WITH_GENERATED_PUBLIC_KEY"
     }
   }
 }

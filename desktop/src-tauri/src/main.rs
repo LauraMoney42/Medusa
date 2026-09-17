@@ -7,23 +7,55 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use rand::RngCore;
+use tauri::menu::{Menu, MenuItem};
 use tauri::path::BaseDirectory;
+use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_shell::process::CommandChild;
 use tauri_plugin_shell::ShellExt;
+
+/// True once the user has chosen Quit from the tray menu (or another true
+/// exit path). Close-to-tray only applies when this is false -- see
+/// on_window_event below.
+struct QuitRequested(std::sync::atomic::AtomicBool);
 
 /// Resolves the real, on-disk directory holding the built client
 /// (client/dist, staged by desktop/scripts/build-sidecar.sh into
 /// desktop/src-tauri/resources/public and declared as a Tauri bundle
-/// resource in tauri.conf.json). The sidecar binary can't serve its static
-/// assets straight out of its own bunfs embed (see
-/// desktop/src-tauri/sidecar-src/entry.mjs), so it needs this as a real
-/// path via the MEDUSA_SIDECAR_PUBLIC_DIR env var.
+/// resource in tauri.conf.json). Passed to the sidecar as MEDUSA_STATIC_DIR
+/// (see server/src/config.ts), which overrides the server's default
+/// __dirname-relative resolution -- necessary because a `bun build
+/// --compile` binary flattens every module's import.meta.url, so that
+/// default would otherwise resolve inside the bundle's virtual filesystem.
 fn resolve_public_dir(app: &AppHandle) -> Option<std::path::PathBuf> {
     app.path()
         .resolve("resources/public", BaseDirectory::Resource)
         .ok()
         .filter(|p| p.exists())
+}
+
+/// Resolves a real, writable, per-user directory for the server's runtime
+/// data (uploads/, default-bots.json, and the auto-generated .env), passed
+/// as MEDUSA_DATA_DIR / MEDUSA_ENV_FILE. Falls back to a fixed path under
+/// Application Support if Tauri's app-data-dir resolution fails for some
+/// reason, matching the directory the old entry.mjs shim used by default.
+fn resolve_data_dir(app: &AppHandle) -> std::path::PathBuf {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .unwrap_or_else(|_| {
+            dirs_home_fallback().join("Library/Application Support/Medusa")
+        })
+        .join("server-data");
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
+fn dirs_home_fallback() -> std::path::PathBuf {
+    std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
 }
 
 /// Holds the running sidecar child so it can be killed on window close / app exit.
@@ -126,11 +158,17 @@ fn start_sidecar_and_navigate(app: &AppHandle, port: u16, auth_token: String) {
         .env("AUTH_TOKEN", auth_token.clone());
 
     if let Some(public_dir) = resolve_public_dir(app) {
-        command = command.env("MEDUSA_SIDECAR_PUBLIC_DIR", public_dir.to_string_lossy().to_string());
+        command = command.env("MEDUSA_STATIC_DIR", public_dir.to_string_lossy().to_string());
     }
     // If no bundled resource is found (e.g. `cargo run` without a `tauri
-    // build`/`tauri dev` resource copy step having run yet), entry.mjs falls
-    // back to the co-located server/dist/public on disk.
+    // build`/`tauri dev` resource copy step having run yet), the server
+    // falls back to its own default (server/dist/public, next to the
+    // compiled sidecar) -- see server/src/config.ts.
+
+    let data_dir = resolve_data_dir(app);
+    command = command
+        .env("MEDUSA_DATA_DIR", data_dir.to_string_lossy().to_string())
+        .env("MEDUSA_ENV_FILE", data_dir.join(".env").to_string_lossy().to_string());
 
     let (mut rx, child) = command.spawn().expect("failed to spawn medusa-server sidecar");
 
@@ -193,6 +231,64 @@ fn start_sidecar_and_navigate(app: &AppHandle, port: u16, auth_token: String) {
     });
 }
 
+/// Tauri command backing the client's Tauri capture path (see
+/// client/src/components/Input/captureScreen.ts). Shells out to the macOS
+/// `screencapture` CLI as a first pass -- good enough for full-screen,
+/// interactive-window, and interactive-region capture without pulling in
+/// ScreenCaptureKit bindings. Returns the PNG as a base64 string, or an Err
+/// string (surfaced to JS as a rejected promise) if the user cancels or the
+/// capture otherwise fails.
+///
+/// mode: None/"fullscreen" -> whole screen, "windowPicker" -> click-a-window,
+/// "regionPicker" -> drag-to-select region.
+#[tauri::command]
+fn capture_screen(mode: Option<String>) -> Result<String, String> {
+    use base64::Engine;
+    use std::process::Command;
+
+    let tmp = std::env::temp_dir().join(format!("medusa-capture-{}.png", std::process::id()));
+    let _ = std::fs::remove_file(&tmp);
+
+    let mut cmd = Command::new("screencapture");
+    match mode.as_deref() {
+        Some("windowPicker") => {
+            cmd.args(["-i", "-w"]); // interactive, restricted to window selection
+        }
+        Some("regionPicker") => {
+            cmd.arg("-i"); // interactive drag-to-select region
+        }
+        _ => {
+            cmd.arg("-x"); // silent full-screen capture
+        }
+    }
+    cmd.arg(&tmp);
+
+    let status = cmd
+        .status()
+        .map_err(|e| format!("failed to run screencapture: {e}"))?;
+
+    if !status.success() || !tmp.exists() {
+        // screencapture exits 0 even when the user hits Esc during an
+        // interactive selection, so the file's presence is the real signal.
+        let _ = std::fs::remove_file(&tmp);
+        return Err("capture_cancelled".to_string());
+    }
+
+    let bytes = std::fs::read(&tmp).map_err(|e| format!("failed to read capture: {e}"))?;
+    let _ = std::fs::remove_file(&tmp);
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+/// Shows and focuses the main window; used by both the tray "Show" item and
+/// the global Cmd+Shift+M hotkey.
+fn show_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+        let _ = window.unminimize();
+    }
+}
+
 fn kill_sidecar(app: &AppHandle) {
     if let Some(child) = app.state::<SidecarState>().0.lock().unwrap().take() {
         let _ = child.kill();
@@ -202,7 +298,12 @@ fn kill_sidecar(app: &AppHandle) {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .invoke_handler(tauri::generate_handler![capture_screen])
         .manage(SidecarState(Mutex::new(None)))
+        .manage(QuitRequested(std::sync::atomic::AtomicBool::new(false)))
         .setup(|app| {
             let port = pick_free_port();
             let auth_token = generate_auth_token();
@@ -210,11 +311,65 @@ fn main() {
             create_main_window(app.handle(), &auth_token)?;
             start_sidecar_and_navigate(app.handle(), port, auth_token);
 
+            // --- System tray: Show / Hide / Quit -------------------------
+            let show_item = MenuItem::with_id(app, "show", "Show Medusa", true, None::<&str>)?;
+            let hide_item = MenuItem::with_id(app, "hide", "Hide Medusa", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let tray_menu = Menu::with_items(app, &[&show_item, &hide_item, &quit_item])?;
+
+            TrayIconBuilder::new()
+                .icon(app.default_window_icon().cloned().unwrap())
+                .menu(&tray_menu)
+                .show_menu_on_left_click(true)
+                .tooltip("Medusa")
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => show_main_window(app),
+                    "hide" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.hide();
+                        }
+                    }
+                    "quit" => {
+                        app.state::<QuitRequested>()
+                            .0
+                            .store(true, std::sync::atomic::Ordering::SeqCst);
+                        kill_sidecar(app);
+                        app.exit(0);
+                    }
+                    _ => {}
+                })
+                .build(app)?;
+
+            // --- Global hotkey: Cmd+Shift+M shows/focuses the window -----
+            let shortcut = Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyM);
+            let app_handle_for_shortcut = app.handle().clone();
+            app.global_shortcut().on_shortcut(shortcut, move |_app, _shortcut, event| {
+                if event.state() == ShortcutState::Pressed {
+                    show_main_window(&app_handle_for_shortcut);
+                }
+            })?;
+
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let WindowEvent::CloseRequested { .. } = event {
-                kill_sidecar(window.app_handle());
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                let app = window.app_handle();
+                let quitting = app
+                    .state::<QuitRequested>()
+                    .0
+                    .load(std::sync::atomic::Ordering::SeqCst);
+                if quitting {
+                    // Real quit (from the tray Quit item, or RunEvent::Exit
+                    // below): let the close proceed and kill the sidecar.
+                    kill_sidecar(app);
+                } else {
+                    // Closing the window hides to tray instead of quitting --
+                    // quitting here would also kill the sidecar for no
+                    // reason, since the app (and server) are meant to keep
+                    // running in the background until Quit is chosen.
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
             }
         })
         .build(tauri::generate_context!())

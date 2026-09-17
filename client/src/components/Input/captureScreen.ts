@@ -2,17 +2,60 @@
  * Utility to capture a single frame from the user's screen.
  *
  * Strategy (in priority order):
- *  1. Medusa.app (WKWebView) — native ScreenCaptureKit bridge via window.webkit.messageHandlers.
- *     Swift captures the display, encodes as PNG base64, fires 'medusaNativeCapture' CustomEvent.
- *  2. Browser — navigator.mediaDevices.getDisplayMedia (standard web API).
- *  3. Fallback — file picker (<input type="file">) for environments that support neither.
+ *  1. Medusa (Tauri): native `capture_screen` command (see
+ *     desktop/src-tauri/src/main.rs), invoked via window.__TAURI__.core.invoke.
+ *     Shells out to the macOS `screencapture` CLI and returns base64 PNG directly.
+ *  2. Medusa.app (WKWebView, legacy Swift shell): native ScreenCaptureKit bridge via
+ *     window.webkit.messageHandlers. Swift captures the display, encodes as PNG base64,
+ *     fires 'medusaNativeCapture' CustomEvent.
+ *  3. Browser: navigator.mediaDevices.getDisplayMedia (standard web API).
+ *  4. Fallback: file picker (<input type="file">) for environments that support neither.
  *
  * Requires macOS 14+ for ScreenCaptureKit path; macOS 13.x uses CGWindowListCreateImage fallback
- * in the Swift layer (transparent to JS — same bridge, same event).
+ * in the Swift layer (transparent to JS - same bridge, same event).
  */
 
 // ---------------------------------------------------------------------------
-// WKWebView native bridge (SC4 / SC5)
+// Tauri native bridge (desktop/src-tauri/src/main.rs: capture_screen command)
+// ---------------------------------------------------------------------------
+
+/** True when running inside the Tauri desktop shell (window.__TAURI__ injected). */
+function isTauri(): boolean {
+  return typeof (window as unknown as { __TAURI__?: { core?: { invoke: unknown } } }).__TAURI__
+    ?.core?.invoke === 'function';
+}
+
+/** Decode a base64 PNG string (as returned by the `capture_screen` Tauri command) into a Blob. */
+function base64PngToBlob(data: string): Blob | null {
+  try {
+    const binary = atob(data);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new Blob([bytes], { type: 'image/png' });
+  } catch (err) {
+    console.error('[tauri-capture] Failed to decode base64 PNG:', err);
+    return null;
+  }
+}
+
+/** Invoke the native `capture_screen` Tauri command and decode the result into a Blob. */
+async function captureViaTauri(mode?: 'windowPicker' | 'regionPicker'): Promise<Blob | null> {
+  const tauri = (
+    window as unknown as { __TAURI__: { core: { invoke: (cmd: string, args?: unknown) => Promise<string> } } }
+  ).__TAURI__;
+  try {
+    const data = await tauri.core.invoke('capture_screen', { mode });
+    return base64PngToBlob(data);
+  } catch (err) {
+    // Rejects with 'capture_cancelled' when the user hits Esc during an
+    // interactive window/region selection - not an error worth logging loudly.
+    if (err !== 'capture_cancelled') console.warn('[tauri-capture] capture_screen failed:', err);
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// WKWebView native bridge (SC4 / SC5, legacy Swift shell)
 // ---------------------------------------------------------------------------
 
 /** True when running inside Medusa.app's WKWebView with the captureScreen handler registered. */
@@ -73,12 +116,12 @@ function captureViaBridge(
  * Returns a PNG Blob, or null if the capture fails or times out.
  */
 function captureViaWKBridge(): Promise<Blob | null> {
-  // 30 s timeout — first-time use may pause while the OS prompts for Screen Recording permission.
+  // 30 s timeout: first-time use may pause while the OS prompts for Screen Recording permission.
   return captureViaBridge({}, 'SC4', 30_000);
 }
 
 /**
- * SC5: Window picker — lets the user click any visible window to capture it.
+ * SC5: Window picker: lets the user click any visible window to capture it.
  * Swift presents a native overlay, user clicks a window, Swift fires 'medusaNativeCapture'.
  * 60 s timeout to give the user time to interact with the picker overlay.
  */
@@ -87,7 +130,7 @@ function captureViaWindowPicker(): Promise<Blob | null> {
 }
 
 /**
- * SC6: Region picker — Swift presents a fullscreen drag-to-select overlay.
+ * SC6: Region picker: Swift presents a fullscreen drag-to-select overlay.
  * Returns the cropped region directly (no React crop step needed).
  * 60 s timeout to give the user time to drag the selection.
  */
@@ -100,7 +143,7 @@ function captureViaRegionPicker(): Promise<Blob | null> {
  * picker is available. Use this to decide whether to skip the React crop overlay.
  */
 export function isNativeRegionPickerAvailable(): boolean {
-  return isWKWebView();
+  return isTauri() || isWKWebView();
 }
 
 // ---------------------------------------------------------------------------
@@ -191,8 +234,9 @@ export function pickImageFile(): Promise<Blob | null> {
  * cropped (native) or needs the React RegionSelector crop step (browser fallback).
  */
 export async function captureRegionFrame(): Promise<Blob | null> {
+  if (isTauri()) return captureViaTauri('regionPicker');
   if (isWKWebView()) return captureViaRegionPicker();
-  // Browser: return the full screen — ScreenshotButton will show the crop overlay.
+  // Browser: return the full screen - ScreenshotButton will show the crop overlay.
   return captureScreenFrame();
 }
 
@@ -203,6 +247,7 @@ export async function captureRegionFrame(): Promise<Blob | null> {
  *  - Fallback: file picker
  */
 export async function captureScreenFrame(): Promise<Blob | null> {
+  if (isTauri()) return captureViaTauri();
   if (isWKWebView()) return captureViaWKBridge();
   if (!supportsGetDisplayMedia()) return pickImageFile();
 
@@ -225,6 +270,7 @@ export async function captureScreenFrame(): Promise<Blob | null> {
  *  - Fallback: file picker
  */
 export async function captureWindowFrame(): Promise<Blob | null> {
+  if (isTauri()) return captureViaTauri('windowPicker');
   if (isWKWebView()) return captureViaWindowPicker();
   if (!supportsGetDisplayMedia()) return pickImageFile();
 

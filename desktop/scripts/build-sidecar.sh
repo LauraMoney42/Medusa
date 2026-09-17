@@ -81,14 +81,16 @@ mkdir -p "$RESOURCES_DIR"
 cp -r "$SERVER_DIR/dist/public" "$RESOURCES_DIR/public"
 
 # --- 4. Compile dist/ into a single binary ----------------------------------
-# The entry point is desktop/src-tauri/sidecar-src/entry.mjs, not
-# server/dist/index.js directly -- it patches a handful of filesystem calls
-# before dynamically importing the real server so the compiled binary
-# doesn't crash on startup. See that file's header comment for the full
-# story (bun's standalone --compile mode flattens every bundled module's
-# import.meta.url, which server/src/config.ts and friends rely on for
-# __dirname-relative paths).
-ENTRY="$DESKTOP_DIR/src-tauri/sidecar-src/entry.mjs"
+# Compiles server/dist/index.js directly. server/src/config.ts resolves its
+# runtime paths (.env, uploads/default-bots.json, the static client dir)
+# through MEDUSA_ENV_FILE / MEDUSA_DATA_DIR / MEDUSA_STATIC_DIR when set,
+# falling back to __dirname-relative paths otherwise. desktop/src-tauri/src/
+# main.rs always sets those three env vars before spawning the sidecar, so
+# there's no need for a shim entrypoint that patches fs to redirect
+# bun's flattened import.meta.url paths (a previous version of this script
+# used desktop/src-tauri/sidecar-src/entry.mjs for exactly that; it's no
+# longer needed now that the paths are overridable directly).
+ENTRY="$SERVER_DIR/dist/index.js"
 
 if command -v bun >/dev/null 2>&1; then
   echo "bun found -- compiling with 'bun build --compile'..."

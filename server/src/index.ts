@@ -3,7 +3,6 @@ import http from "http";
 import { createHash, timingSafeEqual } from "crypto";
 import { execFileSync } from "child_process";
 import path from "path";
-import { fileURLToPath } from "url";
 import express from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
@@ -57,9 +56,6 @@ import { RunnerManager } from "./runner/runner-manager.js";
 import { createRunnersRouter } from "./routes/runners.js";
 import { createHeadroomRouter } from "./routes/headroom.js";
 import { z } from "zod";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 // ---- Instantiate shared services ----
 const processManager = new ProcessManager();
@@ -327,7 +323,7 @@ async function gracefulShutdown(signal: string) {
 app.use("/uploads", express.static(config.uploadsDir));
 
 // In production, serve the built client as static files
-const publicDir = path.resolve(__dirname, "public");
+const publicDir = config.staticDir;
 app.use(express.static(publicDir));
 // SPA fallback: serve index.html for any non-API route
 app.get("*", (_req, res, next) => {

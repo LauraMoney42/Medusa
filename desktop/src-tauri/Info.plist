@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>Medusa needs Screen Recording access to capture your screen, a window, or a region for chat attachments.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Medusa needs Microphone access for the voice input (speech-to-text) feature.</string>
+</dict>
+</plist>

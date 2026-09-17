@@ -7,12 +7,34 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const envPath = path.resolve(__dirname, "../../.env");
+// Path-resolution overrides, needed by hosts (e.g. the Tauri sidecar) that
+// run this server from a compiled/bundled location where import.meta.url no
+// longer points at a real path inside the repo. Unset by default: every
+// value falls back to the pre-existing __dirname-relative resolution.
+//
+// - MEDUSA_ENV_FILE: full path to the .env file (default: repo root, two
+//   levels up from server/dist).
+// - MEDUSA_DATA_DIR: directory that holds uploads/ and default-bots.json
+//   (default: server root, one level up from server/dist).
+// - MEDUSA_STATIC_DIR: directory the built client is served from (default:
+//   server/dist/public).
+const envPath = process.env.MEDUSA_ENV_FILE
+  ? path.resolve(process.env.MEDUSA_ENV_FILE)
+  : path.resolve(__dirname, "../../.env");
+
+const dataDir = process.env.MEDUSA_DATA_DIR
+  ? path.resolve(process.env.MEDUSA_DATA_DIR)
+  : path.resolve(__dirname, "..");
+
+const staticDir = process.env.MEDUSA_STATIC_DIR
+  ? path.resolve(process.env.MEDUSA_STATIC_DIR)
+  : path.resolve(__dirname, "public");
 
 // Auto-generate .env with a random AUTH_TOKEN on first run
 if (!fs.existsSync(envPath)) {
+  fs.mkdirSync(path.dirname(envPath), { recursive: true });
   const token = crypto.randomBytes(32).toString("hex");
-  const content = `# Medusa — auto-generated on first run\nHOST=0.0.0.0\nPORT=3456\nAUTH_TOKEN=${token}\n`;
+  const content = `# Medusa - auto-generated on first run\nHOST=0.0.0.0\nPORT=3456\nAUTH_TOKEN=${token}\n`;
   fs.writeFileSync(envPath, content, "utf-8");
   console.log(`[medusa] Created .env with auto-generated AUTH_TOKEN`);
 }
@@ -24,6 +46,10 @@ export interface Config {
   port: number;
   authToken: string;
   allowedOrigins: string[];
+  /** Directory holding uploads/ and default-bots.json (override: MEDUSA_DATA_DIR) */
+  dataDir: string;
+  /** Directory the built client is served from (override: MEDUSA_STATIC_DIR) */
+  staticDir: string;
   uploadsDir: string;
   sessionsFile: string;
   skillsCacheDir: string;
@@ -104,7 +130,9 @@ const config: Config = {
   // deployment, set ALLOWED_ORIGINS explicitly. The fallback is intentionally kept
   // to avoid breaking local dev workflows (this app is designed for localhost use).
   allowedOrigins: (process.env.ALLOWED_ORIGINS || "http://localhost:3000,http://localhost:5173").split(","),
-  uploadsDir: path.resolve(__dirname, "../uploads"),
+  dataDir,
+  staticDir,
+  uploadsDir: path.join(dataDir, "uploads"),
   sessionsFile: path.join(
     process.env.HOME || process.env.USERPROFILE || "~",
     ".claude-chat",
