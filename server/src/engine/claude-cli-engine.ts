@@ -179,7 +179,8 @@ export class ClaudeCliEngine implements Engine {
     // ANTHROPIC_BASE_URL, so only one can apply per spawn: Headroom for the
     // native provider, the provider env otherwise. getHeadroomEnv() returns {}
     // when the proxy is down, which means direct Anthropic.
-    const activeProvider = getActiveProvider();
+    // The session's own provider wins; the global setting is only the default.
+    const activeProvider = opts.providerId ?? getActiveProvider();
     const providerEnv = isAnthropicCompatibleProvider(activeProvider)
       ? getAnthropicCompatibleEnv(activeProvider as string, { model: model || "" })
       : getHeadroomEnv();

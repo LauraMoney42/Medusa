@@ -45,6 +45,12 @@ export interface EngineSpawnOptions {
   systemPrompt?: string;
   model?: string;
   yoloMode?: boolean;
+  /**
+   * Provider whose env this spawn should use (settings/providers.ts id).
+   * Per-session, so one chat can run on OpenRouter while another stays on the
+   * native Anthropic provider. Falls back to the global setting when absent.
+   */
+  providerId?: string;
   /** Force a brand-new session instead of resuming, used by the retry paths. */
   forceNew?: boolean;
   onEvent: (event: ClaudeStreamEvent) => void;

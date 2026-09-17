@@ -8,22 +8,70 @@ import config from "../config.js";
 const SessionMetaSchema = z.object({
   id: z.string(),
   name: z.string(),
+  /** The chat's project folder. One chat = one folder. */
   workingDir: z.string(),
   createdAt: z.string(),
   lastActiveAt: z.string(),
   yoloMode: z.boolean().optional(),
+  /** Per-chat extra instructions, appended to the orchestrator prompt. */
   systemPrompt: z.string().optional(),
-  /** TC-4B: Compact system prompt for routine ops (polls, nudges, acks).
-   *  ~50% shorter than full systemPrompt. Auto-generated from role if not set. */
-  compactSystemPrompt: z.string().optional(),
   skills: z.array(z.string()).optional(),
-  /** Per-session model override — bypasses routing if set (e.g. "fable", "haiku", "opus") */
+  /** Per-session model override: bypasses routing if set (e.g. "fable", "haiku", "opus") */
   model: z.string().optional(),
+  /** Which CLI harness runs this chat ("claude" | "kimi" | "code-puppy"). */
+  engineId: z.string().optional(),
+  /** Which provider env this chat uses ("claude" | "kimi" | "openrouter"). */
+  providerId: z.string().optional(),
+  archived: z.boolean().optional(),
 });
 
 const SessionsFileSchema = z.array(SessionMetaSchema);
 
 export type SessionMeta = z.infer<typeof SessionMetaSchema>;
+
+/** Prompt markers from the removed multi-bot protocol. A migrated chat must carry none of them. */
+const BOT_MARKERS = ["[HUB-POST", "[TASK-DONE", "[BOT-TASK"];
+
+/**
+ * Wording that only ever appeared in the PM/bot roster prompts. A systemPrompt
+ * containing any of these is bot-era configuration and is dropped on migration,
+ * because the orchestrator prompt replaces it wholesale.
+ */
+const PM_PHRASES = [
+  "you are medusa, the pm",
+  "pm bot",
+  "pm + orchestrator",
+  "@dev1",
+  "@devs",
+  "multi-bot",
+  "assign tasks to a specific dev",
+];
+
+/** True when this prompt is bot-era configuration that migration must clear. */
+export function hasBotMarkers(prompt: string | undefined): boolean {
+  if (!prompt) return false;
+  if (BOT_MARKERS.some((m) => prompt.includes(m))) return true;
+  const lower = prompt.toLowerCase();
+  return PM_PHRASES.some((p) => lower.includes(p));
+}
+
+/**
+ * Build the single starter chat used when migration finds no Medusa session.
+ * Named after its folder, per the B.2 title rule.
+ */
+function createDefaultSession(): SessionMeta {
+  const now = new Date().toISOString();
+  const homeDir = os.homedir();
+  const documents = path.join(homeDir, "Documents");
+  const workingDir = fs.existsSync(documents) ? documents : homeDir;
+  return {
+    id: crypto.randomUUID(),
+    name: path.basename(workingDir),
+    workingDir,
+    createdAt: now,
+    lastActiveAt: now,
+  };
+}
 
 /**
  * Persists session metadata to disk as a JSON file.
@@ -33,12 +81,26 @@ export type SessionMeta = z.infer<typeof SessionMetaSchema>;
  */
 export class SessionStore {
   private filePath: string;
-  /** In-memory cache — always the authoritative state */
+  /** In-memory cache, always the authoritative state */
   private sessions: SessionMeta[] = [];
 
-  constructor() {
-    this.filePath = config.sessionsFile;
+  /**
+   * @param filePath Override the sessions.json location. Tests pass a temp path;
+   *   production uses config.sessionsFile.
+   */
+  constructor(filePath?: string) {
+    this.filePath = filePath ?? config.sessionsFile;
     this.load();
+  }
+
+  /** Path of the one-shot migration marker, beside sessions.json. */
+  private get markerPath(): string {
+    return path.join(path.dirname(this.filePath), ".migrated-single-agent");
+  }
+
+  /** Path of the pre-migration backup of the whole roster. */
+  private get backupPath(): string {
+    return path.join(path.dirname(this.filePath), "sessions.bots.backup.json");
   }
 
   /** Load sessions from disk into memory at startup. */
@@ -48,13 +110,9 @@ export class SessionStore {
       fs.mkdirSync(dir, { recursive: true });
     }
     if (!fs.existsSync(this.filePath)) {
-      // First launch — seed from default-bots.json if it exists
-      const defaults = this.loadDefaults();
-      this.writeAtomic(defaults);
-      this.sessions = defaults;
-      if (defaults.length > 0) {
-        console.log(`[sessions] Seeded ${defaults.length} default bot(s) on first launch`);
-      }
+      // Fresh install: zero chats. The client shows the "New chat" empty state.
+      this.sessions = [];
+      this.writeAtomic(this.sessions);
       return;
     }
     try {
@@ -63,34 +121,59 @@ export class SessionStore {
     } catch {
       this.sessions = [];
     }
+    this.migrateFromBots();
   }
 
-  /** Load default bot templates from server/default-bots.json. */
-  private loadDefaults(): SessionMeta[] {
+  /**
+   * One-shot migration from the multi-bot roster to a single chat (spec B.3).
+   *
+   * Runs only when the marker file is absent, so a second load() is a no-op.
+   * Nothing is destroyed: the whole pre-migration roster is copied to
+   * sessions.bots.backup.json and the dropped bots keep their chat history
+   * files on disk.
+   */
+  migrateFromBots(): void {
+    if (fs.existsSync(this.markerPath)) return;
+
+    // 1. Back up the roster verbatim before touching anything.
     try {
-      // default-bots.json lives in config.dataDir (server root by default,
-      // overridable via MEDUSA_DATA_DIR).
-      const defaultsPath = path.join(config.dataDir, "default-bots.json");
-      if (!fs.existsSync(defaultsPath)) return [];
-
-      const raw = fs.readFileSync(defaultsPath, "utf-8");
-      const templates = JSON.parse(raw) as Array<{ name: string; systemPrompt: string }>;
-      const now = new Date().toISOString();
-      const homeDir = os.homedir();
-      const defaultWorkingDir = path.join(homeDir, "Documents");
-
-      return templates.map((t) => ({
-        id: crypto.randomUUID(),
-        name: t.name,
-        workingDir: fs.existsSync(defaultWorkingDir) ? defaultWorkingDir : homeDir,
-        createdAt: now,
-        lastActiveAt: now,
-        systemPrompt: t.systemPrompt.replace(/~\//g, homeDir + "/"),
-      }));
+      fs.copyFileSync(this.filePath, this.backupPath);
     } catch (err) {
-      console.error("[sessions] Failed to load default bots:", err);
-      return [];
+      console.error("[sessions] Migration backup failed, aborting migration:", err);
+      return;
     }
+
+    const before = this.sessions.length;
+
+    // 2. Keep the Medusa session, with its id byte for byte, so
+    //    ~/.claude-chat/chats/<id>.json and `claude --resume <id>` still resolve.
+    const medusa = this.sessions.find((s) => /^medusa$/i.test(s.name.trim()));
+
+    if (medusa) {
+      // 3. Marker-bearing prompts must not survive: undefined means
+      //    "use the orchestrator prompt".
+      if (hasBotMarkers(medusa.systemPrompt)) {
+        delete medusa.systemPrompt;
+      }
+      // 4. Drop every other session from sessions.json (chat files stay on disk).
+      this.sessions = [medusa];
+    } else {
+      // 5. No Medusa session: start one chat at ~/Documents.
+      this.sessions = [createDefaultSession()];
+    }
+
+    this.persist();
+
+    // 6. Write the marker so this never runs again.
+    try {
+      fs.writeFileSync(this.markerPath, new Date().toISOString(), "utf-8");
+    } catch (err) {
+      console.error("[sessions] Failed to write migration marker:", err);
+    }
+
+    console.log(
+      `[sessions] Migrated ${before} bot session(s) to 1 chat; backup at ${this.backupPath}`
+    );
   }
 
   /** Atomically write the sessions array to disk. */
@@ -184,11 +267,20 @@ export class SessionStore {
     return session;
   }
 
-  /** Update compact system prompt for a session. */
-  updateCompactSystemPrompt(id: string, compactSystemPrompt: string): SessionMeta | undefined {
+  /** Set the engine (CLI harness) for a session. Pass null to clear. */
+  setEngine(id: string, engineId: string | null): SessionMeta | undefined {
     const session = this.sessions.find((s) => s.id === id);
     if (!session) return undefined;
-    session.compactSystemPrompt = compactSystemPrompt || undefined;
+    session.engineId = engineId ?? undefined;
+    this.persist();
+    return session;
+  }
+
+  /** Set the provider for a session. Pass null to fall back to the global setting. */
+  setProvider(id: string, providerId: string | null): SessionMeta | undefined {
+    const session = this.sessions.find((s) => s.id === id);
+    if (!session) return undefined;
+    session.providerId = providerId ?? undefined;
     this.persist();
     return session;
   }

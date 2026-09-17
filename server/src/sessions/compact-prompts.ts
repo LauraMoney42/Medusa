@@ -69,12 +69,8 @@ function detectRole(session: SessionMeta): BotRole {
  * @returns Compact prompt string — always returns a value, never undefined.
  */
 export function getCompactPrompt(session: SessionMeta): string {
-  // User-defined compact prompt takes priority
-  if (session.compactSystemPrompt) {
-    return session.compactSystemPrompt;
-  }
-
   // Auto-generate from role detection
+  // (the per-session compactSystemPrompt override was dropped with the bot roster)
   const role = detectRole(session);
   return ROLE_COMPACT_PROMPTS[role];
 }

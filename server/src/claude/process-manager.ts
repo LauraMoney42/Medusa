@@ -7,14 +7,35 @@ interface SessionEntry extends EngineSessionState {
   /** Lock to prevent concurrent sendMessage calls */
   spawnLock: Promise<any> | null;
   /** Engine that last spawned for this session, so abort tears down the same way */
+  spawnedEngineId: string;
+  /** Per-session engine (CLI harness). Falls back to the provider, then the global setting. */
+  engineId?: string;
+  /** Per-session provider (env selection). Falls back to the global setting. */
+  providerId?: string;
+}
+
+/** Per-session engine/provider overrides carried from SessionMeta into the spawn path. */
+export interface SessionEngineOptions {
+  engineId?: string;
+  providerId?: string;
+}
+
+/** What a resolved session actually spawns: which harness, and whose env. */
+interface ResolvedEngine {
   engineId: string;
+  providerId?: string;
 }
 
 export class ProcessManager {
   private sessions: Map<string, SessionEntry> = new Map();
 
   /** Register a new session (does not spawn anything yet). Skips if already registered. */
-  createSession(id: string, workingDir: string, isFirstMessage = true): void {
+  createSession(
+    id: string,
+    workingDir: string,
+    isFirstMessage = true,
+    engine?: SessionEngineOptions
+  ): void {
     if (this.sessions.has(id)) return;
     this.sessions.set(id, {
       process: null,
@@ -22,8 +43,61 @@ export class ProcessManager {
       workingDir,
       spawnLock: null,
       kimiSessionKey: id,
-      engineId: "claude",
+      spawnedEngineId: "claude",
+      engineId: engine?.engineId,
+      providerId: engine?.providerId,
     });
+  }
+
+  /**
+   * Set (or clear) the per-session engine/provider used on the next spawn.
+   * One chat = one folder + one provider + one model + one engine, so the
+   * session's own settings win over the global provider selection.
+   */
+  configureSession(id: string, engine: SessionEngineOptions): void {
+    const entry = this.sessions.get(id);
+    if (!entry) return;
+    entry.engineId = engine.engineId;
+    entry.providerId = engine.providerId;
+  }
+
+  /** Point an existing session at a different folder. */
+  updateWorkingDir(id: string, workingDir: string): void {
+    const entry = this.sessions.get(id);
+    if (entry) entry.workingDir = workingDir;
+  }
+
+  /**
+   * Resolve which harness to spawn for this session, and which provider env
+   * it runs with.
+   *
+   * Precedence: per-call override, then the session's own engine/provider,
+   * then the global provider setting.
+   *
+   * engineId picks the harness directly. A providerId on its own maps through
+   * the engine registry: "kimi" and "code-puppy" are engines in their own
+   * right, while "claude"/"anthropic"/"openrouter" are all providers that run
+   * on the claude harness and differ only in the env it is spawned with
+   * (getEngineOrDefault falls back to claude for any id it does not know).
+   */
+  private resolveEngine(
+    entry: SessionEntry,
+    override?: SessionEngineOptions
+  ): ResolvedEngine | null {
+    const engineId = override?.engineId ?? entry.engineId;
+    const providerId = override?.providerId ?? entry.providerId;
+
+    if (engineId) {
+      return { engineId: getEngineOrDefault(engineId).id, providerId };
+    }
+    if (providerId) {
+      return { engineId: getEngineOrDefault(providerId).id, providerId };
+    }
+
+    const active = getActiveProvider();
+    if (!active) return null;
+    // The global setting is a provider id too, so map it the same way.
+    return { engineId: getEngineOrDefault(active).id, providerId: active };
   }
 
   /** Reset a session to use --session-id on the next message (e.g. after summarization). */
@@ -52,7 +126,8 @@ export class ProcessManager {
     yoloMode = false,
     systemPrompt?: string,
     model?: string,
-    files?: string[]
+    files?: string[],
+    engine?: SessionEngineOptions
   ): Promise<number | null> {
     const entry = this.sessions.get(sessionId);
     if (!entry) {
@@ -66,15 +141,15 @@ export class ProcessManager {
     }
 
     // Claim the lock immediately before spawning
-    const provider = getActiveProvider();
-    if (!provider) {
+    const resolved = this.resolveEngine(entry, engine);
+    if (!resolved) {
       return Promise.reject(new Error("No provider selected. Go to Settings and choose Claude or Kimi."));
     }
 
-    const engine = getEngineOrDefault(provider);
-    entry.engineId = engine.id;
+    const selected = getEngineOrDefault(resolved.engineId);
+    entry.spawnedEngineId = selected.id;
 
-    const spawnPromise = engine.spawn({
+    const spawnPromise = selected.spawn({
       sessionId,
       state: entry,
       text,
@@ -83,6 +158,7 @@ export class ProcessManager {
       systemPrompt,
       model,
       yoloMode,
+      providerId: resolved.providerId,
       onEvent,
     });
     entry.spawnLock = spawnPromise;
@@ -112,7 +188,7 @@ export class ProcessManager {
     // Always clear spawnLock so the session is no longer considered busy
     entry.spawnLock = null;
 
-    getEngineOrDefault(entry.engineId).abort(entry, sessionId);
+    getEngineOrDefault(entry.spawnedEngineId).abort(entry, sessionId);
   }
 
   /** Abort any running process and remove the session from the map. */
