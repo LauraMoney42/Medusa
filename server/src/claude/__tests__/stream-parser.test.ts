@@ -45,7 +45,7 @@ describe("StreamParser.feed", () => {
     const mid = Math.floor(textDeltaLine.length / 2);
     const events = collect([textDeltaLine.slice(0, mid), textDeltaLine.slice(mid) + "\n"]);
     expect(events).toHaveLength(1);
-    expect(events[0]).toEqual({ kind: "delta", text: "Hello" });
+    expect(events[0]).toMatchObject({ kind: "delta", text: "Hello" });
   });
 
   it("parses multiple newline-delimited objects in one chunk", () => {
@@ -55,7 +55,7 @@ describe("StreamParser.feed", () => {
 
   it("ignores non-JSON lines (e.g. stderr leaking into stdout)", () => {
     const events = collect(["not json at all\n" + textDeltaLine + "\n"]);
-    expect(events).toEqual([{ kind: "delta", text: "Hello" }]);
+    expect(events).toMatchObject([{ kind: "delta", text: "Hello" }]);
   });
 
   it("ignores blank and whitespace-only lines", () => {
@@ -97,11 +97,12 @@ describe("StreamParser.translate event kinds", () => {
       type: "content_block_start",
       content_block: { type: "tool_use", id: "t1", name: "Edit", input: { path: "a.ts" } },
     });
-    expect(collect([line + "\n"])[0]).toEqual({
+    expect(collect([line + "\n"])[0]).toMatchObject({
       kind: "tool_use_start",
       toolId: "t1",
       toolName: "Edit",
       input: { path: "a.ts" },
+      parentToolUseId: null,
     });
   });
 
@@ -110,10 +111,11 @@ describe("StreamParser.translate event kinds", () => {
       type: "content_block_start",
       content_block: { type: "tool_result", tool_use_id: "t1", content: "ok" },
     });
-    expect(collect([line + "\n"])[0]).toEqual({
+    expect(collect([line + "\n"])[0]).toMatchObject({
       kind: "tool_result",
       toolUseId: "t1",
       content: "ok",
+      isError: false,
     });
   });
 

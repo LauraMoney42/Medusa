@@ -16,6 +16,11 @@ interface ChatActions {
   startStreaming: (msg: ChatMessage) => void;
   appendDelta: (sessionId: string, messageId: string, delta: string) => void;
   addToolUse: (sessionId: string, messageId: string, tool: ToolUse) => void;
+  setToolResult: (
+    sessionId: string,
+    messageId: string,
+    result: { toolUseId?: string; output: string; isError?: boolean },
+  ) => void;
   finishStreaming: (
     sessionId: string,
     messageId: string,
@@ -93,6 +98,45 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
               ? { ...m, toolUses: [...(m.toolUses ?? []), tool] }
               : m,
           ),
+        },
+      };
+    }),
+
+  /**
+   * Attach a tool's output to the card that made the call. Pairs by tool id so
+   * parallel and subagent calls land on the right card; falls back to the most
+   * recent card still awaiting output when no id is available.
+   */
+  setToolResult: (sessionId, messageId, result) =>
+    set((s) => {
+      const list = s.messages[sessionId];
+      if (!list) return s;
+      return {
+        messages: {
+          ...s.messages,
+          [sessionId]: list.map((m) => {
+            if (m.id !== messageId || !m.toolUses) return m;
+            let targetIndex = result.toolUseId
+              ? m.toolUses.findIndex((t) => t.id === result.toolUseId)
+              : -1;
+            if (targetIndex === -1) {
+              for (let i = m.toolUses.length - 1; i >= 0; i--) {
+                if (m.toolUses[i].output == null) {
+                  targetIndex = i;
+                  break;
+                }
+              }
+            }
+            if (targetIndex === -1) return m;
+            return {
+              ...m,
+              toolUses: m.toolUses.map((t, i) =>
+                i === targetIndex
+                  ? { ...t, output: result.output, isError: result.isError }
+                  : t,
+              ),
+            };
+          }),
         },
       };
     }),

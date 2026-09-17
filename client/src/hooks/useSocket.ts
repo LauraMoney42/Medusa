@@ -21,6 +21,7 @@ export function useSocket() {
   const startStreaming = useChatStore((s) => s.startStreaming);
   const appendDelta = useChatStore((s) => s.appendDelta);
   const addToolUse = useChatStore((s) => s.addToolUse);
+  const setToolResult = useChatStore((s) => s.setToolResult);
   const finishStreaming = useChatStore((s) => s.finishStreaming);
   const setError = useChatStore((s) => s.setError);
   const setSessionStatus = useSessionStore((s) => s.setSessionStatus);
@@ -106,6 +107,21 @@ export function useSocket() {
 
     const handleStreamTool = (data: { sessionId: string; messageId: string; tool: ToolUse }) => {
       addToolUse(data.sessionId, data.messageId, data.tool);
+    };
+
+    const handleStreamToolResult = (data: {
+      sessionId: string;
+      messageId: string;
+      toolUseId?: string;
+      toolName?: string;
+      output: string;
+      isError?: boolean;
+    }) => {
+      setToolResult(data.sessionId, data.messageId, {
+        toolUseId: data.toolUseId,
+        output: data.output,
+        isError: data.isError,
+      });
     };
 
     const handleStreamEnd = (data: {
@@ -216,6 +232,7 @@ export function useSocket() {
     socket.on('message:stream:start', handleStreamStart);
     socket.on('message:stream:delta', handleStreamDelta);
     socket.on('message:stream:tool', handleStreamTool);
+    socket.on('message:stream:tool_result', handleStreamToolResult);
     socket.on('message:stream:end', handleStreamEnd);
     socket.on('message:error', handleMessageError);
     socket.on('session:status', handleSessionStatus);
@@ -242,6 +259,7 @@ export function useSocket() {
       socket.off('message:stream:start', handleStreamStart);
       socket.off('message:stream:delta', handleStreamDelta);
       socket.off('message:stream:tool', handleStreamTool);
+      socket.off('message:stream:tool_result', handleStreamToolResult);
       socket.off('message:stream:end', handleStreamEnd);
       socket.off('message:error', handleMessageError);
       socket.off('session:status', handleSessionStatus);

@@ -99,11 +99,13 @@ export default function MessageBubble({ message, botName }: MessageBubbleProps) 
           </div>
         )}
 
-        {/* Tool uses */}
+        {/* Tool uses — one card per call, with its input and its result */}
         {message.toolUses && message.toolUses.length > 0 && (
           <div style={styles.tools}>
             {message.toolUses.map((tool, i) => (
-              <ToolUseBlock key={i} tool={tool} />
+              // Prefer the tool id so a card keeps its expand state when a
+              // sibling's result lands and the array is rebuilt.
+              <ToolUseBlock key={tool.id ?? i} tool={tool} />
             ))}
           </div>
         )}
