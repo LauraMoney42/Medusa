@@ -4,6 +4,22 @@ import type { ParsedEvent } from "../claude/types.js";
 /** The event shape every engine emits. Socket/hub layers consume this unchanged. */
 export type ClaudeStreamEvent = ParsedEvent;
 
+/**
+ * Informational engine-level notice with no ParsedEvent equivalent, e.g. an
+ * ACP agent's plan update. Additive only: the socket handler switches on
+ * `kind` with no default branch, so consumers that don't know this kind
+ * ignore it. Kept out of `ClaudeStreamEvent` on purpose so the existing
+ * `(event: ParsedEvent) => void` callbacks keep type-checking.
+ */
+export interface ParsedSystemInfo {
+  kind: "system";
+  subtype: "info";
+  text: string;
+}
+
+/** What an engine may emit internally, before narrowing to ClaudeStreamEvent. */
+export type EngineStreamEvent = ClaudeStreamEvent | ParsedSystemInfo;
+
 export interface ModelInfo {
   id: string;
   label: string;

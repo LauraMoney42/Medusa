@@ -1,5 +1,6 @@
 import { ClaudeCliEngine } from "./claude-cli-engine.js";
 import { KimiCliEngine } from "./kimi-cli-engine.js";
+import { createCodePuppyEngine } from "./code-puppy-engine.js";
 import type { Engine } from "./types.js";
 
 const engines = new Map<string, Engine>();
@@ -23,3 +24,6 @@ export function listEngines(): Engine[] {
 
 registerEngine(new ClaudeCliEngine());
 registerEngine(new KimiCliEngine());
+// Code Puppy speaks the Agent Client Protocol; any other ACP agent (goose acp,
+// gemini --experimental-acp) can be added here with the same AcpEngine class.
+registerEngine(createCodePuppyEngine());

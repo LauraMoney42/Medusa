@@ -283,6 +283,89 @@ exactly the shape `server/src/claude/stream-parser.ts` already expects.
 That is a small, additive change (an alternate renderer for an existing,
 already-decoupled event source) rather than a new protocol implementation.
 
+## AcpEngine smoke test
+
+Follow-up on 2026-09-17: rather than wait for an upstream `--output-format
+ndjson` flag, a generic ACP client now lives in
+`server/src/engine/acp-engine.ts` (`AcpEngine`), with the Code Puppy wiring in
+`server/src/engine/code-puppy-engine.ts` and a `code-puppy` entry in
+`server/src/engine/registry.ts`. The same class drives any other ACP agent
+(`goose acp`, Gemini CLI) by changing `command`/`args`.
+
+Live round trip against the spike's venv (`code-puppy 0.0.839`, `--acp`),
+driven through `AcpEngine.spawn()` with a scratch `XDG_CONFIG_HOME` and the
+pre-seeded `puppy.cfg` that `ensurePuppyConfig()` writes:
+
+```
+seeded config:
+[puppy]
+puppy_name = Medusa Puppy
+owner_name = Medusa
+model = gpt-5
+yolo_mode = true
+
+models: gpt-5, claude-sonnet-4-5, claude-opus-4-1, gemini-2.5-pro, cerebras-qwen-3-coder, zai-glm-4.6, openrouter, claude_code
+EVENT {"kind":"init","sessionId":"sess_f047e2aec57b43ae","model":"code-puppy","tools":[],"cwd":".../scratchpad/smoke-work"}
+[code-puppy] stderr: ERROR:code_puppy_core_plugins.acp.session:ACP: agent run failed
+[code-puppy] stderr:   File ".../code_puppy/model_factory.py", line 751, in get_model
+[code-puppy] stderr:     raise ValueError(f"Model '{model_name}' not found in configuration.")
+[code-puppy] stderr: ValueError: Model 'None' not found in configuration.
+[code-puppy] stderr: ValueError: No valid model could be loaded. Update the model configuration or set a valid model with `config set`.
+EVENT {"kind":"delta","text":"⚠️ The agent run failed: No valid model could be loaded. Update the model configuration or set a valid model with `config set`."}
+EVENT {"kind":"result","success":false,"sessionId":"smoke-session","error":"Agent stopped with reason: refusal"}
+exit code: null
+event count: 3
+```
+
+What this confirms end to end, live: the pre-seeded `puppy.cfg` defeats the
+first-run wizard (the process never blocked on stdin), `initialize` negotiated
+`protocolVersion: 1` and `loadSession`/image capabilities, `session/new`
+returned a real session id, the synthetic `init` event was assembled from data
+ACP never echoes back (cwd + model), an `agent_message_chunk` notification was
+translated into a `delta`, and the `session/prompt` response's `stopReason`
+became a `result` event. The stderr redirect the plugin performs keeps stdout
+pure JSON-RPC, so the Python traceback never corrupted the stream.
+
+**No API key was available in this environment** (no `OPENAI_API_KEY`,
+`ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `CEREBRAS_API_KEY`
+or `ZAI_API_KEY`), so, exactly as in the original spike, the run died at
+model-load time. The `tool_call` / `tool_call_update` / `plan` translations and
+the `session/request_permission` round trip are therefore covered only by the
+hand-driven JSON-RPC unit tests in
+`server/src/engine/__tests__/acp-engine.test.ts`, not by a live model call.
+
+Note also that Code Puppy resolves `model` against a per-user `models.json`
+that ships empty, so a seeded `model = gpt-5` alone is not enough: the error is
+`Model 'None' not found in configuration`. A working deployment needs both an
+API key and a populated `models.json`.
+
+### AcpEngine known limitations
+
+1. **Permissions are non-interactive.** Medusa has no permission
+   request/response plumbing in the socket layer, so `session/request_permission`
+   is answered immediately: the first `allow_*` option in YOLO mode, the first
+   `reject_*` option otherwise, plus a `tool_result` telling the user the call
+   was denied and that YOLO mode would allow it. When real permission plumbing
+   lands, `handleRequest`'s `session/request_permission` branch is the one place
+   to change.
+2. **Resume is in-memory.** The Medusa-session-id to ACP-session-id map lives on
+   the engine instance. A server restart, or an agent that does not advertise
+   `loadSession`, means the next message opens a brand-new ACP session and the
+   agent loses its history. `session/load` replays the whole conversation as
+   `session/update` notifications, so those are suppressed while the load is in
+   flight to avoid re-streaming old turns into the chat.
+3. **No per-message model switching.** ACP's `session/new` takes no model
+   parameter; the model comes from the agent's own config (for Code Puppy, the
+   `model` key in `puppy.cfg`). `listModels()` is a static list and the picker
+   cannot change the running agent's model.
+4. **`terminal/*` is unsupported**, answered with JSON-RPC `-32601`, so agents
+   fall back to running commands in their own process.
+5. **`agent_thought_chunk` is dropped** (no `ParsedEvent` equivalent), and plan
+   updates use an additive `{kind: "system", subtype: "info"}` event that the
+   current socket handler ignores.
+6. **No cost figures.** ACP reports no USD cost, so `result` events carry no
+   `totalCostUsd` and the token logger records zero cost for these turns.
+
 ## Recommendation: GO-WITH-UPSTREAM-PR
 
 Code Puppy is a real, actively maintained multi-provider agent with
