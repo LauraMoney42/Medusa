@@ -5,7 +5,11 @@ import { execFile, execSync, spawn } from "child_process";
 import { z } from "zod";
 import config from "../config.js";
 
-export type LlmProvider = "claude" | "kimi";
+// "claude" and "kimi" are the two built-in native providers; any other string
+// is looked up in the provider registry (server/src/settings/providers.ts):
+// e.g. "openrouter", or a custom Anthropic-compatible provider a user adds
+// to their settings file.
+export type LlmProvider = string;
 
 /**
  * Resolves ~ in config dir paths and returns the absolute CLAUDE_CONFIG_DIR.
@@ -23,7 +27,10 @@ export function getActiveConfigDir(): string | undefined {
 }
 
 const SettingsSchema = z.object({
-  activeProvider: z.enum(["claude", "kimi"]).nullable().default(null),
+  // Kept as a permissive string (not z.enum) so any provider registered in
+  // providers.ts, including custom Anthropic-compatible ones a user adds to
+  // this same settings file, can be activated without a schema change.
+  activeProvider: z.string().nullable().default(null),
   // OneNote fields (not returned in buildSettingsResponse)
   microsoftClientId: z.string().default(""),
   microsoftAccessToken: z.string().default(""),

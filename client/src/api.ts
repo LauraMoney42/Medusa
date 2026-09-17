@@ -394,18 +394,40 @@ export function fetchHeadroomStatus(): Promise<HeadroomStatus> {
 }
 
 export interface SettingsResponse {
-  activeProvider: 'claude' | 'kimi' | null;
+  // Any registered provider id ("claude", "kimi", "openrouter", or a custom one).
+  activeProvider: string | null;
 }
 
 export function fetchSettings(): Promise<SettingsResponse> {
   return request<SettingsResponse>('/api/settings');
 }
 
-export function setProvider(provider: 'claude' | 'kimi'): Promise<SettingsResponse> {
+export function setProvider(provider: string): Promise<SettingsResponse> {
   return request<SettingsResponse>('/api/settings/provider', {
     method: 'POST',
     body: JSON.stringify({ provider }),
   });
+}
+
+export interface ProviderModel {
+  id: string;
+  displayName: string;
+  cheap?: boolean;
+}
+
+export interface ProviderSummary {
+  id: string;
+  displayName: string;
+  anthropicCompatible: boolean;
+  hasApiKey: boolean;
+}
+
+export function fetchProviders(): Promise<{ providers: ProviderSummary[] }> {
+  return request<{ providers: ProviderSummary[] }>('/api/providers');
+}
+
+export function fetchProviderModels(providerId: string): Promise<{ providerId: string; models: ProviderModel[] }> {
+  return request<{ providerId: string; models: ProviderModel[] }>(`/api/providers/${encodeURIComponent(providerId)}/models`);
 }
 
 export function logoutProvider(): Promise<{ success: boolean; settings: SettingsResponse }> {
@@ -469,6 +491,7 @@ export interface TokenUsagePeriod {
   totalDurationMs: number;
   byBot: Record<string, { costUsd: number; messages: number }>;
   bySource: Record<string, { costUsd: number; messages: number }>;
+  byModel: Record<string, { costUsd: number; messages: number }>;
 }
 
 export function fetchTokenUsage(period: 'day' | 'week' | 'month'): Promise<TokenUsagePeriod> {

@@ -35,6 +35,11 @@ export interface TokenUsageEntry {
   cacheReadTokens?: number;
   /** Whether the CLI call succeeded */
   success: boolean;
+  /** LLM provider id used for this interaction (e.g. "claude", "kimi", "openrouter") */
+  provider?: string;
+  /** Model id used for this interaction (a tier like "sonnet" for native Claude,
+   *  or a full model id like "openai/gpt-5.1" when routed through OpenRouter) */
+  model?: string;
 }
 
 /**
@@ -54,6 +59,8 @@ export interface UsageSummary {
   avgOutputTokens: number;
   byBot: Record<string, { costUsd: number; messages: number; inputTokens: number; outputTokens: number }>;
   bySource: Record<string, { costUsd: number; messages: number; inputTokens: number; outputTokens: number }>;
+  /** Keyed by "<provider>/<model>" (falls back to just the model, or "unknown"). */
+  byModel: Record<string, { costUsd: number; messages: number }>;
 }
 
 /**
@@ -154,6 +161,7 @@ export class TokenLogger {
       avgOutputTokens: 0,
       byBot: {},
       bySource: {},
+      byModel: {},
     };
 
     let entriesWithTokens = 0;
@@ -192,6 +200,15 @@ export class TokenLogger {
       summary.bySource[e.source].messages += 1;
       summary.bySource[e.source].inputTokens += inputTokens;
       summary.bySource[e.source].outputTokens += outputTokens;
+      // By model: "<provider>/<model>" when both are known, else whichever is present.
+      const modelKey = e.provider && e.model
+        ? `${e.provider}/${e.model}`
+        : e.model || e.provider || "unknown";
+      if (!summary.byModel[modelKey]) {
+        summary.byModel[modelKey] = { costUsd: 0, messages: 0 };
+      }
+      summary.byModel[modelKey].costUsd += e.costUsd;
+      summary.byModel[modelKey].messages += 1;
     }
 
     if (entries.length > 0) {

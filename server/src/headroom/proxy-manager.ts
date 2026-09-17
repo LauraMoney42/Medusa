@@ -23,6 +23,7 @@ import fs from "fs";
 import http from "http";
 import config from "../config.js";
 import { getActiveProvider } from "../settings/store.js";
+import { isAnthropicCompatibleProvider } from "../settings/providers.js";
 
 // ---- Module state ----
 let child: ChildProcess | null = null;
@@ -251,8 +252,13 @@ export function getHeadroomStats(): Promise<HeadroomStats | null> {
  */
 export function getHeadroomEnv(): Record<string, string> {
   if (!ready) return {};
-  // Only route Anthropic/Claude traffic. Leave Kimi (or any non-Claude provider) alone.
-  if (getActiveProvider() === "kimi") return {};
+  // Only route native Anthropic/Claude traffic. Leave Kimi alone, and leave any
+  // Anthropic-compatible custom provider (OpenRouter, etc.) alone too: those
+  // already set their own ANTHROPIC_BASE_URL/ANTHROPIC_AUTH_TOKEN pointed at a
+  // different upstream, and layering Headroom's loopback proxy on top of that
+  // would just break auth. Headroom and a custom provider are mutually exclusive.
+  const activeProvider = getActiveProvider();
+  if (activeProvider === "kimi" || isAnthropicCompatibleProvider(activeProvider)) return {};
   return {
     ANTHROPIC_BASE_URL: `http://127.0.0.1:${config.headroomPort}`,
     // Keep Claude Code's on-demand tool loading (deferral) active through a custom

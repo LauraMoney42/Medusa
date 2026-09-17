@@ -95,6 +95,7 @@ function printReport(entries: TokenUsageEntry[], since: Date): void {
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
   let entriesWithTokens = 0;
+  const byModel: Record<string, { cost: number; count: number }> = {};
 
   for (const e of entries) {
     totalCost += e.costUsd;
@@ -121,6 +122,10 @@ function printReport(entries: TokenUsageEntry[], since: Date): void {
     bySource[e.source].count += 1;
     bySource[e.source].inputTokens += inputTokens;
     bySource[e.source].outputTokens += outputTokens;
+    const modelKey = e.provider && e.model ? `${e.provider}/${e.model}` : e.model || e.provider || "unknown";
+    if (!byModel[modelKey]) byModel[modelKey] = { cost: 0, count: 0 };
+    byModel[modelKey].cost += e.costUsd;
+    byModel[modelKey].count += 1;
   }
 
   const timeSpanMs =
@@ -169,6 +174,16 @@ function printReport(entries: TokenUsageEntry[], since: Date): void {
       : "";
     console.log(
       `  ${source.padEnd(20)} ${formatCost(data.cost).padStart(10)}  (${pct}%)  ${data.count} msgs${tokenInfo}`
+    );
+  }
+
+  // Cost by model (provider/model, e.g. "openrouter/openai/gpt-5.1")
+  console.log("\n── Cost by Model ────────────────────────────");
+  const modelEntries = Object.entries(byModel).sort((a, b) => b[1].cost - a[1].cost);
+  for (const [model, data] of modelEntries) {
+    const pct = ((data.cost / totalCost) * 100).toFixed(1);
+    console.log(
+      `  ${model.padEnd(30)} ${formatCost(data.cost).padStart(10)}  (${pct}%)  ${data.count} msgs`
     );
   }
 
