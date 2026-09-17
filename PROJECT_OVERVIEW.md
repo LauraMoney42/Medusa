@@ -1,95 +1,125 @@
-# Claude Chat - Multi-Session Chat Web UI
+# Medusa: Project Overview
 
-A web-based chat interface that enables multiple concurrent sessions with the Claude CLI (`claude -p`), providing real-time streaming responses via WebSockets.
+Medusa is a single-agent, model-agnostic desktop AI interface. One chat is one
+session, with its own project folder, provider, model, and engine. Medusa
+orchestrates any parallel work herself, through a Medusa-owned MCP server that
+every supported engine receives identically, rather than the user managing a
+roster of bots.
+
+This document describes the target architecture from
+`docs/2026-09-17_medusa_only_orchestrator_spec.md` and
+`docs/2026-09-17_ui_and_layer_addendum.md`. The engine registry
+(`server/src/engine/`: `types.ts`, `registry.ts`, `claude-cli-engine.ts`,
+`kimi-cli-engine.ts`, `acp-engine.ts`, `code-puppy-engine.ts`) already ships
+today. What is still being built by other in-flight workstreams (S1-S3) -
+the `medusa` MCP server and the subagent lifecycle manager - does not exist
+in this checkout yet; those rows are marked "planned" below with the spec
+section that defines them. The multi-bot code paths they replace (Hub,
+dev-control, per-bot task sync) are still present in this checkout and are
+what actually runs today, pending that work landing.
 
 ## Architecture
 
+Six layers, top to bottom:
+
+1. **Client** (React + Vite) - the chat UI: sidebar (chat list), chat pane,
+   message stream, Browser/Simulator panels, settings.
+2. **Server** (Node.js + Express + Socket.IO) - session lifecycle, REST API,
+   real-time streaming, file-backed storage.
+3. **Desktop shell** - the packaging around the client + server for a
+   standalone app. A Tauri v2 shell already ships in `desktop/` (Node
+   sidecar, tray, global hotkey, screen/window/region capture pickers - see
+   `desktop/README.md`); the older Swift/SwiftUI + WKWebView wrapper
+   (`app/`) is legacy and is being retired once `desktop/` reaches parity.
+   The spec's Tauri folder-picker work (S9) is the remaining planned piece.
+4. **Engine layer** - one interface, several interchangeable brains: the
+   `claude` CLI, the `kimi` CLI, OpenRouter (via the `claude` CLI harness),
+   and Code Puppy (via ACP). This already ships as `server/src/engine/`
+   (`types.ts`, `registry.ts`, `claude-cli-engine.ts`, `kimi-cli-engine.ts`,
+   `acp-engine.ts`, `code-puppy-engine.ts`); `server/src/claude/process-manager.ts`
+   resolves an engine from the registry rather than spawning Claude/Kimi
+   directly.
+5. **MCP tools layer** - a Medusa-owned MCP server (`medusa`), reached over
+   stdio by a shim process every engine spawns identically, exposing
+   `spawn_agent` / `agent_status` / `agent_result` / `list_agents` /
+   `cancel_agent` plus the Browser/Simulator/file tools. *Planned, spec
+   Section A* - not present in this checkout.
+6. **Sessions** - one JSON-backed session per chat (`SessionMeta`): folder,
+   provider, model, and (planned) engine, persisted under `~/.claude-chat/`.
+
+```mermaid
+graph TB
+    Client[Client: chat UI, sidebar, Browser/Simulator panels]
+    Server[Server: Express + Socket.IO, session lifecycle]
+    Shell[Desktop shell: Swift/WKWebView today, Tauri planned]
+    Engine["Engine layer (planned): claude / kimi / OpenRouter / Code Puppy-ACP"]
+    MCP["medusa MCP server (planned): spawn_agent, tools"]
+    Sessions[Sessions: one JSON session per chat]
+
+    Client --> Server
+    Shell --> Client
+    Shell --> Server
+    Server --> Sessions
+    Server --> Engine
+    Engine --> MCP
 ```
-claude-chat/
-  .env                  # HOST, PORT, AUTH_TOKEN
-  client/               # Frontend (Vite + React, separate build)
-  server/               # Backend (Express + Socket.IO + TypeScript)
-    src/
-      config.ts         # Loads .env, exports typed config object
-      auth.ts           # Bearer-token auth middleware for Express
-      index.ts          # Entry point: wires Express, Socket.IO, routes
-      claude/
-        types.ts        # TypeScript types for Claude CLI NDJSON stream
-        stream-parser.ts # Incremental NDJSON line parser
-        process-manager.ts # Spawns/manages claude CLI child processes per session
-      sessions/
-        store.ts        # Persists session metadata to ~/.claude-chat/sessions.json
-      routes/
-        health.ts       # GET /api/health
-        sessions.ts     # CRUD for chat sessions
-        images.ts       # Image upload via multer
-      settings/
-        store.ts        # Active provider + login/logout, persisted to ~/.claude-chat/settings.json
-        providers.ts    # Provider registry (claude/kimi/openrouter) + live model listing +
-                         # Anthropic-compatible env construction for routing `claude` through
-                         # OpenRouter (or another custom Anthropic-compatible endpoint)
-      socket/
-        handler.ts      # Socket.IO auth + event handlers for real-time chat
-      types/
-        socket.io.d.ts  # Ambient type declarations for socket.io
-    uploads/            # Uploaded images stored here
-```
 
-## Key Technologies
+## Component table
 
-### Server
-- **Runtime**: Node.js with TypeScript (ESM)
-- **HTTP**: Express 4 with CORS
-- **Real-time**: Socket.IO 4 (10 MB buffer)
-- **CLI Integration**: Spawns `claude -p --output-format stream-json --verbose --include-partial-messages`
-- **Storage**: JSON file at `~/.claude-chat/sessions.json` (atomic writes)
-- **Auth**: Bearer token from .env, applied to both HTTP and WebSocket
-
-### Client
-- **Framework**: React 19 with TypeScript
-- **Build Tool**: Vite 7 (dev proxy to server on port 3456)
-- **State Management**: Zustand (sessionStore + chatStore)
-- **Real-time**: Socket.IO Client (websocket transport)
-- **Markdown**: react-markdown + remark-gfm + rehype-highlight
-- **Theme**: Dark Discord-like UI with CSS custom properties
-
-### Client Components
-| Component | Path | Responsibility |
+| Component | Path | Status |
 |---|---|---|
-| `LoginScreen` | `components/Auth/` | Token-based authentication |
-| `Sidebar` | `components/Sidebar/` | Session list, create/rename/delete sessions |
-| `ChatPane` | `components/Chat/` | Main chat area with message list and input |
-| `MessageBubble` | `components/Chat/` | Individual message rendering (markdown, tool use) |
-| `ChatInput` | `components/Input/` | Text input with image paste, send/abort controls |
+| Express + Socket.IO entry point | `server/src/index.ts` | current |
+| Session metadata store | `server/src/sessions/store.ts` | current; gains `engineId`/`providerId` per spec Section B.1 |
+| Socket event handlers | `server/src/socket/handler.ts` | current; loses the Hub/mention branches per spec Section D.2 |
+| Session process spawn/manage | `server/src/claude/process-manager.ts` | current; already resolves an `Engine` from `server/src/engine/registry.ts` rather than spawning Claude/Kimi directly |
+| NDJSON stream parser | `server/src/claude/stream-parser.ts` | current, kept unchanged per spec Summary point 9 |
+| Multi-account / provider settings | `server/src/settings/store.ts` | current |
+| Projects pane store | `server/src/projects/store.ts` | current; rescoped to per-session per spec Section E.5 |
+| Project/task sync from bot markers | `server/src/projects/task-sync.ts` | current; removed per spec Section D.1 (Medusa edits the file directly instead) |
+| Hub message store | `server/src/hub/store.ts` | current; removed per spec Section D.1 |
+| Mention routing | `server/src/hub/mention-router.ts` | current; removed per spec Section D.1 |
+| Poll scheduler (bot heartbeats) | `server/src/hub/poll-scheduler.ts` | current; removed per spec Section D.1 |
+| Dev-control (pause/resume bots) | `server/src/dev-control/` | current; removed per spec Section D.1 |
+| Browser pane (CDP screencast) | `server/src/cowork/screencast.ts`, `client/src/components/Cowork/CoworkPane.tsx` | current, kept unchanged; moves to a header icon per addendum item 3 |
+| Simulator pane (idb) | `server/src/cowork/simulator-stream.ts`, `client/src/components/Cowork/SimulatorPane.tsx` | current, kept unchanged; moves to a header icon per addendum item 3 |
+| Token usage / metrics | `server/src/metrics/token-logger.ts` | current; `byBot` renamed `bySession`, `bySubagent` added, per spec Section A.8 |
+| Sidebar | `client/src/components/Sidebar/Sidebar.tsx` | current; Hub nav item, Stop All, and per-bot status symbols removed per spec Section E.1 |
+| Chat UI (formerly Hub-scoped) | `client/src/components/Hub/MedusaChat.tsx` | current; directory renamed to `client/src/components/Chat/` per spec Section D.3 |
+| Session state | `client/src/stores/sessionStore.ts` | current; `pendingTasks`/`devControl` dropped per spec Section D.4 |
+| Engine registry | `server/src/engine/` | current - `types.ts`, `registry.ts`, `claude-cli-engine.ts`, `kimi-cli-engine.ts`, `acp-engine.ts`, `code-puppy-engine.ts` |
+| Provider registry (OpenRouter, live model listing) | `server/src/settings/providers.ts`, `server/src/routes/providers.ts` | current |
+| Socket error policy (auth-error detection, dedupe) | `server/src/socket/error-policy.ts` | current |
+| Desktop shell (Tauri v2, Node sidecar, tray, hotkey) | `desktop/` | current - see `desktop/README.md`; the older Swift `app/` is legacy |
+| Subagent lifecycle manager | `server/src/subagents/manager.ts` | planned, spec Section A.3 |
+| `medusa` MCP server + shim | `server/src/mcp/medusa-mcp-shim.ts`, `server/src/mcp/config.ts` | planned, spec Section A.3 |
+| Subagent HTTP API | `server/src/routes/subagents.ts` | planned, spec Section A.3 |
+| Subagent card (client) | `client/src/components/Chat/SubagentCard.tsx` | planned, spec Section A.6 |
+| Subagent store (client) | `client/src/stores/subagentStore.ts` | planned, spec Section A.3 |
+| Orchestrator system prompt | `server/src/sessions/orchestrator-prompt.ts` | planned, spec Section C - replaces `server/src/sessions/compact-prompts.ts` |
+| Tauri folder picker | `desktop/src-tauri/` | planned, spec Section B.2/S9 - the `desktop/` shell itself already ships; only the native folder-picker dialog is outstanding |
+| Redesigned left rail / right panel (Browser\|Simulator) / Activity Log | `client/src/components/` (new layout) | planned, per `docs/2026-09-17_ui_and_layer_addendum.md` - not built in this checkout |
 
-## Hub (Shared Awareness Feed)
+## How it works today (pre-migration)
 
-Bots can coordinate and flag uncertainties via a shared Hub feed, without constant chatter.
+1. Client creates a session via `POST /api/sessions`.
+2. Client connects to Socket.IO and joins the session room.
+3. Client sends `message:send`; the server spawns the configured CLI process
+   for that session and pipes its NDJSON stdout through `StreamParser`.
+4. Parsed events stream back to the client room as `message:stream:*` events.
+5. On process exit, session status transitions from busy to idle.
 
-### Architecture
-- **Storage**: `~/.claude-chat/hub.json` — 200-message FIFO, loaded into memory on startup
-- **Server**: `server/src/hub/store.ts` (HubStore), `server/src/hub/mention-router.ts` (MentionRouter)
-- **Client**: `client/src/stores/hubStore.ts` (Zustand), `client/src/components/Hub/` (HubFeed, HubMessage)
+## Where this is headed
 
-### How Hub Posts Work
-1. Bot includes `[HUB-POST: message here]` in its response
-2. `HubPostDetector` (in socket handler) detects the marker mid-stream, strips it from chat output
-3. Message is stored, broadcast to all clients via `hub:message` socket event
-4. If the post contains `@BotName`, MentionRouter sends an auto-message to that bot's session
-
-### @Mention Routing
-- `@BotName` in hub messages triggers automatic message delivery to the named bot
-- Idle bots receive immediately; busy bots get the mention when they become idle
-- Guards: self-mention prevention, 60s cooldown, max 1 pending mention per bot
-
-### System Prompt Injection
-Every outbound message to Claude includes the last 20 hub messages and the list of active bots, so each bot has awareness of the team's state.
-
-## How It Works
-
-1. Client creates a session via `POST /api/sessions`
-2. Client connects to Socket.IO and joins the session room
-3. Client sends `message:send` with text (and optional image paths)
-4. Server spawns `claude` CLI, pipes NDJSON stdout through StreamParser
-5. Parsed events stream back to the client room as `message:stream:*` events
-6. On process exit, session status transitions from busy to idle
+Per the orchestrator spec (Section F), the work is split into workstreams
+S1-S12: the `medusa` MCP server and subagent manager (S1 - the engine
+registry itself already shipped ahead of this workstream), the session model
+and migration off the bot roster (S2), removal of the Hub/dev-control/task-
+sync code (S3), this documentation pass (S4), the redesigned sidebar and chat
+header (S5), the subagent card (S6), client-side removals (S7), the new
+orchestrator prompt (S8), the Tauri folder picker (S9), usage attribution
+(S10), the Projects pane rescope (S11), and a cross-engine subagent eval
+(S12). See `Features.md` for the roadmap and `docs/2026-09-17_ui_and_layer_addendum.md`
+for the target three-column layout (left rail, center chat with the model
+selector under the input, right Browser|Simulator panel, and a collapsible
+Activity Log) and the three-layer "Medusa layer" vision (persona/rules,
+tools, engine) that this architecture is converging toward.
