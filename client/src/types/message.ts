@@ -25,4 +25,11 @@ export interface ChatMessage {
   isStreaming?: boolean;
   cost?: number;
   durationMs?: number;
+  /**
+   * Distinct engine/handler error lines for this message, in the order they
+   * occurred. Consecutive-deduped: the same error text never appears twice
+   * in a row, so a tier-escalation retry that fails the same way doesn't
+   * render the same line repeatedly.
+   */
+  errors?: string[];
 }

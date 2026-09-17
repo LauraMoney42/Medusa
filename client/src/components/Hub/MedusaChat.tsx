@@ -3,7 +3,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useChatStore } from '../../stores/chatStore';
 import { useTtsStore } from '../../stores/ttsStore';
 import { getSocket } from '../../socket';
-import { useSocket } from '../../hooks/useSocket';
+import MessageBubble from '../Chat/MessageBubble';
 import ScreenshotButton from '../Input/ScreenshotButton';
 import MicButton from '../Input/MicButton';
 import { useDictationInsert } from '../../hooks/useDictationInsert';
@@ -18,8 +18,11 @@ interface MedusaChatProps {
 }
 
 export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
-  // useSocket sets up the shared socket connection + listeners (side effect).
-  useSocket();
+  // The shared socket connection + listeners are set up once, in
+  // AuthenticatedApp (App.tsx), which always wraps this component. Calling
+  // useSocket() again here registered a second set of listeners on the same
+  // underlying socket, so every server event (message:user, deltas, tool
+  // events) fired twice: duplicate "You" bubbles and doubled tool cards.
   const sessions = useSessionStore((s) => s.sessions);
   const setActiveSession = useSessionStore((s) => s.setActiveSession);
   const messages = useChatStore((s) => s.messages);
@@ -178,7 +181,12 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
     void setSessionModel(activeSession.id, e.target.value || null);
   }, [activeSession]);
 
-  const [activeProviderId, setActiveProviderId] = useState('claude');
+  // Provider lives in the shared providerStore (not local state) so this
+  // picker stays in sync with the header's provider picker (ChatHeaderControls)
+  // the instant it changes, instead of each keeping its own stale copy until
+  // a reload re-runs fetchSettings().
+  const activeProviderId = useProviderStore((s) => s.activeProviderId);
+  const setActiveProviderId = useProviderStore((s) => s.setActiveProviderId);
   const fetchProviderList = useProviderStore((s) => s.fetchProviders);
   const fetchProviderModels = useProviderStore((s) => s.fetchModels);
   const modelsFor = useProviderStore((s) => s.modelsFor);
@@ -191,7 +199,7 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
       .catch(() => {
         // Keep the default 'claude' provider on fetch failure.
       });
-  }, [fetchProviderList]);
+  }, [fetchProviderList, setActiveProviderId]);
 
   useEffect(() => {
     void fetchProviderModels(activeProviderId);
@@ -364,54 +372,6 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
   );
 }
 
-/** Render a single message bubble */
-function MessageBubble({ message, botName, onSpeak }: { message: any; botName: string; onSpeak?: (text: string) => void }) {
-  const isUser = message.role === 'user';
-  const displayName = isUser ? 'You' : botName;
-  const timestamp = new Date(message.timestamp).toLocaleTimeString([], {
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-
-  return (
-    <div style={{ justifyContent: isUser ? 'flex-end' : 'flex-start', display: 'flex' }}>
-      <div
-        style={{
-          ...styles.bubble,
-          background: isUser ? 'rgba(74, 186, 106, 0.12)' : '#232325',
-          border: isUser ? '1px solid rgba(74, 186, 106, 0.2)' : '1px solid rgba(255,255,255,0.08)',
-          borderBottomLeftRadius: isUser ? 10 : 4,
-          borderBottomRightRadius: isUser ? 4 : 10,
-        }}
-      >
-        <div style={styles.bubbleHeader}>
-          <span style={{ color: '#4aba6a' }}>{displayName}</span>
-          <span style={styles.time}>{timestamp}</span>
-          {!isUser && onSpeak && message.text && (
-            <button
-              onClick={() => onSpeak(message.text)}
-              title="Play aloud"
-              style={styles.bubbleSpeakBtn}
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-                <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-              </svg>
-            </button>
-          )}
-        </div>
-        <div style={styles.bubbleText}>{message.text}</div>
-        {message.images && message.images.length > 0 && (
-          <div style={styles.bubbleImages}>
-            {message.images.map((src: string, i: number) => (
-              <img key={i} src={src} alt="Attached" style={{ maxWidth: 200, borderRadius: 6 }} />
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
 
 const styles: Record<string, React.CSSProperties> = {
   container: {

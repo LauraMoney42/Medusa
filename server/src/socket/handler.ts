@@ -87,8 +87,9 @@ import { selectModel, NEXT_TIER, type ModelTier } from "../claude/model-router.j
 import { summarizeConversation } from "../chat/conversation-summarizer.js";
 import { processHubPosts } from "../hub/post-processor.js";
 import { summarizingSessionIds } from "../chat/summarization-guard.js";
-import { getActiveProvider } from "../settings/store.js";
+import { getActiveProvider, getActiveConfigDir } from "../settings/store.js";
 import { isAnthropicCompatibleProvider, getDefaultModel } from "../settings/providers.js";
+import { isAuthError, ConsecutiveErrorDeduper, buildAllTiersFailedMessage } from "./error-policy.js";
 
 // ---- Hub Post Detection ----
 
@@ -556,6 +557,14 @@ export function setupSocketHandler(
     // Hub post detector for this stream
     const hubDetector = new HubPostDetector();
 
+    // Tracks whether the last error emitted was a repeat, so tier-escalation
+    // retries don't render the same "Not logged in" (or any other) message
+    // two or three times in a row. Also records whether any error seen so
+    // far is an auth error, since escalating to a different model tier
+    // can't fix that.
+    const errorDeduper = new ConsecutiveErrorDeduper();
+    let authErrorSeen = false;
+
     // Provider/model for this send, used to tag the usage log entry below.
     // `currentModel` is assigned once the model is selected further down; onEvent
     // is a closure over this same block scope, so by the time the "result" event
@@ -732,18 +741,24 @@ export function setupSocketHandler(
 
         case "error": {
           const errMsg = event.message;
-          io.to(sessionId).emit("message:error", {
-            sessionId,
-            messageId: assistantMsgId,
-            error: errMsg,
-          });
-          // Also post to Hub so errors are visible globally
-          const hubErrMsg = hubStore.add({
-            from: "System",
-            text: `❌ **Error** in ${meta.name}: ${errMsg}`,
-            sessionId: "",
-          });
-          io.emit("hub:message", hubErrMsg);
+          if (isAuthError(errMsg)) authErrorSeen = true;
+          // Escalation re-runs the same prompt on the next model tier, and
+          // the engine has its own resume retries, so the identical error
+          // text can arrive several times in a row. Only render it once.
+          if (errorDeduper.shouldEmit(errMsg)) {
+            io.to(sessionId).emit("message:error", {
+              sessionId,
+              messageId: assistantMsgId,
+              error: errMsg,
+            });
+            // Also post to Hub so errors are visible globally
+            const hubErrMsg = hubStore.add({
+              from: "System",
+              text: `❌ **Error** in ${meta.name}: ${errMsg}`,
+              sessionId: "",
+            });
+            io.emit("hub:message", hubErrMsg);
+          }
           break;
         }
       }
@@ -798,8 +813,9 @@ export function setupSocketHandler(
       );
 
       // Escalate to next tier if this tier failed with no output. Not applicable
-      // to Anthropic-compatible providers, whose "model" isn't a tier.
-      if (!usingAnthropicCompatible && exitCode !== 0 && !gotDeltas && NEXT_TIER[selectedModel]) {
+      // to Anthropic-compatible providers, whose "model" isn't a tier, and not
+      // applicable to an auth error, since no model tier can fix "not logged in".
+      if (!usingAnthropicCompatible && !authErrorSeen && exitCode !== 0 && !gotDeltas && NEXT_TIER[selectedModel]) {
         const nextTier = NEXT_TIER[selectedModel];
         if (nextTier) {
           console.log(
@@ -821,7 +837,7 @@ export function setupSocketHandler(
       }
 
       // Escalate to opus as final fallback if sonnet also failed
-      if (exitCode !== 0 && !gotDeltas && selectedModel === "sonnet") {
+      if (!authErrorSeen && exitCode !== 0 && !gotDeltas && selectedModel === "sonnet") {
         console.log(
           `[handler] Model sonnet failed (exit ${exitCode}), escalating to opus (final)`
         );
@@ -836,6 +852,26 @@ export function setupSocketHandler(
           "opus",
           sanitizedFiles
         );
+      }
+
+      // Every tier that was tried (or the single attempt, if an auth error
+      // stopped escalation early) has now failed with no output. Rather than
+      // leaving the last per-tier error as the final word, finish with one
+      // clear summary line that tells the user exactly what to run.
+      if (!usingAnthropicCompatible && exitCode !== 0 && !gotDeltas) {
+        const lastError = errorDeduper.getLast() ?? "Unknown error";
+        const summary = buildAllTiersFailedMessage(lastError, getActiveConfigDir());
+        io.to(sessionId).emit("message:error", {
+          sessionId,
+          messageId: assistantMsgId,
+          error: summary,
+        });
+        const hubErrMsg = hubStore.add({
+          from: "System",
+          text: `❌ **Error** in ${meta.name}: ${summary}`,
+          sessionId: "",
+        });
+        io.emit("hub:message", hubErrMsg);
       }
     } catch (err: unknown) {
       const message =

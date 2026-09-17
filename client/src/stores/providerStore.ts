@@ -35,6 +35,15 @@ interface ProviderState {
   providers: ProviderSummary[];
   modelsByProvider: Record<string, ProviderModel[]>;
   loaded: boolean;
+  /**
+   * The globally active LLM provider (server-wide setting, not per-bot).
+   * Shared here — rather than duplicated as local state in ChatHeaderControls
+   * and MedusaChat — so that switching it in the header's picker is
+   * immediately reflected in the bottom-bar model picker too, instead of
+   * requiring a reload for the two to agree.
+   */
+  activeProviderId: string;
+  setActiveProviderId: (id: string) => void;
   fetchProviders: () => Promise<void>;
   fetchModels: (providerId: string) => Promise<void>;
   modelsFor: (providerId: string) => ProviderModel[];
@@ -44,6 +53,9 @@ export const useProviderStore = create<ProviderState>((set, get) => ({
   providers: STATIC_PROVIDERS,
   modelsByProvider: STATIC_MODELS,
   loaded: false,
+  activeProviderId: 'claude',
+
+  setActiveProviderId: (id) => set({ activeProviderId: id }),
 
   fetchProviders: async () => {
     try {

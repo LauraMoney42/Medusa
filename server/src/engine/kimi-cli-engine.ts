@@ -140,17 +140,45 @@ export class KimiCliEngine implements Engine {
         for (const line of lines) {
           try {
             const obj = JSON.parse(line);
-            if (obj.role === "assistant" && Array.isArray(obj.content)) {
-              for (const block of obj.content) {
-                if (block.type === "text" && block.text) {
-                  onEvent({ kind: "delta", text: block.text });
-                  emittedText = true;
+            if (obj.role === "assistant") {
+              // Kimi 1.47+ sends the final answer as a plain string; earlier
+              // versions and tool-calling turns use a block array.
+              if (typeof obj.content === "string" && obj.content) {
+                onEvent({ kind: "delta", text: obj.content });
+                emittedText = true;
+              } else if (Array.isArray(obj.content)) {
+                for (const block of obj.content) {
+                  if (block.type === "text" && block.text) {
+                    onEvent({ kind: "delta", text: block.text });
+                    emittedText = true;
+                  }
+                  // thinking blocks are skipped to avoid cluttering output
                 }
-                // thinking blocks are skipped to avoid cluttering output
               }
+              if (Array.isArray(obj.tool_calls)) {
+                for (const call of obj.tool_calls) {
+                  let input: Record<string, unknown> = {};
+                  try {
+                    input = JSON.parse(call.function?.arguments ?? "{}");
+                  } catch {
+                    input = { arguments: call.function?.arguments };
+                  }
+                  onEvent({
+                    kind: "tool_use_start",
+                    toolId: call.id,
+                    toolName: call.function?.name ?? "tool",
+                    input,
+                  });
+                }
+              }
+            } else if (obj.role === "tool" && obj.tool_call_id) {
+              const content = Array.isArray(obj.content)
+                ? obj.content
+                    .map((b: { type?: string; text?: string }) => (b.type === "text" ? b.text ?? "" : ""))
+                    .join("\n")
+                : String(obj.content ?? "");
+              onEvent({ kind: "tool_result", toolUseId: obj.tool_call_id, content });
             }
-            // tool_calls and tool results are emitted inline as text by kimi,
-            // so we don't need special handling here.
           } catch {
             // Not valid JSON, could be an error message from the CLI
             errorText += line + "\n";

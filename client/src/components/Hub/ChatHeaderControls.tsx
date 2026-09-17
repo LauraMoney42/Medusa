@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { fetchSettings, setProvider } from '../../api';
 import { useProviderStore } from '../../stores/providerStore';
 
@@ -46,9 +46,12 @@ function resolveActiveId(
 export default function ChatHeaderControls(props: ChatHeaderControlsProps) {
   const { sessions, activeSessionId, onSelectAgent } = props;
 
-  // Provider comes from an async fetch, so it's the only piece kept in local
-  // state. Agent value and model value derive from props on every render.
-  const [provider, setProviderState] = useState<string>('claude');
+  // Provider lives in the shared providerStore (not local state) so that
+  // switching it here is immediately reflected in the bottom-bar model
+  // picker in MedusaChat.tsx too, instead of the two disagreeing until a
+  // reload re-runs each component's own fetchSettings() call.
+  const provider = useProviderStore((s) => s.activeProviderId);
+  const setProviderState = useProviderStore((s) => s.setActiveProviderId);
   const providers = useProviderStore((s) => s.providers);
   const fetchProviderList = useProviderStore((s) => s.fetchProviders);
 
@@ -68,7 +71,7 @@ export default function ChatHeaderControls(props: ChatHeaderControlsProps) {
     return () => {
       cancelled = true;
     };
-  }, [fetchProviderList]);
+  }, [fetchProviderList, setProviderState]);
 
   const activeId = resolveActiveId(sessions, activeSessionId);
 

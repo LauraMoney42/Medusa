@@ -5,7 +5,6 @@ import { useFileDropStore, type FileEntry } from '../../stores/fileDropStore';
 import { useDraftStore } from '../../stores/draftStore';
 import { useInputHistoryStore } from '../../stores/inputHistoryStore';
 import { getSocket } from '../../socket';
-import { useSocket } from '../../hooks/useSocket';
 import { uploadImage, uploadFile, pauseSession, resumeSession, requestSessionStatus, setSessionModel } from '../../api';
 import HubMessage from './HubMessage';
 import AttachmentPreview from '../Input/AttachmentPreview';
@@ -58,8 +57,11 @@ function parseSlashCommand(text: string): SlashCommand | null {
 }
 
 export default function HubFeed({ onMenuToggle }: HubFeedProps) {
-  // useSocket sets up the shared socket connection + listeners (side effect).
-  useSocket();
+  // The shared socket connection + listeners are already set up once, in
+  // AuthenticatedApp (App.tsx), which always wraps this component. Do not
+  // call useSocket() again here: it would register a second set of
+  // listeners on the same socket and double every event (duplicate
+  // messages, doubled tool cards, doubled hub entries).
   const messages = useHubStore((s) => s.messages);
   const markAllSeen = useHubStore((s) => s.markAllSeen);
   const activeSessionId = useSessionStore((s) => s.activeSessionId);

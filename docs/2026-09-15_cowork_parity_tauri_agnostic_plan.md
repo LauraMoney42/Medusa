@@ -169,6 +169,8 @@ Rules: one git worktree per workstream (`EnterWorktree`), each stream owns a dis
 | W7 | Port window/region pickers to Tauri commands; tray, hotkey, notifications, auto-update | Sonnet | W4 | Swift shell retired |
 | W8 | Provider settings UI (keys in `~/.claude-chat/settings.json`, never entered by the agent) | Sonnet | W5 | Settings pane |
 
+**Status 2026-09-17:** Batch 1 (W1 to W4) and Batch 2 (W5, W6, W7, plus W12 stream-json fix) merged to main; 249 server tests. W6 shipped as a generic `AcpEngine` (Agent Client Protocol) rather than a Code Puppy specific parser, so Goose and Gemini CLI can reuse it. W8 (provider settings UI) not started; keys currently come from env or `~/.claude-chat/settings.json`.
+
 ### Batch 3
 - W9 Windows sidecar build + hide Simulator view + TTS/STT paths (Sonnet, depends on W7)
 - W10 Artifacts preview pane (Sonnet, depends on W1 for spec)

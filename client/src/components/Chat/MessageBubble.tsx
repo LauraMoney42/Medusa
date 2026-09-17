@@ -7,6 +7,8 @@ import ToolUseBlock from './ToolUseBlock';
 interface MessageBubbleProps {
   message: ChatMessage;
   botName?: string;
+  /** Optional "play aloud" callback (TTS). Renders a speaker button in the header when set. */
+  onSpeak?: (text: string) => void;
 }
 
 function formatTime(timestamp: string): string {
@@ -23,7 +25,7 @@ function formatCost(cost: number): string {
   return `$${cost.toFixed(2)}`;
 }
 
-export default function MessageBubble({ message, botName }: MessageBubbleProps) {
+export default function MessageBubble({ message, botName, onSpeak }: MessageBubbleProps) {
   const isUser = message.role === 'user';
 
   return (
@@ -58,6 +60,19 @@ export default function MessageBubble({ message, botName }: MessageBubbleProps) 
           >
             {isUser ? 'You' : (botName || 'Claude')}
           </span>
+          <span style={{ flex: 1 }} />
+          {!isUser && onSpeak && message.text && (
+            <button
+              onClick={() => onSpeak(message.text)}
+              title="Play aloud"
+              style={styles.speakBtn}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+              </svg>
+            </button>
+          )}
           <span style={styles.time}>{formatTime(message.timestamp)}</span>
         </div>
 
@@ -73,7 +88,7 @@ export default function MessageBubble({ message, botName }: MessageBubbleProps) 
         {/* Text content */}
         {isUser ? (
           <div style={styles.userText}>{message.text}</div>
-        ) : (
+        ) : message.text || message.isStreaming ? (
           <div className="markdown-body">
             <Markdown
               remarkPlugins={[remarkGfm]}
@@ -97,6 +112,11 @@ export default function MessageBubble({ message, botName }: MessageBubbleProps) 
               </span>
             )}
           </div>
+        ) : (message.toolUses && message.toolUses.length > 0) ||
+          (message.errors && message.errors.length > 0) ? null : (
+          // Finished with no text, no tool cards, and no error: never leave a
+          // blank bubble on screen, show a clearly muted placeholder instead.
+          <div style={styles.noResponse}>No response</div>
         )}
 
         {/* Tool uses — one card per call, with its input and its result */}
@@ -106,6 +126,19 @@ export default function MessageBubble({ message, botName }: MessageBubbleProps) 
               // Prefer the tool id so a card keeps its expand state when a
               // sibling's result lands and the array is rebuilt.
               <ToolUseBlock key={tool.id ?? i} tool={tool} />
+            ))}
+          </div>
+        )}
+
+        {/* Engine/handler errors — rendered as clearly styled lines, never
+            silently swallowed into an empty bubble. Deduped upstream so a
+            tier-escalation retry that fails the same way only shows once. */}
+        {message.errors && message.errors.length > 0 && (
+          <div style={styles.errors}>
+            {message.errors.map((err, i) => (
+              <div key={i} style={styles.errorLine}>
+                {err}
+              </div>
             ))}
           </div>
         )}
@@ -142,8 +175,17 @@ const styles: Record<string, React.CSSProperties> = {
   header: {
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 6,
     marginBottom: 6,
+  },
+  speakBtn: {
+    background: 'none',
+    border: 'none',
+    color: 'var(--text-muted)',
+    cursor: 'pointer',
+    padding: 0,
+    display: 'flex',
+    alignItems: 'center',
   },
   role: {
     fontSize: 13,
@@ -194,5 +236,26 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 11,
     color: 'var(--text-muted)',
     textAlign: 'right',
+  },
+  noResponse: {
+    color: 'var(--text-muted)',
+    fontStyle: 'italic',
+    fontSize: 14,
+  },
+  errors: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 6,
+    marginTop: 8,
+  },
+  errorLine: {
+    fontSize: 13,
+    lineHeight: 1.4,
+    color: 'var(--danger)',
+    background: 'rgba(192, 57, 43, 0.12)',
+    border: '1px solid rgba(192, 57, 43, 0.3)',
+    borderRadius: 'var(--radius-sm)',
+    padding: '8px 10px',
+    whiteSpace: 'pre-wrap',
   },
 };

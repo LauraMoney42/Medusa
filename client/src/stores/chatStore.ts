@@ -163,6 +163,11 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
       };
     }),
 
+  // Renders the error as a distinct line on the message (message.errors)
+  // instead of appending it to the text, so it shows up clearly styled
+  // rather than as plain concatenated text. Consecutive-deduped: if the
+  // same error string already sits at the end of the list (e.g. tier
+  // escalation failing the same way twice), it isn't added again.
   setError: (sessionId, messageId, error) =>
     set((s) => {
       const list = s.messages[sessionId];
@@ -171,11 +176,16 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
         streamingMessageId: null,
         messages: {
           ...s.messages,
-          [sessionId]: list.map((m) =>
-            m.id === messageId
-              ? { ...m, isStreaming: false, text: m.text + `\n\n**Error:** ${error}` }
-              : m,
-          ),
+          [sessionId]: list.map((m) => {
+            if (m.id !== messageId) return m;
+            const errors = m.errors ?? [];
+            const isDuplicate = errors[errors.length - 1] === error;
+            return {
+              ...m,
+              isStreaming: false,
+              errors: isDuplicate ? errors : [...errors, error],
+            };
+          }),
         },
       };
     }),
