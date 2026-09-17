@@ -16,6 +16,7 @@ vi.mock("child_process", () => ({
 }));
 
 const { AcpEngine } = await import("../acp-engine.js");
+const { buildMedusaMcpDescriptor } = await import("../../mcp/config.js");
 
 // ---------------------------------------------------------------------------
 // A fake ACP agent: we drive the JSON-RPC by hand, line by line.
@@ -751,5 +752,47 @@ describe("AcpEngine", () => {
     agent.close(0);
     await done;
     fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("sends an empty mcpServers array when no descriptor is passed", async () => {
+    const agent = makeAgent();
+    spawnMock.mockReturnValue(agent.child);
+    const { promptId, done } = await handshake(agent);
+    expect(agent.sent[1].params.mcpServers).toEqual([]);
+    agent.reply(promptId, { stopReason: "end_turn" });
+    agent.close(0);
+    await done;
+  });
+
+  it("carries a non-empty mcpServers array naming medusa on session/new", async () => {
+    const agent = makeAgent();
+    spawnMock.mockReturnValue(agent.child);
+
+    const { promptId, done } = await handshake(agent, {
+      mcpConfig: buildMedusaMcpDescriptor({
+        parentSessionId: "medusa-1",
+        serverUrl: "http://127.0.0.1:3456",
+        authToken: "tok",
+        shimPath: "/srv/dist/mcp/medusa-mcp-shim.js",
+      }),
+    });
+
+    const servers = agent.sent[1].params.mcpServers;
+    expect(servers).toHaveLength(1);
+    expect(servers[0]).toEqual({
+      name: "medusa",
+      command: "node",
+      args: ["/srv/dist/mcp/medusa-mcp-shim.js"],
+      // ACP takes env as name/value pairs, not the CLIs' object map.
+      env: [
+        { name: "MEDUSA_URL", value: "http://127.0.0.1:3456" },
+        { name: "MEDUSA_TOKEN", value: "tok" },
+        { name: "MEDUSA_PARENT_SESSION_ID", value: "medusa-1" },
+      ],
+    });
+
+    agent.reply(promptId, { stopReason: "end_turn" });
+    agent.close(0);
+    await done;
   });
 });

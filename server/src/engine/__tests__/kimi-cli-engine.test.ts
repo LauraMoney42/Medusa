@@ -15,6 +15,7 @@ vi.mock("child_process", () => ({
 }));
 
 const { KimiCliEngine } = await import("../kimi-cli-engine.js");
+const { buildMedusaMcpDescriptor } = await import("../../mcp/config.js");
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixture = fs.readFileSync(path.join(here, "fixtures", "kimi-1.47-stream.jsonl"), "utf-8");
@@ -102,5 +103,59 @@ describe("KimiCliEngine stdout parsing", () => {
   it("finalizes with a result event", async () => {
     const events = await runWithStdout(fixture);
     expect(events[events.length - 1]).toMatchObject({ kind: "result", success: true, sessionId: "s1" });
+  });
+});
+
+describe("KimiCliEngine argv", () => {
+  beforeEach(() => spawnMock.mockReset());
+
+  async function capturedArgs(opts: Record<string, unknown>): Promise<string[]> {
+    const child = makeFakeChild();
+    spawnMock.mockReturnValue(child);
+    const promise = new KimiCliEngine().spawn({
+      sessionId: "s1",
+      state: makeState(),
+      text: "hi",
+      onEvent: () => {},
+      ...(opts as any),
+    });
+    child.close(0);
+    await promise;
+    return spawnMock.mock.calls[0]![1] as string[];
+  }
+
+  it("appends --mcp-config with parseable JSON naming medusa", async () => {
+    const args = await capturedArgs({
+      mcpConfig: buildMedusaMcpDescriptor({
+        parentSessionId: "s1",
+        serverUrl: "http://127.0.0.1:3456",
+        authToken: "tok",
+        shimPath: "/srv/dist/mcp/medusa-mcp-shim.js",
+      }),
+    });
+
+    const flagIndex = args.indexOf("--mcp-config");
+    expect(flagIndex).toBeGreaterThan(-1);
+    const parsed = JSON.parse(args[flagIndex + 1]!) as {
+      mcpServers: Record<string, { type: string; args: string[]; env: Record<string, string> }>;
+    };
+    expect(Object.keys(parsed.mcpServers)).toEqual(["medusa"]);
+    expect(parsed.mcpServers.medusa!.type).toBe("stdio");
+    expect(parsed.mcpServers.medusa!.env.MEDUSA_PARENT_SESSION_ID).toBe("s1");
+  });
+
+  it("puts --mcp-config after --yolo and omits it without a descriptor", async () => {
+    const withYolo = await capturedArgs({
+      yoloMode: true,
+      mcpConfig: buildMedusaMcpDescriptor({
+        parentSessionId: "s1",
+        serverUrl: "http://127.0.0.1:3456",
+        authToken: "tok",
+      }),
+    });
+    expect(withYolo.indexOf("--mcp-config")).toBeGreaterThan(withYolo.indexOf("--yolo"));
+
+    spawnMock.mockReset();
+    expect(await capturedArgs({})).not.toContain("--mcp-config");
   });
 });

@@ -1,5 +1,6 @@
 import type { ChildProcess } from "child_process";
 import type { ParsedEvent } from "../claude/types.js";
+import type { MedusaMcpDescriptor } from "../mcp/descriptor.js";
 
 /** The event shape every engine emits. Socket/hub layers consume this unchanged. */
 export type ClaudeStreamEvent = ParsedEvent;
@@ -53,6 +54,13 @@ export interface EngineSpawnOptions {
   providerId?: string;
   /** Force a brand-new session instead of resuming, used by the retry paths. */
   forceNew?: boolean;
+  /**
+   * The Medusa MCP server to attach to this spawn, in the one shape every
+   * engine family accepts. Additive and optional: omit it and the engine
+   * behaves exactly as before. Engines never reach into config themselves, so
+   * tests can pass a fixture descriptor.
+   */
+  mcpConfig?: MedusaMcpDescriptor;
   onEvent: (event: ClaudeStreamEvent) => void;
 }
 

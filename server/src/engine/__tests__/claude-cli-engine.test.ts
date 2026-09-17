@@ -21,6 +21,7 @@ vi.mock("../../headroom/proxy-manager.js", () => ({
 }));
 
 const { ClaudeCliEngine } = await import("../claude-cli-engine.js");
+const { buildMedusaMcpDescriptor } = await import("../../mcp/config.js");
 
 interface FakeChild {
   stdout: { on: (ev: string, cb: (chunk: Buffer) => void) => void };
@@ -207,6 +208,54 @@ describe("ClaudeCliEngine", () => {
     });
     const options = spawnMock.mock.calls[0][2] as { cwd: string };
     expect(options.cwd).toBe("/srv/project");
+  });
+
+  it("appends --mcp-config with parseable JSON naming medusa", async () => {
+    const args = await capturedArgs({
+      sessionId: "abc",
+      state: makeState(),
+      text: "hello",
+      mcpConfig: buildMedusaMcpDescriptor({
+        parentSessionId: "abc",
+        serverUrl: "http://127.0.0.1:3456",
+        authToken: "tok",
+        shimPath: "/srv/dist/mcp/medusa-mcp-shim.js",
+      }),
+    });
+
+    const flagIndex = args.indexOf("--mcp-config");
+    expect(flagIndex).toBeGreaterThan(-1);
+    const blob = args[flagIndex + 1]!;
+    const parsed = JSON.parse(blob) as {
+      mcpServers: Record<string, { type: string; command: string; args: string[]; env: Record<string, string> }>;
+    };
+    expect(Object.keys(parsed.mcpServers)).toEqual(["medusa"]);
+    expect(parsed.mcpServers.medusa!.type).toBe("stdio");
+    expect(parsed.mcpServers.medusa!.args).toEqual(["/srv/dist/mcp/medusa-mcp-shim.js"]);
+    expect(parsed.mcpServers.medusa!.env.MEDUSA_PARENT_SESSION_ID).toBe("abc");
+  });
+
+  it("never adds --strict-mcp-config, so the user's own MCP servers survive", async () => {
+    const args = await capturedArgs({
+      sessionId: "abc",
+      state: makeState(),
+      text: "hello",
+      mcpConfig: buildMedusaMcpDescriptor({
+        parentSessionId: "abc",
+        serverUrl: "http://127.0.0.1:3456",
+        authToken: "tok",
+      }),
+    });
+    expect(args).not.toContain("--strict-mcp-config");
+  });
+
+  it("omits --mcp-config entirely when no descriptor is passed", async () => {
+    const args = await capturedArgs({
+      sessionId: "abc",
+      state: makeState(),
+      text: "hello",
+    });
+    expect(args).not.toContain("--mcp-config");
   });
 
   it("marks the session as continuing after a clean exit", async () => {
