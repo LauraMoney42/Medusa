@@ -10,7 +10,8 @@ import { useDictationInsert } from '../../hooks/useDictationInsert';
 import ChatHeaderControls from './ChatHeaderControls';
 import ApprovalBanner from './ApprovalBanner';
 import TokenRing from '../Usage/TokenRing';
-import { uploadImage, synthesizeSpeech, fetchTtsStatus, setSessionModel } from '../../api';
+import { uploadImage, synthesizeSpeech, fetchTtsStatus, setSessionModel, fetchSettings } from '../../api';
+import { useProviderStore } from '../../stores/providerStore';
 
 interface MedusaChatProps {
   onMenuToggle?: () => void;
@@ -167,12 +168,34 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
     });
   }, []);
 
-  // Model picker (bottom bar) — applies to the active agent's session.
+  // Model picker (bottom bar): applies to the active agent's session. The
+  // option list comes from the active LLM provider (dynamic, with a static
+  // fallback baked into providerStore for offline use) instead of a hardcoded
+  // haiku/sonnet/opus/fable list, so any provider's models show up here.
   const modelValue = activeSession?.model ?? '';
   const handleModelChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
     if (!activeSession) return;
     void setSessionModel(activeSession.id, e.target.value || null);
   }, [activeSession]);
+
+  const [activeProviderId, setActiveProviderId] = useState('claude');
+  const fetchProviderList = useProviderStore((s) => s.fetchProviders);
+  const fetchProviderModels = useProviderStore((s) => s.fetchModels);
+  const modelsFor = useProviderStore((s) => s.modelsFor);
+  const modelOptions = useProviderStore((s) => s.modelsByProvider[activeProviderId]) ?? modelsFor(activeProviderId);
+
+  useEffect(() => {
+    void fetchProviderList();
+    fetchSettings()
+      .then((s) => setActiveProviderId(s.activeProvider ?? 'claude'))
+      .catch(() => {
+        // Keep the default 'claude' provider on fetch failure.
+      });
+  }, [fetchProviderList]);
+
+  useEffect(() => {
+    void fetchProviderModels(activeProviderId);
+  }, [activeProviderId, fetchProviderModels]);
 
   if (!activeSession) {
     return (
@@ -327,10 +350,11 @@ export default function MedusaChat({ onMenuToggle }: MedusaChatProps) {
               style={styles.modelSelect}
             >
               <option value="">Auto</option>
-              <option value="haiku">Haiku</option>
-              <option value="sonnet">Sonnet</option>
-              <option value="opus">Opus</option>
-              <option value="fable">Fable</option>
+              {modelOptions.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.displayName}
+                </option>
+              ))}
             </select>
             <TokenRing popoverDirection="up" />
           </div>

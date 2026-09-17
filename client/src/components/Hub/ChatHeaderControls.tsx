@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { fetchSettings, setProvider } from '../../api';
+import { useProviderStore } from '../../stores/providerStore';
 
 interface ChatHeaderControlsProps {
   sessions: { id: string; name: string; model?: string }[];
@@ -47,9 +48,12 @@ export default function ChatHeaderControls(props: ChatHeaderControlsProps) {
 
   // Provider comes from an async fetch, so it's the only piece kept in local
   // state. Agent value and model value derive from props on every render.
-  const [provider, setProviderState] = useState<'claude' | 'kimi'>('claude');
+  const [provider, setProviderState] = useState<string>('claude');
+  const providers = useProviderStore((s) => s.providers);
+  const fetchProviderList = useProviderStore((s) => s.fetchProviders);
 
   useEffect(() => {
+    void fetchProviderList();
     let cancelled = false;
     (async () => {
       try {
@@ -64,14 +68,14 @@ export default function ChatHeaderControls(props: ChatHeaderControlsProps) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [fetchProviderList]);
 
   const activeId = resolveActiveId(sessions, activeSessionId);
 
   const handleProviderChange = async (
     e: React.ChangeEvent<HTMLSelectElement>,
   ) => {
-    const value = e.target.value as 'claude' | 'kimi';
+    const value = e.target.value;
     try {
       await setProvider(value);
     } catch {
@@ -101,8 +105,11 @@ export default function ChatHeaderControls(props: ChatHeaderControlsProps) {
         onChange={handleProviderChange}
         aria-label="Provider"
       >
-        <option value="claude">Anthropic</option>
-        <option value="kimi">Kimi</option>
+        {providers.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.displayName}
+          </option>
+        ))}
       </select>
     </div>
   );

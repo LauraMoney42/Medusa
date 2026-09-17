@@ -51,6 +51,7 @@ export function createTokenUsageHandler(tokenLogger: TokenLogger): RequestHandle
       avgOutputTokens: summary.avgOutputTokens,
       byBot: summary.byBot,
       bySource: summary.bySource,
+      byModel: summary.byModel,
     });
   };
 }

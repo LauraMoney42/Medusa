@@ -49,6 +49,28 @@ bash scripts/setup.sh
 
 `setup.sh` installs npm dependencies, builds the TypeScript server, copies `.env.example` → `.env`, and registers the **Playwright MCP** tool with Claude Code so bots can control a browser out of the box. Edit `.env` before starting the server.
 
+## Providers
+
+Bots normally run on native Claude (or Kimi). You can also point a bot at **any OpenRouter model** (GPT-5.x, Gemini, DeepSeek, Claude via OpenRouter, etc.): the `claude` CLI is still the harness, so tool use, streaming, and sessions all work the same way.
+
+**To add an OpenRouter key:**
+
+1. Get an API key from [openrouter.ai](https://openrouter.ai).
+2. Either set the `OPENROUTER_API_KEY` environment variable before starting the server, or add it to `~/.claude-chat/settings.json`:
+   ```json
+   {
+     "providers": {
+       "openrouter": {
+         "apiKey": "sk-or-..."
+       }
+     }
+   }
+   ```
+   (Create the file/`providers` object if it doesn't exist yet.) The key is never written back out by the app, only read.
+3. In the app, switch a bot's provider to **OpenRouter** and pick a model from the picker (it lists OpenRouter's live catalog, cached for 10 minutes, with a static fallback if the request fails).
+
+Headroom (the local context-compression proxy) only applies to the native Claude provider: it's automatically skipped when a bot is running on OpenRouter, since OpenRouter traffic is already going to a different base URL.
+
 ## How It Works
 
 ### Hub & @Mention Flow

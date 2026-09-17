@@ -23,6 +23,11 @@ claude-chat/
         health.ts       # GET /api/health
         sessions.ts     # CRUD for chat sessions
         images.ts       # Image upload via multer
+      settings/
+        store.ts        # Active provider + login/logout, persisted to ~/.claude-chat/settings.json
+        providers.ts    # Provider registry (claude/kimi/openrouter) + live model listing +
+                         # Anthropic-compatible env construction for routing `claude` through
+                         # OpenRouter (or another custom Anthropic-compatible endpoint)
       socket/
         handler.ts      # Socket.IO auth + event handlers for real-time chat
       types/

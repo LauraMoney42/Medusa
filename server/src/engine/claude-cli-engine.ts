@@ -1,8 +1,13 @@
 import fs from "fs";
 import { spawn, execSync } from "child_process";
 import { StreamParser } from "../claude/stream-parser.js";
-import { getActiveConfigDir } from "../settings/store.js";
+import { getActiveConfigDir, getActiveProvider } from "../settings/store.js";
 import { getHeadroomEnv } from "../headroom/proxy-manager.js";
+import {
+  getAnthropicCompatibleEnv,
+  isAnthropicCompatibleProvider,
+  listModels as listProviderModels,
+} from "../settings/providers.js";
 import {
   abortChildProcess,
   type Engine,
@@ -86,6 +91,15 @@ export class ClaudeCliEngine implements Engine {
   readonly displayName = "Claude Code";
 
   async listModels(): Promise<ModelInfo[]> {
+    // This engine drives the `claude` CLI for the native Anthropic provider AND
+    // for Anthropic-compatible ones (OpenRouter), so the model list depends on
+    // which provider is active: OpenRouter's is fetched live by providers.ts.
+    const provider = getActiveProvider();
+    if (isAnthropicCompatibleProvider(provider)) {
+      const models = await listProviderModels(provider as string);
+      return models.map((m) => ({ id: m.id, label: m.displayName }));
+    }
+
     return [
       { id: "haiku", label: "Haiku" },
       { id: "sonnet", label: "Sonnet" },
@@ -156,12 +170,20 @@ export class ClaudeCliEngine implements Engine {
       args.push("--model", model);
     }
 
+    // Headroom (the compression proxy in front of native Anthropic) and an
+    // Anthropic-compatible custom provider (OpenRouter, etc.) both want to own
+    // ANTHROPIC_BASE_URL, so only one can apply per spawn: Headroom for the
+    // native provider, the provider env otherwise. getHeadroomEnv() returns {}
+    // when the proxy is down, which means direct Anthropic.
+    const activeProvider = getActiveProvider();
+    const providerEnv = isAnthropicCompatibleProvider(activeProvider)
+      ? getAnthropicCompatibleEnv(activeProvider as string, { model: model || "" })
+      : getHeadroomEnv();
+
     const child = spawn(CLAUDE_BIN, args, {
       cwd: entry.workingDir,
       stdio: ["ignore", "pipe", "pipe"],
-      // ...getHeadroomEnv() routes this bot's traffic through the Headroom
-      // compression proxy when it's up (returns {} otherwise → direct Anthropic).
-      env: { ...process.env, CLAUDECODE: undefined, ...(getActiveConfigDir() ? { CLAUDE_CONFIG_DIR: getActiveConfigDir() } : {}), ...getHeadroomEnv() },
+      env: { ...process.env, CLAUDECODE: undefined, ...(getActiveConfigDir() ? { CLAUDE_CONFIG_DIR: getActiveConfigDir() } : {}), ...providerEnv },
     });
 
     entry.process = child;

@@ -87,6 +87,8 @@ import { selectModel, NEXT_TIER, type ModelTier } from "../claude/model-router.j
 import { summarizeConversation } from "../chat/conversation-summarizer.js";
 import { processHubPosts } from "../hub/post-processor.js";
 import { summarizingSessionIds } from "../chat/summarization-guard.js";
+import { getActiveProvider } from "../settings/store.js";
+import { isAnthropicCompatibleProvider, getDefaultModel } from "../settings/providers.js";
 
 // ---- Hub Post Detection ----
 
@@ -547,6 +549,13 @@ export function setupSocketHandler(
     // Hub post detector for this stream
     const hubDetector = new HubPostDetector();
 
+    // Provider/model for this send, used to tag the usage log entry below.
+    // `currentModel` is assigned once the model is selected further down; onEvent
+    // is a closure over this same block scope, so by the time the "result" event
+    // actually fires (after the child process has been spawned) it will be set.
+    const activeProviderId = getActiveProvider();
+    let currentModel = "";
+
     // Helper: process extracted hub posts via shared post-processor
     const handleHubPosts = (posts: string[]) =>
       processHubPosts(posts, { from: meta.name, sessionId, hubStore, mentionRouter, io, quickTaskStore, approvalStore });
@@ -678,6 +687,8 @@ export function setupSocketHandler(
             cacheCreationTokens: event.usage?.cache_creation_input_tokens,
             cacheReadTokens: event.usage?.cache_read_input_tokens,
             success: event.success,
+            provider: activeProviderId ?? undefined,
+            model: currentModel || undefined,
           });
           break;
         }
@@ -721,11 +732,21 @@ export function setupSocketHandler(
     finalSystemPrompt = compress(finalSystemPrompt, "moderate").compressed;
 
     try {
+      // Anthropic-compatible custom providers (OpenRouter, etc.) use full model
+      // ids (e.g. "openai/gpt-5.1"), not the haiku/sonnet/opus tiers the model
+      // router classifies native Claude prompts into, so routing/escalation is
+      // skipped entirely for them and the session's chosen model (or that
+      // provider's default) is used as-is.
+      const usingAnthropicCompatible = isAnthropicCompatibleProvider(activeProviderId);
+
       // Select model based on routing config (per-session model override takes priority)
       const routingEnabled = config.modelRoutingEnabled !== false;
-      let selectedModel: ModelTier = routingEnabled
+      let selectedModel: ModelTier = usingAnthropicCompatible
+        ? ((meta?.model as ModelTier | undefined) ?? (getDefaultModel(activeProviderId as string) as ModelTier | undefined) ?? ("sonnet" as ModelTier))
+        : routingEnabled
         ? selectModel({ prompt: text, source: "user", modelOverride: meta?.model })
         : (meta?.model as ModelTier | undefined) ?? "sonnet";
+      currentModel = selectedModel;
 
       // Send message with tier escalation on failure
       let exitCode: number | null = await processManager.sendMessage(
@@ -739,14 +760,16 @@ export function setupSocketHandler(
         sanitizedFiles
       );
 
-      // Escalate to next tier if this tier failed with no output
-      if (exitCode !== 0 && !gotDeltas && NEXT_TIER[selectedModel]) {
+      // Escalate to next tier if this tier failed with no output. Not applicable
+      // to Anthropic-compatible providers, whose "model" isn't a tier.
+      if (!usingAnthropicCompatible && exitCode !== 0 && !gotDeltas && NEXT_TIER[selectedModel]) {
         const nextTier = NEXT_TIER[selectedModel];
         if (nextTier) {
           console.log(
             `[handler] Model ${selectedModel} failed (exit ${exitCode}), escalating to ${nextTier}`
           );
           selectedModel = nextTier;
+          currentModel = selectedModel;
           exitCode = await processManager.sendMessage(
             sessionId,
             text,
@@ -765,6 +788,7 @@ export function setupSocketHandler(
         console.log(
           `[handler] Model sonnet failed (exit ${exitCode}), escalating to opus (final)`
         );
+        currentModel = "opus";
         exitCode = await processManager.sendMessage(
           sessionId,
           text,
