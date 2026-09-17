@@ -1,3 +1,11 @@
+## 2026-09-15 14:30
+- Extracted an `Engine` abstraction from ProcessManager with no behavior change, so new CLIs (Code Puppy next) can be added without touching the socket/hub layers
+- New `server/src/engine/`: `types.ts` (Engine interface, EngineSpawnOptions, EngineSessionState, ModelInfo, shared SIGTERM/SIGKILL abort), `claude-cli-engine.ts` and `kimi-cli-engine.ts` (bodies moved verbatim from spawnClaude/spawnKimi, including the resume and token-limit retry paths), `registry.ts` (provider id to Engine, Claude as the fallback)
+- ProcessManager now resolves an engine from the registry and delegates spawn/abort; its public API and emitted event shapes are unchanged
+- New tests cover the registry and the exact Claude argv for new session, resume, yolo, custom model and system prompt (child_process.spawn is mocked, no real processes)
+- Server tests: 175 before, 189 after; `tsc --noEmit` clean on server and client
+- Files affected: server/src/claude/process-manager.ts, server/src/engine/types.ts, server/src/engine/claude-cli-engine.ts, server/src/engine/kimi-cli-engine.ts, server/src/engine/registry.ts, server/src/engine/__tests__/claude-cli-engine.test.ts, server/src/engine/__tests__/registry.test.ts, CHANGELOG.md
+
 ## 2026-08-06 16:57
 - UI: Extended the same bottom toolbar (compact mic, model picker, token-usage ring) to the Hub input, for consistency with Medusa Chat
 - Hub has no single "active bot", so the model picker there controls Medusa's model specifically — she's the default responder for hub posts without an @mention
