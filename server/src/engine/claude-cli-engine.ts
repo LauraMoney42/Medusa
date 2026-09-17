@@ -150,6 +150,10 @@ export class ClaudeCliEngine implements Engine {
       "--output-format",
       "stream-json",
       "--verbose",
+      // Without this the CLI emits one `assistant` message per completed block
+      // and no `stream_event` lines at all, so text lands in one lump instead
+      // of streaming token by token.
+      "--include-partial-messages",
     ];
 
     if (useSessionId) {

@@ -130,7 +130,14 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
   let streamEnded = false;
   let gotDeltas = false;
   let assistantText = "";
-  const assistantTools: { name: string; input?: unknown; output?: string }[] = [];
+  const assistantTools: {
+    id?: string;
+    name: string;
+    input?: unknown;
+    output?: string;
+    isError?: boolean;
+    parentToolUseId?: string | null;
+  }[] = [];
   let assistantCost: number | undefined;
   let assistantDurationMs: number | undefined;
 
@@ -169,6 +176,8 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
         break;
 
       case "delta": {
+        // Subagent text is not this bot's own answer.
+        if (event.parentToolUseId) break;
         gotDeltas = true;
         let cleanDelta = event.text;
         let hubPosts: string[] = [];
@@ -200,27 +209,50 @@ export async function autonomousDeliver(params: AutonomousDeliverParams): Promis
       }
 
       case "tool_use_start":
-        assistantTools.push({ name: event.toolName, input: event.input });
+        assistantTools.push({
+          id: event.toolId,
+          name: event.toolName,
+          input: event.input,
+          parentToolUseId: event.parentToolUseId ?? null,
+        });
         io.to(sessionId).emit("message:stream:tool", {
           sessionId,
           messageId: assistantMsgId,
-          tool: { name: event.toolName, input: event.input },
+          tool: {
+            id: event.toolId,
+            name: event.toolName,
+            input: event.input,
+            parentToolUseId: event.parentToolUseId ?? null,
+          },
         });
         break;
 
+      case "tool_input_delta":
+        // Partial tool input is superseded by the completed assistant message.
+        break;
+
       case "tool_result": {
-        const lastTool = assistantTools[assistantTools.length - 1];
-        if (lastTool) lastTool.output = event.content;
+        const target =
+          assistantTools.find((t) => t.id === event.toolUseId) ??
+          assistantTools[assistantTools.length - 1];
+        if (target) {
+          target.output = event.content;
+          target.isError = event.isError;
+        }
         io.to(sessionId).emit("message:stream:tool_result", {
           sessionId,
           messageId: assistantMsgId,
-          toolName: event.toolUseId,
+          toolUseId: event.toolUseId,
+          toolName: target?.name ?? event.toolUseId,
           output: event.content,
+          isError: event.isError ?? false,
+          parentToolUseId: event.parentToolUseId ?? null,
         });
         break;
       }
 
       case "assistant_complete":
+        if (event.parentToolUseId) break;
         if (!gotDeltas) {
           for (const block of event.content) {
             if (block.type === "text" && block.text) {

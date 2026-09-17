@@ -7,7 +7,16 @@ export interface PersistedMessage {
   role: "user" | "assistant";
   text: string;
   images?: string[];
-  toolUses?: { name: string; input?: unknown; output?: string }[];
+  toolUses?: {
+    /** Claude's `toolu_...` id, used to pair a result with its call. */
+    id?: string;
+    name: string;
+    input?: unknown;
+    output?: string;
+    isError?: boolean;
+    /** Set when the call came from a subagent, not the main conversation. */
+    parentToolUseId?: string | null;
+  }[];
   timestamp: string;
   cost?: number;
   durationMs?: number;

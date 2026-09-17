@@ -542,7 +542,14 @@ export function setupSocketHandler(
 
     // Accumulate assistant response for persistence
     let assistantText = "";
-    const assistantTools: { name: string; input?: unknown; output?: string }[] = [];
+    const assistantTools: {
+      id?: string;
+      name: string;
+      input?: unknown;
+      output?: string;
+      isError?: boolean;
+      parentToolUseId?: string | null;
+    }[] = [];
     let assistantCost: number | undefined;
     let assistantDurationMs: number | undefined;
 
@@ -577,6 +584,11 @@ export function setupSocketHandler(
           break;
 
         case "delta": {
+          // Subagent text (forwarded with --forward-subagent-text) is not the
+          // bot's own answer: it must not join the hub-marker buffer, and it
+          // must not suppress the main message's assistant_complete text.
+          if (event.parentToolUseId) break;
+
           gotDeltas = true;
 
           // Run through hub post detector — strips [HUB-POST: ...] and [BOT-TASK: ...] markers
@@ -597,32 +609,57 @@ export function setupSocketHandler(
         }
 
         case "tool_use_start":
-          assistantTools.push({ name: event.toolName, input: event.input });
+          assistantTools.push({
+            id: event.toolId,
+            name: event.toolName,
+            input: event.input,
+            parentToolUseId: event.parentToolUseId ?? null,
+          });
           io.to(sessionId).emit("message:stream:tool", {
             sessionId,
             messageId: assistantMsgId,
             tool: {
+              id: event.toolId,
               name: event.toolName,
               input: event.input,
+              parentToolUseId: event.parentToolUseId ?? null,
             },
           });
           break;
 
+        case "tool_input_delta":
+          // The completed `assistant` message carries the whole input, so the
+          // partial JSON is not forwarded. Kept as an explicit no-op so the
+          // switch stays exhaustive over ParsedEvent.
+          break;
+
         case "tool_result": {
-          const lastTool = assistantTools[assistantTools.length - 1];
-          if (lastTool) {
-            lastTool.output = event.content;
+          // Pair by tool id, not by arrival order: parallel tool calls and
+          // subagent results interleave.
+          const target =
+            assistantTools.find((t) => t.id === event.toolUseId) ??
+            assistantTools[assistantTools.length - 1];
+          if (target) {
+            target.output = event.content;
+            target.isError = event.isError;
           }
           io.to(sessionId).emit("message:stream:tool_result", {
             sessionId,
             messageId: assistantMsgId,
-            toolName: event.toolUseId,
+            toolUseId: event.toolUseId,
+            // Legacy field name kept for older clients; now the real name.
+            toolName: target?.name ?? event.toolUseId,
             output: event.content,
+            isError: event.isError ?? false,
+            parentToolUseId: event.parentToolUseId ?? null,
           });
           break;
         }
 
         case "assistant_complete":
+          // Subagent messages are surfaced only as tool activity, never as the
+          // bot's own chat text.
+          if (event.parentToolUseId) break;
           // Only send text if no deltas were streamed (avoids duplicating)
           if (!gotDeltas) {
             for (const block of event.content) {
