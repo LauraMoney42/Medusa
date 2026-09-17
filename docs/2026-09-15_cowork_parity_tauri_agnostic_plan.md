@@ -147,7 +147,44 @@ Every engine sits behind the `Engine` interface (Section 1, Option C), so no sin
 2. **OpenCode as fallback engine.** TypeScript, huge community, Copilot provider. Add as a third engine only if Code Puppy stalls; the interface makes that cheap.
 3. **Native in-house harness (long-term option).** Medusa's server is TypeScript; the Vercel AI SDK gives multi-provider streaming + tool calling in-process with no external CLI at all. Most agnostic and zero third-party harness risk, but it means reimplementing the tool loop, permissions, MCP client, and subagents that the CLIs give for free. Revisit after Phase 2 once the engine interface has proven itself with two external harnesses.
 
-## 8. Open questions (need answers before Phase 2 starts)
+## 8. Parallel work breakdown (subagents)
+
+Rules: one git worktree per workstream (`EnterWorktree`), each stream owns a disjoint set of files, merge to `main` behind green tests. Opus for judgment-heavy specs and the core engine refactor, Sonnet for well-scoped build tasks.
+
+### Batch 1 (all independent, run at once)
+
+| ID | Workstream | Model | Owns | Output |
+|---|---|---|---|---|
+| W1 | Claude Cowork / Code feature and UX audit (Section 9 method) | Opus | `docs/cowork_parity_audit.md` | Feature matrix: Cowork/Code behavior, Medusa status, gap, priority |
+| W2 | `Engine` interface extraction from `ProcessManager`; `ClaudeCliEngine` keeps byte-identical behavior; all 170 tests green | Opus | `server/src/engine/*`, `server/src/claude/process-manager.ts` | PR-ready refactor |
+| W3 | Code Puppy headless spike: install, run non-interactively, capture stream format, write `docs/code_puppy_stream_format.md` + sample `.jsonl` | Sonnet | `docs/`, scratch only | Go/no-go on Phase 2, parser spec |
+| W4 | Tauri v2 scaffold in `desktop/`: loads `client/dist`, spawns server sidecar on port 0, port handshake, Mac build boots | Sonnet | `desktop/*` (new) | Running Mac app, Swift shell untouched |
+
+### Batch 2 (after Batch 1 merges)
+
+| ID | Workstream | Model | Depends on | Output |
+|---|---|---|---|---|
+| W5 | OpenRouter provider via `ANTHROPIC_BASE_URL` per bot + dynamic model list in `ChatHeaderControls` + provider/model tags on `TokenUsageEntry` | Sonnet | W2 | GPT-5.x / Gemini selectable in the picker |
+| W6 | `CodePuppyEngine` + stream parser + tests | Opus | W2, W3 | Second engine live |
+| W7 | Port window/region pickers to Tauri commands; tray, hotkey, notifications, auto-update | Sonnet | W4 | Swift shell retired |
+| W8 | Provider settings UI (keys in `~/.claude-chat/settings.json`, never entered by the agent) | Sonnet | W5 | Settings pane |
+
+### Batch 3
+- W9 Windows sidecar build + hide Simulator view + TTS/STT paths (Sonnet, depends on W7)
+- W10 Artifacts preview pane (Sonnet, depends on W1 for spec)
+- W11 Parity eval: same prompt set through both engines, tool-call success table (Opus, depends on W6)
+
+## 9. How to reverse engineer and document Claude Cowork / Code
+
+Goal is behavior parity, not code theft: document what the product *does* from public, legitimate sources, then rebuild it on Medusa's own stack. Do not decompile the app binary.
+
+1. **Official docs first.** `code.claude.com/docs` (CLI, hooks, MCP, skills, permissions, sessions, slash commands) and the Cowork help pages on `support.claude.com`. Capture every feature name and its documented behavior into the matrix.
+2. **Public repo and changelog.** `github.com/anthropics/claude-code` `CHANGELOG.md`, issues, and discussions show the feature timeline and edge-case behavior that docs skip.
+3. **Use the product and record it.** With the Claude desktop app open, screenshot each surface (session list, chat, tool cards, permission prompts, browser pane, artifacts, settings, model picker, usage) with the computer-use tools, and write one row per interaction: trigger, what appears, what the user can do next. The `design` skill can then turn screenshots into Medusa artboards.
+4. **Instrument the CLI.** `claude -p --output-format stream-json --verbose` already feeds Medusa; log the full event stream for representative sessions (tool use, permission denial, subagent, compaction) into `docs/stream-format-example.jsonl`-style fixtures. These become the contract every engine must satisfy.
+5. **Diff against Medusa.** Merge 1 to 4 into the feature matrix (Section 4 seed) with a status column and priority; that matrix is W1's deliverable and the backlog for W10 and later.
+
+## 10. Open questions (need answers before Phase 2 starts)
 
 - **Q1. Which open harness?** Code Puppy (the brand you want, Python, smaller) vs OpenCode (TypeScript like Medusa's server, Copilot provider, huge community). Need to verify Code Puppy has a stable machine-readable streaming mode before committing.
 - **Q2. Which subscription service first?** OpenRouter (one key, pay-per-use) vs GitHub Copilot (flat sub, only via OpenCode).
