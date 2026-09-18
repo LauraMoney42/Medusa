@@ -169,7 +169,9 @@ Rules: one git worktree per workstream (`EnterWorktree`), each stream owns a dis
 | W7 | Port window/region pickers to Tauri commands; tray, hotkey, notifications, auto-update | Sonnet | W4 | Swift shell retired |
 | W8 | Provider settings UI (keys in `~/.claude-chat/settings.json`, never entered by the agent) | Sonnet | W5 | Settings pane |
 
-**Status 2026-09-17:** Batch 1 (W1 to W4) and Batch 2 (W5, W6, W7, plus W12 stream-json fix) merged to main; 249 server tests. W6 shipped as a generic `AcpEngine` (Agent Client Protocol) rather than a Code Puppy specific parser, so Goose and Gemini CLI can reuse it. W8 (provider settings UI) not started; keys currently come from env or `~/.claude-chat/settings.json`.
+**Status 2026-09-17 (late):** the redesign in `docs/2026-09-17_medusa_only_orchestrator_spec.md` is merged through S1 to S10 plus S13 (packs and editors); 437 server tests. Remaining from that spec: S11 Projects rescope, S12 cross-engine subagent matrix, the Windows build, and the in-house tool loop from Section 7 option 3.
+
+**Status 2026-09-17 (earlier):** Batch 1 (W1 to W4) and Batch 2 (W5, W6, W7, plus W12 stream-json fix) merged to main; 249 server tests. W6 shipped as a generic `AcpEngine` (Agent Client Protocol) rather than a Code Puppy specific parser, so Goose and Gemini CLI can reuse it. W8 (provider settings UI) not started; keys currently come from env or `~/.claude-chat/settings.json`.
 
 ### Batch 3
 - W9 Windows sidecar build + hide Simulator view + TTS/STT paths (Sonnet, depends on W7)
