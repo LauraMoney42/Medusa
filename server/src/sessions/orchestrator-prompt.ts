@@ -64,6 +64,12 @@ export interface OrchestratorPromptInput {
   personaText?: string;
   /** Override the rule set (per-session toggles). Omit to read ~/.medusa/rules. */
   rules?: string[];
+  /**
+   * True while the chat is in voice mode (S14). Adds spoken-style guidance:
+   * the reply is going through TTS, so tables, bullet lists and code blocks
+   * read badly out loud.
+   */
+  voiceMode?: boolean;
 }
 
 /** The claude CLI namespaces MCP tools; every other engine sees the bare name. */
@@ -72,7 +78,14 @@ export function toolName(engineId: string | undefined, tool: string): string {
 }
 
 export function buildOrchestratorPrompt(input: OrchestratorPromptInput): string {
-  const { engineId, sessionSystemPrompt, workingDir, personaText, rules } = input;
+  const {
+    engineId,
+    sessionSystemPrompt,
+    workingDir,
+    personaText,
+    rules,
+    voiceMode,
+  } = input;
 
   const t = (tool: (typeof SUBAGENT_TOOLS)[number]) => toolName(engineId, tool);
   const persona = (personaText ?? loadPersona()).trim();
@@ -130,6 +143,24 @@ export function buildOrchestratorPrompt(input: OrchestratorPromptInput): string 
       "the user one coherent answer. Do not paste raw subagent output and call it",
       "done, and do not report a task finished while an agent you spawned is",
       "still running.",
+      "",
+      "### Two lanes",
+      "",
+      "This conversation is one lane and it has to stay fast. Subagents are the",
+      "other lane and that is where slow work belongs. Any task you expect to",
+      `take more than a few seconds, or more than two tool calls, goes to \`${t(
+        "spawn_agent"
+      )}\``,
+      "with `wait: false` instead of being done inline. Say in one sentence what",
+      "you started, then keep talking to the user. Never hold the conversation",
+      "open waiting on long work.",
+      "",
+      "When an agent finishes, the server hands you its result as a new turn",
+      "beginning with `[Agent <name> <status>]`. The user did not type that, so",
+      "do not answer it as if they had. Report it in one or two sentences: what",
+      "came back and what you are doing next. Go longer only when the user asked",
+      `for detail, and call \`${t("agent_result")}\` first if you need the full`,
+      "output.",
     ].join("\n")
   );
 
@@ -146,6 +177,28 @@ export function buildOrchestratorPrompt(input: OrchestratorPromptInput): string 
       "tool, so call it.",
     ].join("\n")
   );
+
+  // Voice mode only: the reply is synthesized and played back, so anything
+  // that depends on being seen (tables, bullets, code) has to be said instead.
+  if (voiceMode) {
+    sections.push(
+      [
+        "## Speaking",
+        "",
+        "This reply is being read out loud. Write it the way you would say it.",
+        "Short sentences. Plain words. One idea per sentence.",
+        "",
+        "- No markdown tables, no bullet lists, no headings, no code blocks: none",
+        "  of them survive being spoken.",
+        "- Do not read code, diffs, or long file paths aloud. Say where the code",
+        '  went instead, like "I put the new function in the chat".',
+        "- Keep numbers and identifiers short enough to follow by ear, and round",
+        "  where precision does not matter.",
+        "- Two or three sentences is a full answer. Offer the detail rather than",
+        "  reciting it, and stop talking when the answer is done.",
+      ].join("\n")
+    );
+  }
 
   if (ruleTexts.length > 0) {
     sections.push(["## Rules", "", ruleTexts.join("\n\n")].join("\n"));

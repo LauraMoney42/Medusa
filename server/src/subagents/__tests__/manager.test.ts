@@ -293,6 +293,10 @@ describe("streaming and completion", () => {
     expect(names).toContain("subagent:tool");
     expect(names).toContain("subagent:event");
     expect(names[names.length - 1]).toBe("subagent:end");
+    // S14-B: the follow-up service only sees this event, so it must name the
+    // agent as well as identify it.
+    const endPayload = events[events.length - 1]!.payload;
+    expect(endPayload.name).toBe(finished.name);
     for (const e of events) {
       expect(e.sessionId).toBe(PARENT);
       expect(e.payload.parentToolUseId).toBe("toolu_123");

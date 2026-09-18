@@ -452,6 +452,9 @@ export class SubagentManager {
       sessionId: record.parentSessionId,
       agentId: record.id,
       parentToolUseId: record.parentToolUseId,
+      // The card already knows the name from `subagent:start`; the follow-up
+      // service (S14-B) only ever sees this event, so it carries it too.
+      name: record.name,
       status: record.status,
       resultText: record.resultText,
       truncated: record.truncated,

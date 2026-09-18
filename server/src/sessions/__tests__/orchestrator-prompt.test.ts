@@ -234,3 +234,62 @@ describe("buildOrchestratorPrompt: the ~/.medusa layer", () => {
     expect(prompt).not.toContain("RULE-A");
   });
 });
+
+// -- S14-B: lane rule, follow-up style, voice mode --------------------------
+
+describe("buildOrchestratorPrompt: the two-lane rule", () => {
+  const prompt = build();
+
+  it("sends anything slow or multi-step to a subagent", () => {
+    expect(prompt).toContain("### Two lanes");
+    expect(prompt).toMatch(/more than a few seconds/i);
+    expect(prompt).toMatch(/more than two tool calls/i);
+    expect(prompt).toMatch(/never hold the conversation/i);
+  });
+
+  it("describes the follow-up turn and its reply style", () => {
+    expect(prompt).toContain("[Agent <name> <status>]");
+    expect(prompt).toMatch(/one or two sentences/i);
+    expect(prompt).toMatch(/the user did not type that/i);
+  });
+
+  it("still namespaces the tools named in the lane rule", () => {
+    expect(build({ engineId: "claude" })).toContain("mcp__medusa__agent_result");
+    expect(build({ engineId: "kimi" })).toContain("`agent_result`");
+  });
+});
+
+describe("buildOrchestratorPrompt: voiceMode", () => {
+  it("adds spoken-style guidance when voice mode is on", () => {
+    const prompt = build({ voiceMode: true });
+    expect(prompt).toContain("## Speaking");
+    expect(prompt).toMatch(/read out loud/i);
+    expect(prompt).toMatch(/short sentences/i);
+    expect(prompt).toMatch(/no markdown tables/i);
+    expect(prompt).toMatch(/code blocks/i);
+    expect(prompt).toMatch(/I put the new function in the chat/i);
+  });
+
+  it("says nothing about speaking when voice mode is off", () => {
+    for (const prompt of [build(), build({ voiceMode: false })]) {
+      expect(prompt).not.toContain("## Speaking");
+      expect(prompt).not.toMatch(/read out loud/i);
+    }
+  });
+
+  it("changes nothing else about the prompt", () => {
+    const off = build();
+    const on = build({ voiceMode: true });
+    expect(on.replace(/\n\n## Speaking[\s\S]*?(?=\n\n##|$)/, "")).toBe(off);
+  });
+
+  it("keeps the content constraints in voice mode", () => {
+    const prompt = build({ voiceMode: true, sessionSystemPrompt: "note" });
+    expect(prompt).not.toContain(String.fromCharCode(0x2014));
+    expect(prompt).not.toContain(String.fromCharCode(0x2013));
+    expect(prompt.toLowerCase()).not.toContain("hub");
+    for (const marker of BOT_MARKERS) {
+      expect(prompt).not.toContain(marker);
+    }
+  });
+});

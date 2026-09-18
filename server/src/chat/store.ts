@@ -20,6 +20,14 @@ export interface PersistedMessage {
   timestamp: string;
   cost?: number;
   durationMs?: number;
+  /**
+   * How this turn was started. Absent for a normal typed message;
+   * "agent-followup" for a subagent follow-up (see
+   * server/src/subagents/FOLLOWUP_CONTRACT.md).
+   */
+  source?: string;
+  /** Render hint that survives a reload: "followup" draws a system chip. */
+  kind?: string;
 }
 
 /**

@@ -48,7 +48,13 @@ import { RunnerManager } from "./runner/runner-manager.js";
 import { createRunnersRouter } from "./routes/runners.js";
 import { createHeadroomRouter } from "./routes/headroom.js";
 import { SubagentManager } from "./subagents/manager.js";
+import {
+  FollowupService,
+  createFollowupTurnRunner,
+} from "./subagents/followups.js";
+import { buildOrchestratorPrompt } from "./sessions/orchestrator-prompt.js";
 import { createSubagentsRouter } from "./routes/subagents.js";
+import { descriptorForSession } from "./mcp/config.js";
 import { getActiveProvider } from "./settings/store.js";
 import { z } from "zod";
 
@@ -141,6 +147,10 @@ runnerManager.attach(runnerNamespace);
 // inherits the parent chat's engine/provider unless the spawn call overrides it.
 // Resolution mirrors ProcessManager.resolveEngine: session engine, then session
 // provider, then the global setting.
+// Assigned just below the manager, because the manager's emitter feeds it and
+// the follow-up service needs the manager-free deps in return.
+let followupService: FollowupService | undefined;
+
 const subagentManager = new SubagentManager({
   getParent: (sessionId) => {
     const session = sessionStore.get(sessionId);
@@ -157,6 +167,9 @@ const subagentManager = new SubagentManager({
     // The Activity Log mirrors subagent traffic alongside the parent's own
     // stream; this is the only place those events are visible server-side.
     emitSubagentActivity(io, event, payload);
+    // S14-B: the same emitter is the follow-up service's subscription to end
+    // events. It ignores everything but `subagent:end`.
+    followupService?.handleSubagentEvent(event, payload);
   },
   // A.8 cost attribution: one TokenUsageEntry per finished subagent, keyed to
   // the PARENT session so the token ring and bySession totals stay correct,
@@ -184,6 +197,62 @@ const subagentManager = new SubagentManager({
       subagentName: record?.name,
     });
   },
+});
+
+// ---- Subagent follow-ups (S14-B) ----
+// A finished subagent becomes a new turn for its parent chat rather than
+// something the orchestrator has to poll for. Policy (coalescing, the rate
+// cap, idle vs busy, restart dedupe) lives in followups.ts; this is only the
+// wiring of the real ProcessManager / ChatStore / socket into it.
+followupService = new FollowupService({
+  isBusy: (sessionId) => processManager.isSessionBusy(sessionId),
+  emit: (sessionId, event, payload) => {
+    io.to(sessionId).emit(event, payload);
+  },
+  emitActivity: (line) => {
+    io.to(line.sessionId).emit("activity:event", line);
+  },
+  statePath: path.join(path.dirname(config.sessionsFile), "followups.json"),
+  startTurn: createFollowupTurnRunner({
+    getSession: (sessionId) => {
+      const meta = sessionStore.get(sessionId);
+      if (!meta) return null;
+      return {
+        workingDir: meta.workingDir,
+        engineId: meta.engineId,
+        providerId: meta.providerId,
+        model: meta.model,
+        systemPrompt: meta.systemPrompt,
+        yoloMode: meta.yoloMode,
+        name: meta.name,
+      };
+    },
+    emit: (sessionId, event, payload) => {
+      io.to(sessionId).emit(event, payload);
+    },
+    persist: (msg) => chatStore.appendMessage(msg),
+    buildPrompt: (session) =>
+      buildOrchestratorPrompt({
+        engineId: session.engineId,
+        sessionSystemPrompt: session.systemPrompt,
+        workingDir: session.workingDir,
+      }),
+    sendMessage: (sessionId, text, onEvent, opts) =>
+      processManager.sendMessage(
+        sessionId,
+        text,
+        undefined,
+        onEvent,
+        opts.yoloMode,
+        opts.systemPrompt,
+        opts.model,
+        undefined,
+        { engineId: opts.engineId, providerId: opts.providerId },
+        // A follow-up turn keeps the subagent tools, so Medusa can call
+        // agent_result for the full output the message only summarizes.
+        descriptorForSession(sessionId) ?? undefined
+      ),
+  }),
 });
 
 setupSocketHandler(io, processManager, sessionStore, skillCatalog, chatStore, tokenLogger, subagentManager);
@@ -271,6 +340,8 @@ async function gracefulShutdown(signal: string) {
   stopSimulatorStream();
   // A subagent must never outlive the server that owns its socket room.
   subagentManager.cancelAll();
+  // Drop any follow-up timer so a pending delivery cannot fire mid-shutdown.
+  followupService?.dispose();
 
   // 1. Stop accepting new connections
   server.close();
