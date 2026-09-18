@@ -89,6 +89,7 @@ import { isAnthropicCompatibleProvider, getDefaultModel } from "../settings/prov
 import { isAuthError, ConsecutiveErrorDeduper, buildAllTiersFailedMessage } from "./error-policy.js";
 import type { SubagentManager } from "../subagents/manager.js";
 import { descriptorForSession } from "../mcp/config.js";
+import { registerVoiceHandlers } from "./voice-handlers.js";
 import {
   activityFromParsedEvent,
   activityFromSubagentEvent,
@@ -902,6 +903,8 @@ export function setupSocketHandler(
         });
       }
     });
+
+    registerVoiceHandlers(io, socket, { store, processManager, sendMessage: handleMessageSend });
 
     socket.on("disconnect", () => {
       console.log(`[socket] disconnected: ${socket.id}`);

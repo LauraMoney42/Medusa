@@ -131,26 +131,29 @@ export function createSessionsRouter(
 
   // PATCH /:id -- update a chat (title, folder, provider, engine, model, notes)
   router.patch("/:id", (req: Request, res: Response) => {
-    const { name, systemPrompt, model, engineId, providerId, workingDir } = req.body as {
-      name?: string;
-      systemPrompt?: string;
-      model?: string | null;
-      engineId?: string | null;
-      providerId?: string | null;
-      workingDir?: string;
-    };
+    const { name, systemPrompt, model, voiceModel, engineId, providerId, workingDir } =
+      req.body as {
+        name?: string;
+        systemPrompt?: string;
+        model?: string | null;
+        voiceModel?: string | null;
+        engineId?: string | null;
+        providerId?: string | null;
+        workingDir?: string;
+      };
 
     if (
       !name &&
       systemPrompt === undefined &&
       model === undefined &&
+      voiceModel === undefined &&
       engineId === undefined &&
       providerId === undefined &&
       workingDir === undefined
     ) {
       res.status(400).json({
         error:
-          "At least one of name, systemPrompt, model, engineId, providerId, or workingDir is required",
+          "At least one of name, systemPrompt, model, voiceModel, engineId, providerId, or workingDir is required",
       });
       return;
     }
@@ -180,6 +183,10 @@ export function createSessionsRouter(
     // Per-session model override (e.g. "fable", "haiku", "opus"; null to clear)
     if (model !== undefined) {
       session = store.setModel(id, model) ?? session;
+    }
+    // S14: voice turns may run on a faster tier than the rest of the chat.
+    if (voiceModel !== undefined) {
+      session = store.setVoiceModel(id, voiceModel) ?? session;
     }
     if (engineId !== undefined) {
       session = store.setEngine(id, engineId) ?? session;
