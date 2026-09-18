@@ -4,7 +4,7 @@ import { persist } from 'zustand/middleware';
 const MAX_HISTORY = 50;
 
 interface InputHistoryState {
-  /** Persisted: sent messages per scope (newest last). Scope is "hub" or a sessionId. */
+  /** Persisted: sent messages per scope (newest last). Scope is a sessionId. */
   history: Record<string, string[]>;
 
   // Transient navigation state (not persisted)

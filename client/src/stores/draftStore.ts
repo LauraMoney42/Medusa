@@ -22,7 +22,7 @@ export const useDraftStore = create<DraftState>()(
           },
         })),
 
-      // Clear the draft for a bot (call on successful send or manual input clear)
+      // Clear a chat's draft (on successful send, or a manual input clear)
       clearDraft: (botId) =>
         set((state) => {
           const next = { ...state.drafts };

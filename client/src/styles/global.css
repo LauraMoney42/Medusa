@@ -272,6 +272,17 @@ textarea {
   50% { opacity: 0.4; transform: scale(0.85); }
 }
 
+/* Indeterminate accent bar under the chat input while a turn is running.
+   A sweep rather than a percentage: the engine reports no progress figure. */
+@keyframes medusaTurnSweep {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(340%); }
+}
+
+.medusa-turn-progress {
+  animation: medusaTurnSweep 1.4s ease-in-out infinite;
+}
+
 /* Session edit button: show on hover */
 .sidebar div[style*="cursor: default"]:hover .session-edit-btn,
 .sidebar div[style*="cursor: grab"]:hover .session-edit-btn,

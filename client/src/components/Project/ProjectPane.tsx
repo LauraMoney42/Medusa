@@ -117,7 +117,7 @@ function ProjectDashboard({
           <div style={styles.centred}>
             <p style={styles.emptyText}>No projects yet</p>
             <p style={styles.emptyHint}>
-              Projects created by bots will appear here with full task breakdowns.
+              Projects Medusa writes appear here with full task breakdowns.
             </p>
           </div>
         )}

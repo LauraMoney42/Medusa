@@ -103,7 +103,7 @@ export default function ProjectDetailCard({ project, isHighlighted, onEdit }: Pr
       {/* ── Expanded body ── */}
       {expanded && (
         <div style={styles.body}>
-          {/* Assigned bots */}
+          {/* Assignees: subagent names, or Medusa itself */}
           {uniqueOwners.length > 0 && (
             <div style={styles.metaRow}>
               <span style={styles.metaLabel}>Assigned</span>

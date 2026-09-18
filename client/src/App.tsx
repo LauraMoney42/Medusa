@@ -1,20 +1,18 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react';
 import { useSocket } from './hooks/useSocket';
 import { useSessionStore } from './stores/sessionStore';
-import { useHubStore } from './stores/hubStore';
-import { useTaskStore } from './stores/taskStore';
 import { useProjectStore } from './stores/projectStore';
 import { useFileDropStore } from './stores/fileDropStore';
+import { useLayoutStore, ACTIVITY_MIN_WIDTH, ACTIVITY_MAX_WIDTH } from './stores/layoutStore';
 import LoginScreen from './components/Auth/LoginScreen';
 import Sidebar from './components/Sidebar/Sidebar';
-import HubFeed from './components/Hub/HubFeed';
 import ProjectPane from './components/Project/ProjectPane';
-import MedusaChat from './components/Hub/MedusaChat';
-import LaunchScreen from './components/Hub/LaunchScreen';
-import UsagePane from './components/Usage/UsagePane';
-import ArcadePane from './components/Arcade/ArcadePane';
-import CoworkPane from './components/Cowork/CoworkPane';
-import SimulatorPane from './components/Cowork/SimulatorPane';
+import ChatView from './components/Chat/ChatView';
+import LaunchScreen from './components/Chat/LaunchScreen';
+import ToolsView from './components/Tools/ToolsView';
+import RightPanel from './components/RightPanel/RightPanel';
+import DragBar from './components/RightPanel/DragBar';
+import ActivityLogPanel from './components/Activity/ActivityLogPanel';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import CaffeineToggle from './components/Caffeine/CaffeineToggle';
 import OnboardingView from './components/Onboarding/OnboardingView';
@@ -39,7 +37,7 @@ export default function App() {
   // and force the user back to login.
   useEffect(() => {
     const handleAuthFailed = () => {
-      console.log('[app] Socket auth failed — showing login screen');
+      console.log('[app] Socket auth failed, showing login screen');
       setAuthFailed(true);
       setAuthed(false);
     };
@@ -52,14 +50,14 @@ export default function App() {
     setAuthed(true);
   }, []);
 
-  // Still checking cookie validity — render nothing to avoid flash
+  // Still checking cookie validity: render nothing to avoid flash
   if (authed === null) return null;
 
   if (!authed) {
     return (
       <LoginScreen
         onLogin={handleLogin}
-        reason={authFailed ? 'Session expired — please log in again' : undefined}
+        reason={authFailed ? 'Session expired, please log in again' : undefined}
       />
     );
   }
@@ -75,14 +73,14 @@ export default function App() {
  */
 function AuthenticatedApp() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  // First-launch gate — checked synchronously so there's no flash
+  // First-launch gate, checked synchronously so there is no flash
   const [showOnboarding, setShowOnboarding] = useState(() => !localStorage.getItem(ONBOARDING_KEY));
   const completeOnboarding = useCallback(() => {
     localStorage.setItem(ONBOARDING_KEY, '1');
     setShowOnboarding(false);
   }, []);
 
-  // Launch screen — shown once per session (sessionStorage resets on tab close)
+  // Launch screen, shown once per session (sessionStorage resets on tab close)
   const [showLaunch, setShowLaunch] = useState(() => !sessionStorage.getItem(LAUNCH_KEY));
   const dismissLaunch = useCallback(() => {
     sessionStorage.setItem(LAUNCH_KEY, '1');
@@ -92,9 +90,19 @@ function AuthenticatedApp() {
   const { connected } = useSocket();
   const fetchSessions = useSessionStore((s) => s.fetchSessions);
   const activeView = useSessionStore((s) => s.activeView);
-  const fetchHubMessages = useHubStore((s) => s.fetchMessages);
-  const fetchTasks = useTaskStore((s) => s.fetchTasks);
+  const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const fetchProjects = useProjectStore((s) => s.fetchProjects);
+
+  const panelState = useLayoutStore((s) => s.panelState);
+  const slimWidth = useLayoutStore((s) => s.slimWidth);
+  const wideWidth = useLayoutStore((s) => s.wideWidth);
+  const setPanelWidth = useLayoutStore((s) => s.setPanelWidth);
+  const togglePanel = useLayoutStore((s) => s.togglePanel);
+  const toggleSlimWide = useLayoutStore((s) => s.toggleSlimWide);
+  const activityOpen = useLayoutStore((s) => s.activityOpen);
+  const activityWidth = useLayoutStore((s) => s.activityWidth);
+  const setActivityWidth = useLayoutStore((s) => s.setActivityWidth);
+  const toggleActivity = useLayoutStore((s) => s.toggleActivity);
 
   const isDragging = useFileDropStore((s) => s.isDragging);
   const setDragging = useFileDropStore((s) => s.setDragging);
@@ -106,21 +114,34 @@ function AuthenticatedApp() {
   // Fetch data immediately on mount (we're already authenticated at this point)
   useEffect(() => {
     fetchSessions().catch(console.error);
-    fetchHubMessages().catch(console.error);
-    fetchTasks().catch(console.error);
     fetchProjects().catch(console.error);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Re-fetch when socket (re)connects to pick up any changes
   useEffect(() => {
     if (connected) {
       fetchSessions().catch(console.error);
-      fetchHubMessages().catch(console.error);
-      fetchTasks().catch(console.error);
       fetchProjects().catch(console.error);
     }
-  }, [connected, fetchSessions, fetchHubMessages, fetchTasks, fetchProjects]);
+  }, [connected, fetchSessions, fetchProjects]);
+
+  // Cmd+B toggles the Browser/Simulator panel, Cmd+L the Activity Log.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
+      const key = e.key.toLowerCase();
+      if (key === 'b') {
+        e.preventDefault();
+        togglePanel();
+      } else if (key === 'l') {
+        e.preventDefault();
+        toggleActivity();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [togglePanel, toggleActivity]);
 
   // --- Global drag-and-drop handlers ---
 
@@ -174,12 +195,46 @@ function AuthenticatedApp() {
     addFiles(entries);
   }, [setDragging, addFiles]);
 
+  // The panel's drag bar sits to the LEFT of the panel, so the panel's width is
+  // whatever remains between the pointer and the right-hand edge of the app
+  // (minus the Activity Log when it is open).
+  const handlePanelDrag = useCallback(
+    (clientX: number) => {
+      const rightEdge = window.innerWidth - (activityOpen ? activityWidth + 5 : 0);
+      setPanelWidth(rightEdge - clientX);
+    },
+    [activityOpen, activityWidth, setPanelWidth],
+  );
+
+  const handleActivityDrag = useCallback(
+    (clientX: number) => setActivityWidth(window.innerWidth - clientX),
+    [setActivityWidth],
+  );
+
+  const panelVisible = panelState !== 'hidden';
+  const panelPx = panelState === 'slim' ? slimWidth : wideWidth;
+
+  const mainColumn =
+    activeView === 'project' ? (
+      <ErrorBoundary>
+        <ProjectPane onMenuToggle={() => setSidebarOpen((o) => !o)} />
+      </ErrorBoundary>
+    ) : activeView === 'tools' ? (
+      <ErrorBoundary>
+        <ToolsView />
+      </ErrorBoundary>
+    ) : (
+      <ErrorBoundary>
+        <ChatView onMenuToggle={() => setSidebarOpen((o) => !o)} />
+      </ErrorBoundary>
+    );
+
   return (
     <ErrorBoundary>
-      {/* Launch splash — shown once per session, above everything */}
+      {/* Launch splash, shown once per session, above everything */}
       {showLaunch && <LaunchScreen onDismiss={dismissLaunch} />}
 
-      {/* First-launch onboarding — renders above main app (below launch screen) */}
+      {/* First-launch onboarding, renders above the main app */}
       {!showLaunch && showOnboarding && <OnboardingView onComplete={completeOnboarding} />}
 
       <div
@@ -192,46 +247,98 @@ function AuthenticatedApp() {
         {/* Drop overlay */}
         {isDragging && <DropOverlay />}
 
-        {/* Caffeine toggle — fixed top-right, visible on all panes */}
+        {/* Caffeine toggle: fixed top-right, visible on all panes */}
         <CaffeineToggle />
 
-        <Sidebar
-          open={sidebarOpen}
-          onClose={() => setSidebarOpen(false)}
-        />
-        {activeView === 'project' ? (
-          <ErrorBoundary>
-            <ProjectPane onMenuToggle={() => setSidebarOpen((o) => !o)} />
-          </ErrorBoundary>
-        ) : activeView === 'medusa' ? (
-          <ErrorBoundary>
-            <MedusaChat onMenuToggle={() => setSidebarOpen((o) => !o)} />
-          </ErrorBoundary>
-        ) : activeView === 'usage' ? (
-          <ErrorBoundary>
-            <UsagePane />
-          </ErrorBoundary>
-        ) : activeView === 'arcade' ? (
-          <ErrorBoundary>
-            <ArcadePane />
-          </ErrorBoundary>
-        ) : activeView === 'cowork' ? (
-          <ErrorBoundary>
-            <CoworkPane onMenuToggle={() => setSidebarOpen((o) => !o)} />
-          </ErrorBoundary>
-        ) : activeView === 'simulator' ? (
-          <ErrorBoundary>
-            <SimulatorPane onMenuToggle={() => setSidebarOpen((o) => !o)} />
-          </ErrorBoundary>
+        <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+
+        {/* Center: chat (or Projects / Tools). `full` hands the whole middle
+            over to the panel, which is what the addendum's "full" state means. */}
+        {panelState !== 'full' && (
+          <div style={centerStyles.center}>{mainColumn}</div>
+        )}
+
+        {panelVisible && (
+          <>
+            {panelState !== 'full' && (
+              <DragBar
+                onDrag={handlePanelDrag}
+                onDoubleClick={toggleSlimWide}
+                title="Drag to resize, double-click for slim or wide"
+              />
+            )}
+            <div
+              style={{
+                ...centerStyles.panel,
+                width: panelState === 'full' ? undefined : panelPx,
+                flex: panelState === 'full' ? 1 : undefined,
+              }}
+            >
+              <ErrorBoundary>
+                <RightPanel />
+              </ErrorBoundary>
+            </div>
+          </>
+        )}
+
+        {/* Far right: Activity Log, with its own drag bar and `<` handle */}
+        {activityOpen ? (
+          <>
+            <DragBar onDrag={handleActivityDrag} title="Drag to resize the Activity Log" />
+            <div
+              style={{
+                ...centerStyles.panel,
+                width: Math.min(ACTIVITY_MAX_WIDTH, Math.max(ACTIVITY_MIN_WIDTH, activityWidth)),
+              }}
+            >
+              <ErrorBoundary>
+                {/* The panel keys its ring buffer by session id; with no chat
+                    selected there is nothing to show, so '' yields an empty log
+                    rather than an extra empty-state branch inside the panel. */}
+                <ActivityLogPanel sessionId={activeSessionId ?? ''} />
+              </ErrorBoundary>
+            </div>
+          </>
         ) : (
-          <ErrorBoundary>
-            <HubFeed onMenuToggle={() => setSidebarOpen((o) => !o)} />
-          </ErrorBoundary>
+          <button
+            onClick={toggleActivity}
+            style={centerStyles.activityHandle}
+            title="Open the Activity Log (⌘L)"
+            aria-label="Open the Activity Log"
+          >
+            ‹
+          </button>
         )}
       </div>
     </ErrorBoundary>
   );
 }
+
+const centerStyles: Record<string, React.CSSProperties> = {
+  center: {
+    flex: 1,
+    minWidth: 0,
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+  },
+  panel: {
+    flexShrink: 0,
+    minWidth: 0,
+    height: '100%',
+    overflow: 'hidden',
+  },
+  activityHandle: {
+    width: 16,
+    flexShrink: 0,
+    background: 'var(--bg-tertiary)',
+    borderLeft: '1px solid var(--border)',
+    color: 'var(--text-muted)',
+    cursor: 'pointer',
+    fontSize: 13,
+    padding: 0,
+  },
+};
 
 /** Full-viewport overlay shown while dragging files over the app */
 function DropOverlay() {

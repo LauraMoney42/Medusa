@@ -1,354 +1,105 @@
-import { useState, useCallback } from 'react';
-import SessionList from './SessionList';
-import NewSessionButton from './NewSessionButton';
+import { useState } from 'react';
+import ChatList from './ChatList';
+import NewChatModal from './NewChatModal';
 import SettingsModal from './SettingsModal';
 import { useSessionStore } from '../../stores/sessionStore';
-import { useUnreadHubCount } from '../../stores/hubStore';
-import * as api from '../../api';
 
 interface SidebarProps {
   open?: boolean;
   onClose?: () => void;
 }
 
+const ISSUES_URL = 'https://github.com/LauraMoney42/Medusa/issues';
+
+/**
+ * Left rail: app mark, the "Recent" chat list with search, and a bottom group
+ * of New Chat / Tools / Settings / Bug + Feature.
+ *
+ * Hub, Arcade, Usage and Stop All are gone from here. Usage and Stop All moved
+ * into Settings tabs; Browser and Simulator moved to the chat header icons.
+ */
 export default function Sidebar({ open, onClose }: SidebarProps) {
   const activeView = useSessionStore((s) => s.activeView);
   const setActiveView = useSessionStore((s) => s.setActiveView);
-  const setActiveSession = useSessionStore((s) => s.setActiveSession);
-  const unreadCount = useUnreadHubCount();
-  const sessions = useSessionStore((s) => s.sessions);
-  const statuses = useSessionStore((s) => s.statuses);
-  const [shutdownModalOpen, setShutdownModalOpen] = useState(false);
-  const [shutdownLoading, setShutdownLoading] = useState(false);
+  const [query, setQuery] = useState('');
+  const [newChatOpen, setNewChatOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  const handleProjectsClick = () => {
-    if (activeView === 'project') {
-      // Toggle back to Hub (individual bot chat removed)
-      setActiveView('hub');
-    } else {
-      setActiveSession(null);
-      setActiveView('project');
-    }
-  };
-
-  const handleHubClick = () => {
-    if (activeView === 'hub') {
-      // Already on Hub — no-op (individual bot chat removed)
-      return;
-    }
-    // Switching to Hub — clear active session
-    setActiveSession(null);
-    setActiveView('hub');
-  };
-
-  const handleMedusaChatClick = () => {
-    if (activeView === 'medusa') {
-      return;
-    }
-    setActiveSession(null);
-    setActiveView('medusa');
-  };
-
-  const handleUsageClick = () => {
-    if (activeView === 'usage') {
-      return;
-    }
-    setActiveView('usage');
-  };
-
-  const handleArcadeClick = () => {
-    if (activeView === 'arcade') {
-      return;
-    }
-    setActiveView('arcade');
-  };
-
-  const handleCoworkClick = () => {
-    if (activeView === 'cowork') return;
-    setActiveSession(null);
-    setActiveView('cowork');
-  };
-
-  const handleSimulatorClick = () => {
-    if (activeView === 'simulator') return;
-    setActiveSession(null);
-    setActiveView('simulator');
-  };
-
-  const handleShutdown = useCallback(async () => {
-    setShutdownLoading(true);
-    try {
-      await api.shutdown();
-      // Server should close connection, but show success message just in case
-      setShutdownModalOpen(false);
-    } catch (err) {
-      console.error('Shutdown failed:', err);
-      alert('Failed to trigger shutdown. Check console.');
-    } finally {
-      setShutdownLoading(false);
-    }
-  }, []);
+  // Opened with the system browser, not an in-app tab: this is a link out to
+  // the project's issue tracker, which the user signs into as themselves.
+  const openIssues = () => window.open(ISSUES_URL, '_blank', 'noopener,noreferrer');
 
   return (
     <>
-      {/* Overlay for mobile */}
-      {open && (
-        <div
-          className="sidebar-overlay"
-          onClick={onClose}
-          style={styles.overlay}
-        />
-      )}
+      {open && <div className="sidebar-overlay" onClick={onClose} style={styles.overlay} />}
 
-      <aside
-        className={`sidebar${open ? ' open' : ''}`}
-        style={styles.sidebar}
-      >
+      <aside className={`sidebar${open ? ' open' : ''}`} style={styles.sidebar}>
         <div style={styles.header}>
+          <img src="/MedusaIcon.png" alt="" style={styles.mark} />
           <h2 style={styles.title}>Medusa</h2>
+        </div>
+
+        <div style={styles.searchWrap}>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search chats"
+            style={styles.search}
+            aria-label="Search chats"
+          />
+        </div>
+
+        <div style={styles.sectionLabel}>Recent</div>
+
+        <div style={styles.listScroll}>
+          <ChatList query={query} />
+        </div>
+
+        <div style={styles.bottomGroup}>
+          <button onClick={() => setNewChatOpen(true)} style={styles.primaryItem}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            <span>New Chat</span>
+          </button>
+
           <button
-            onClick={() => setSettingsOpen(true)}
-            style={styles.gearBtn}
-            title="Settings"
+            onClick={() => setActiveView(activeView === 'tools' ? 'chat' : 'tools')}
+            style={{
+              ...styles.item,
+              color: activeView === 'tools' ? '#4aba6a' : 'var(--text-secondary)',
+              background: activeView === 'tools' ? 'rgba(26, 122, 60, 0.12)' : 'transparent',
+            }}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M14.7 6.3a4 4 0 0 1-5.4 5.4L4 17v3h3l5.3-5.3a4 4 0 0 1 5.4-5.4l-2.5 2.5" />
+            </svg>
+            <span>Tools</span>
+          </button>
+
+          <button onClick={() => setSettingsOpen(true)} style={styles.item}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="3" />
               <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
             </svg>
+            <span>Settings</span>
+          </button>
+
+          <button onClick={openIssues} style={styles.item} title={ISSUES_URL}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="9" />
+              <line x1="12" y1="8" x2="12" y2="13" />
+              <line x1="12" y1="16.5" x2="12" y2="16.5" />
+            </svg>
+            <span>Bug / Feature</span>
           </button>
         </div>
 
-        {/* Hub button */}
-        <button
-          onClick={handleHubClick}
-          style={{
-            ...styles.hubBtn,
-            background: activeView === 'hub'
-              ? 'rgba(26, 122, 60, 0.15)'
-              : 'transparent',
-            color: activeView === 'hub'
-              ? '#4aba6a'
-              : 'var(--text-secondary)',
-          }}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 2L2 7l10 5 10-5-10-5z" />
-            <path d="M2 17l10 5 10-5" />
-            <path d="M2 12l10 5 10-5" />
-          </svg>
-          <span>Hub</span>
-          {unreadCount > 0 && activeView !== 'hub' && (
-            <span style={styles.badge}>{unreadCount}</span>
-          )}
-        </button>
-
-        {/* Medusa Chat button */}
-        <button
-          onClick={handleMedusaChatClick}
-          style={{
-            ...styles.hubBtn,
-            background: activeView === 'medusa'
-              ? 'rgba(26, 122, 60, 0.15)'
-              : 'transparent',
-            color: activeView === 'medusa'
-              ? '#4aba6a'
-              : 'var(--text-secondary)',
-          }}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-          </svg>
-          <span>Medusa Chat</span>
-        </button>
-
-        {/* Stop All button */}
-        <button
-          onClick={() => setShutdownModalOpen(true)}
-          style={styles.stopBtn}
-          title="Gracefully shutdown the server"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="10" />
-            <path d="M12 6v6" />
-          </svg>
-          <span>Stop All</span>
-        </button>
-
-        {/* Token Usage button — above Projects per UX spec */}
-        <button
-          onClick={handleUsageClick}
-          style={{
-            ...styles.hubBtn,
-            background: activeView === 'usage'
-              ? 'rgba(26, 122, 60, 0.15)'
-              : 'transparent',
-            color: activeView === 'usage'
-              ? '#4aba6a'
-              : 'var(--text-secondary)',
-          }}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="18" y1="20" x2="18" y2="10" />
-            <line x1="12" y1="20" x2="12" y2="4" />
-            <line x1="6" y1="20" x2="6" y2="14" />
-          </svg>
-          <span>Usage</span>
-        </button>
-
-        {/* Arcade button */}
-        <button
-          onClick={handleArcadeClick}
-          style={{
-            ...styles.hubBtn,
-            background: activeView === 'arcade'
-              ? 'rgba(26, 122, 60, 0.15)'
-              : 'transparent',
-            color: activeView === 'arcade'
-              ? '#4aba6a'
-              : 'var(--text-secondary)',
-          }}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="2" y="6" width="20" height="12" rx="2" />
-            <path d="M6 10h.01" />
-            <path d="M18 10h.01" />
-            <path d="M10 14h4" />
-          </svg>
-          <span>Arcade</span>
-        </button>
-
-        {/* Cowork / Browser button */}
-        <button
-          onClick={handleCoworkClick}
-          style={{
-            ...styles.hubBtn,
-            background: activeView === 'cowork'
-              ? 'rgba(26, 122, 60, 0.15)'
-              : 'transparent',
-            color: activeView === 'cowork'
-              ? '#4aba6a'
-              : 'var(--text-secondary)',
-          }}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="2" y="3" width="20" height="14" rx="2" />
-            <line x1="8" y1="21" x2="16" y2="21" />
-            <line x1="12" y1="17" x2="12" y2="21" />
-          </svg>
-          <span>Browser</span>
-        </button>
-
-        {/* Simulator button */}
-        <button
-          onClick={handleSimulatorClick}
-          style={{
-            ...styles.hubBtn,
-            background: activeView === 'simulator'
-              ? 'rgba(26, 122, 60, 0.15)'
-              : 'transparent',
-            color: activeView === 'simulator'
-              ? '#4aba6a'
-              : 'var(--text-secondary)',
-          }}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="7" y="2" width="10" height="20" rx="2" />
-            <line x1="11" y1="18" x2="13" y2="18" />
-          </svg>
-          <span>Simulator</span>
-        </button>
-
-        {/* Projects button */}
-        <button
-          onClick={handleProjectsClick}
-          style={{
-            ...styles.hubBtn,
-            background: activeView === 'project'
-              ? 'rgba(26, 122, 60, 0.15)'
-              : 'transparent',
-            color: activeView === 'project'
-              ? '#4aba6a'
-              : 'var(--text-secondary)',
-          }}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-          </svg>
-          <span>Projects</span>
-        </button>
-
-        {/* Agent busy → Arcade prompt */}
-        <AgentBusyPrompt onOpenArcade={handleArcadeClick} />
-
-        {/* Bot list — click Medusa bot name to open Medusa chat */}
-        <SessionList />
-        <NewSessionButton />
-
-        {/* Settings modal */}
+        {newChatOpen && <NewChatModal onClose={() => setNewChatOpen(false)} />}
         {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
-
-        {/* Shutdown confirmation modal */}
-        {shutdownModalOpen && (
-          <>
-            <div style={styles.modalOverlay} onClick={() => !shutdownLoading && setShutdownModalOpen(false)} />
-            <div style={styles.modal}>
-              <h3 style={styles.modalTitle}>Stop All Bots?</h3>
-              <p style={styles.modalText}>
-                {sessions.length > 0 ? (
-                  <>
-                    <strong>{sessions.length}</strong> {sessions.length === 1 ? 'bot is' : 'bots are'} currently active.
-                    {(() => {
-                      const busyCount = sessions.filter((s) => statuses[s.id] === 'busy').length;
-                      return busyCount > 0 && (
-                        <>
-                          <br />
-                          <strong>{busyCount}</strong> {busyCount === 1 ? 'is' : 'are'} still working.
-                        </>
-                      );
-                    })()}
-                  </>
-                ) : (
-                  <>No active bots. Are you sure?</>
-                )}
-              </p>
-              <div style={styles.modalActions}>
-                <button
-                  onClick={() => setShutdownModalOpen(false)}
-                  style={styles.cancelBtn}
-                  disabled={shutdownLoading}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleShutdown}
-                  style={styles.shutdownBtn}
-                  disabled={shutdownLoading}
-                >
-                  {shutdownLoading ? 'Shutting down...' : 'Shutdown Server'}
-                </button>
-              </div>
-            </div>
-          </>
-        )}
       </aside>
     </>
-  );
-}
-
-/** Small prompt shown in sidebar when any agent is busy — quick access to Arcade */
-function AgentBusyPrompt({ onOpenArcade }: { onOpenArcade: () => void }) {
-  const statuses = useSessionStore((s) => s.statuses);
-  const anyBusy = Object.values(statuses).some((s) => s === 'busy');
-  if (!anyBusy) return null;
-
-  return (
-    <div className="arcade-busy-prompt" onClick={onOpenArcade}>
-      <span style={{ fontSize: 16 }}>🎮</span>
-      <span style={{ fontSize: 12, fontWeight: 600, color: '#4aba6a' }}>
-        Agent working — play while you wait!
-      </span>
-    </div>
   );
 }
 
@@ -359,143 +110,95 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'rgba(0,0,0,0.4)',
     zIndex: 99,
   },
-  stopBtn: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-    width: '100%',
-    padding: '10px 18px',
-    border: 'none',
-    borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
-    cursor: 'pointer',
-    fontSize: 14,
-    fontWeight: 500,
-    color: 'var(--text-secondary)',
-    background: 'transparent',
-    transition: 'background 0.15s, color 0.15s',
-  } as React.CSSProperties,
-  modalOverlay: {
-    position: 'fixed',
-    inset: 0,
-    background: 'rgba(0, 0, 0, 0.6)',
-    zIndex: 999,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  } as React.CSSProperties,
-  modal: {
-    position: 'fixed',
-    top: '50%',
-    left: '50%',
-    transform: 'translate(-50%, -50%)',
-    zIndex: 1000,
-    background: '#2c2c2e',
-    border: '1px solid rgba(255, 255, 255, 0.10)',
-    borderRadius: 'var(--radius-md)',
-    padding: '20px',
-    boxShadow: '0 20px 60px rgba(0, 0, 0, 0.6)',
-    maxWidth: 380,
-    width: '90%',
-  } as React.CSSProperties,
-  modalTitle: {
-    fontSize: 16,
-    fontWeight: 700,
-    color: 'var(--text-primary)',
-    margin: '0 0 8px 0',
-  },
-  modalText: {
-    fontSize: 13,
-    color: 'var(--text-secondary)',
-    margin: '0 0 16px 0',
-    lineHeight: 1.4,
-  },
-  modalActions: {
-    display: 'flex',
-    gap: 8,
-  },
-  cancelBtn: {
-    flex: 1,
-    padding: '8px 12px',
-    background: 'rgba(255, 255, 255, 0.08)',
-    color: 'var(--text-secondary)',
-    borderRadius: 'var(--radius-sm)',
-    fontSize: 13,
-    fontWeight: 600,
-    border: 'none',
-    cursor: 'pointer',
-    transition: 'background 0.15s',
-  },
-  shutdownBtn: {
-    flex: 1,
-    padding: '8px 12px',
-    background: '#ef4444',
-    color: '#fff',
-    borderRadius: 'var(--radius-sm)',
-    fontSize: 13,
-    fontWeight: 600,
-    border: 'none',
-    cursor: 'pointer',
-    transition: 'background 0.15s, opacity 0.15s',
-  },
   sidebar: {
     width: 'var(--sidebar-width)',
     minWidth: 'var(--sidebar-width)',
     height: '100%',
-    background: '#1a1a1c',
+    background: 'var(--bg-tertiary)',
     display: 'flex',
     flexDirection: 'column',
-    borderRight: '1px solid rgba(255, 255, 255, 0.08)',
-  } as React.CSSProperties,
+    borderRight: '1px solid var(--border)',
+  },
   header: {
-    padding: '18px 18px 14px',
-    borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+    padding: '16px 16px 12px',
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 9,
   },
-  gearBtn: {
-    background: 'none',
-    border: 'none',
-    color: 'var(--text-secondary)',
-    cursor: 'pointer',
-    padding: '4px',
-    borderRadius: 4,
-    display: 'flex',
-    alignItems: 'center',
-    opacity: 0.6,
-    transition: 'opacity 0.15s',
-  } as React.CSSProperties,
+  mark: {
+    width: 24,
+    height: 24,
+    borderRadius: '50%',
+    border: '1px solid var(--border-glow)',
+  },
   title: {
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: 700,
-    color: '#1a7a3c',
+    color: '#4aba6a',
     letterSpacing: '0.04em',
-    textShadow: '0 0 20px rgba(26, 122, 60, 0.3)',
+    margin: 0,
   },
-  hubBtn: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
+  searchWrap: { padding: '0 12px 10px' },
+  search: {
     width: '100%',
-    padding: '10px 18px',
-    border: 'none',
-    borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
-    cursor: 'pointer',
-    fontSize: 14,
-    fontWeight: 500,
-    transition: 'background 0.15s, color 0.15s',
-    position: 'relative',
-  } as React.CSSProperties,
-  badge: {
-    marginLeft: 'auto',
+    padding: '6px 9px',
+    fontSize: 12,
+    border: '1px solid var(--border)',
+    borderRadius: 'var(--radius-sm)',
+    background: 'rgba(255,255,255,0.04)',
+    color: 'var(--text-primary)',
+    fontFamily: 'inherit',
+    outline: 'none',
+  },
+  sectionLabel: {
     fontSize: 10,
     fontWeight: 700,
-    background: '#ef4444',
-    color: '#fff',
-    borderRadius: 10,
-    padding: '1px 6px',
-    lineHeight: '14px',
-    minWidth: 18,
-    textAlign: 'center',
-  } as React.CSSProperties,
+    color: 'var(--text-muted)',
+    textTransform: 'uppercase',
+    letterSpacing: '0.1em',
+    padding: '2px 16px 6px',
+  },
+  listScroll: {
+    flex: 1,
+    overflowY: 'auto',
+    minHeight: 0,
+  },
+  bottomGroup: {
+    borderTop: '1px solid var(--border)',
+    padding: '8px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 2,
+  },
+  item: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 9,
+    width: '100%',
+    padding: '8px 9px',
+    border: 'none',
+    borderRadius: 'var(--radius-sm)',
+    cursor: 'pointer',
+    fontSize: 13,
+    fontWeight: 500,
+    color: 'var(--text-secondary)',
+    background: 'transparent',
+    textAlign: 'left',
+  },
+  primaryItem: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 9,
+    width: '100%',
+    padding: '8px 9px',
+    border: '1px solid var(--border-glow)',
+    borderRadius: 'var(--radius-sm)',
+    cursor: 'pointer',
+    fontSize: 13,
+    fontWeight: 600,
+    color: '#4aba6a',
+    background: 'rgba(26, 122, 60, 0.12)',
+    textAlign: 'left',
+    marginBottom: 4,
+  },
 };

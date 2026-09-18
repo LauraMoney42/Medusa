@@ -1,6 +1,5 @@
 // Onboarding slide content.
-// Marketing will replace placeholder descriptions before final release.
-// Icon values are SVG path data — see OnboardingView.tsx for how they're rendered.
+// Icon values are SVG path data: see OnboardingView.tsx for how they're rendered.
 
 export interface OnboardingSlide {
   id: string;
@@ -11,65 +10,75 @@ export interface OnboardingSlide {
   description: string;
 }
 
-// Slide order matches docs/onboarding_spec.md (12 slides)
-// Copy supplied by Marketing (docs/ONBOARDING_SLIDES.md) — applied 2026-02-19
-// Slides 10–11 (Kanban, Devlog) use placeholder copy pending Marketing update
+// Rewritten 2026-09-17 for the single-orchestrator model. The old deck taught a
+// roster of bots coordinating through a Hub feed; both were removed, so the
+// slides that described them would have walked a new user into features that no
+// longer exist. `iconType` values are kept as-is: they name SVG shapes in
+// OnboardingView.tsx, not products.
 export const ONBOARDING_SLIDES: OnboardingSlide[] = [
   {
     id: 'welcome',
     iconType: 'sparkles',
     iconColor: '#4aba6a',
     title: 'Welcome to Medusa',
-    subtitle: 'Your AI team, ready to work.',
-    description: 'Medusa is a multi-bot orchestration platform that lets you run a coordinated team of AI agents — all working together, in real time, on your projects.',
+    subtitle: 'One coding agent, any engine.',
+    description: 'Medusa is a harness for a coding agent. You pick the brain behind it (Claude, Kimi, Code Puppy, or an OpenRouter model) and every tool and setting works the same way whichever one you choose.',
   },
   {
-    id: 'bots',
+    id: 'chats',
     iconType: 'bot',
     iconColor: '#4aba6a',
-    title: 'Build Your Team',
-    subtitle: 'Each bot is a specialist.',
-    description: 'Click New Session in the sidebar to create a bot. Give it a name, a working directory, and custom instructions that define its role. Need a code reviewer? A designer? A marketer? Create a bot for it.',
+    title: 'One Chat, One Project',
+    subtitle: 'A chat is a folder plus a brain.',
+    description: 'Click New Chat in the left rail and pick a project folder, a provider, a model and an engine. The chat is scoped to that folder for its whole life, and its title defaults to the folder name.',
   },
   {
-    id: 'hub',
-    iconType: 'hub',
-    iconColor: '#4aba6a',
-    title: 'The Hub',
-    subtitle: 'Where your team stays in sync.',
-    description: 'The Hub is a shared message board visible to every bot on your team. Bots post updates, flag blockers, hand off work, and coordinate — all in one place. Tap Hub in the sidebar to view the live feed or post a message yourself.',
-  },
-  {
-    id: 'hierarchy',
+    id: 'subagents',
     iconType: 'flowchart',
     iconColor: '#4aba6a',
-    title: 'How It Works',
-    subtitle: 'One goal. One team. Fully coordinated.',
-    description: 'You give Medusa a goal. She delegates to your PMs, who assign tasks to specialist bots. Every output passes a Security review before it ships.',
+    title: 'Subagents',
+    subtitle: 'Fan work out without losing the thread.',
+    description: 'Ask for something big and Medusa can spawn subagents to work in parallel, each with its own fresh context. Every subagent renders as a collapsible card in the transcript, with its own model and tool calls.',
+  },
+  {
+    id: 'panels',
+    iconType: 'hub',
+    iconColor: '#4aba6a',
+    title: 'Browser & Simulator',
+    subtitle: 'Watch the work happen.',
+    description: 'The icons at the top right of a chat open a live Chrome session and an iOS Simulator beside it. You can take over either one with your own mouse and keyboard. Press Cmd+B to show or hide the panel.',
+  },
+  {
+    id: 'activity',
+    iconType: 'devlog',
+    iconColor: '#4aba6a',
+    title: 'Activity Log',
+    subtitle: 'Nothing happens off the record.',
+    description: 'Cmd+L opens the Activity Log on the far right: the raw stream for the current chat, with every tool call, its arguments, its full output, timestamps and token counts. Each message also carries its own tool-call disclosure.',
   },
   {
     id: 'projects',
     iconType: 'projects',
     iconColor: '#4aba6a',
-    title: 'Projects & Tasks',
-    subtitle: 'Track progress across your entire team.',
-    description: 'Create a Project to give your team a shared goal. Assign tasks to specific bots, set priorities (P0/P1/P2), and watch progress update automatically as bots complete work.',
+    title: 'Projects',
+    subtitle: 'A plan you can watch move.',
+    description: 'Medusa can write a structured plan for the current chat, with priorities and per-task owners, and the Projects pane updates live as work lands. Useful when a fan-out of subagents would otherwise scroll away.',
   },
   {
-    id: 'skills',
+    id: 'tools',
     iconType: 'skills',
     iconColor: '#4aba6a',
-    title: 'Customize Every Bot',
-    subtitle: 'Instructions define behavior. Skills extend capability.',
-    description: 'Instructions are custom guidance that shape how a bot thinks and responds — added once, applied to every message. Skills are optional Claude extensions you can toggle on per bot. Right-click any bot → Edit to configure.',
+    title: 'Tools, Skills & Rules',
+    subtitle: 'Shape what the agent can reach.',
+    description: 'The Tools view lists this chat\'s engine and provider, the Medusa tool set, your installed skills, and rule files you can switch on per chat. Chat settings adds per-chat instructions on top.',
   },
   {
     id: 'yolo',
     iconType: 'yolo',
     iconColor: '#8B2E2E',
     title: 'YOLO Mode',
-    subtitle: 'Bots work autonomously, but never without you.',
-    description: 'Bots pick up tasks, coordinate with each other, and report progress to the Hub automatically. When something needs your approval, a bot escalates with a 🚨 alert. Enable YOLO mode per-bot to skip confirmation prompts — use with care on trusted, well-instructed bots.',
+    subtitle: 'Autonomous, but never unsupervised.',
+    description: 'YOLO mode skips per-tool confirmation prompts for a chat so long runs do not stall waiting on you. Turn it on only in folders you are happy to have changed without a prompt, and read the diff afterwards.',
   },
   {
     id: 'caffeine',
@@ -77,38 +86,30 @@ export const ONBOARDING_SLIDES: OnboardingSlide[] = [
     iconColor: '#B5873A',
     title: 'Caffeine Mode',
     subtitle: 'Keep the work going.',
-    description: 'For long-running tasks, turn on Caffeine using the toggle in the top-right corner. It keeps your Mac awake so your bots can work uninterrupted — even overnight. Toggle it off when you\'re done to restore normal sleep behavior.',
+    description: 'For long-running tasks, turn on Caffeine using the toggle in the top-right corner. It keeps your Mac awake so a run finishes uninterrupted, even overnight. Toggle it off when you are done to restore normal sleep behavior.',
   },
   {
     id: 'images',
     iconType: 'image',
     iconColor: '#4aba6a',
     title: 'Images & Screenshots',
-    subtitle: 'Show your bots what you see.',
-    description: 'Drag any image from your desktop onto Medusa, paste from clipboard, or use the camera icon in the input bar to capture a screenshot. Bots can analyze, describe, and act on visual content.',
+    subtitle: 'Show Medusa what you see.',
+    description: 'Drag any image from your desktop onto Medusa, paste from the clipboard, or use the camera icon in the input bar to capture a screenshot. Medusa can analyze, describe, and act on what is in the picture.',
   },
   {
-    id: 'kanban',
-    iconType: 'kanban',
+    id: 'usage',
+    iconType: 'document',
     iconColor: '#4aba6a',
-    title: "Your Bot's Task Board",
-    subtitle: 'TODO, IN PROGRESS, DONE — at a glance.',
-    description: 'Each bot has a task board at the top of its chat window showing current assignments. Drag cards between TODO, IN PROGRESS, and DONE to update status directly — no separate project tool needed.',
-  },
-  {
-    id: 'devlog',
-    iconType: 'devlog',
-    iconColor: '#4aba6a',
-    title: 'Full Audit Trail',
-    subtitle: 'Every action, timestamped automatically.',
-    description: 'Everything the bots do is timestamped and logged automatically in devlog.md — what was built, changed, or decided, and when. You always have a complete record. No action goes unrecorded.',
+    title: 'What It Costs',
+    subtitle: 'Priced per turn, visible per chat.',
+    description: 'The ring under the input shows the running cost of the current chat. Settings has a Usage tab that breaks spend down by chat, source and model, and a Stop All tab that aborts every chat at once.',
   },
   {
     id: 'ready',
     iconType: 'checkmark',
     iconColor: '#4aba6a',
     title: "You're Ready",
-    subtitle: 'Your AI team is waiting.',
-    description: 'Start by creating your first bot, or open the Hub to see your team in action. Medusa is ready when you are. Always review important outputs before acting on them.',
+    subtitle: 'Pick a folder and start.',
+    description: 'Create your first chat from the left rail. Always review important outputs before acting on them, and use the Bug / Feature link when something is wrong: it goes straight to the project\'s issue tracker.',
   },
 ];

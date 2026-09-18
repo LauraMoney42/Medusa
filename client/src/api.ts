@@ -1,9 +1,6 @@
 import type { SessionMeta } from './types/session';
 import type { ChatMessage } from './types/message';
-import type { HubMessage } from './types/hub';
-import type { CompletedTask } from './types/task';
 import type { ProjectSummary, Project, QuickTask } from './types/project';
-import type { ApprovalRequest } from './types/approval';
 
 // Auth is now handled via httpOnly cookie (set by /api/auth/login).
 // credentials: 'include' tells the browser to send that cookie automatically.
@@ -75,44 +72,38 @@ export function fetchSessions(): Promise<SessionMeta[]> {
   return request<SessionMeta[]>('/api/sessions');
 }
 
-export interface DevControlState {
-  sessionId: string;
-  paused: boolean;
-  statusRequested: boolean;
-  interrupted: boolean;
-  updatedAt: number;
+/** Fields accepted by POST /api/sessions. `workingDir` is required. */
+export interface CreateSessionInput {
+  workingDir: string;
+  name?: string;
+  engineId?: string;
+  providerId?: string;
+  model?: string;
+  systemPrompt?: string;
 }
 
-export function fetchDevControl(): Promise<DevControlState[]> {
-  return request<DevControlState[]>('/api/dev-control');
-}
-
-export function pauseSession(sessionId: string): Promise<{ ok: boolean; wasBusy: boolean }> {
-  return request<{ ok: boolean; wasBusy: boolean }>(`/api/dev-control/${sessionId}/pause`, {
-    method: 'POST',
-  });
-}
-
-export function resumeSession(sessionId: string): Promise<{ ok: boolean }> {
-  return request<{ ok: boolean }>(`/api/dev-control/${sessionId}/resume`, {
-    method: 'POST',
-  });
-}
-
-export function requestSessionStatus(sessionId: string): Promise<{ ok: boolean; sent: boolean }> {
-  return request<{ ok: boolean; sent: boolean }>(`/api/dev-control/${sessionId}/status`, {
-    method: 'POST',
-  });
-}
-
-export function createSession(
-  name: string,
-  workingDir?: string,
-  systemPrompt?: string,
-): Promise<SessionMeta> {
+export function createSession(input: CreateSessionInput): Promise<SessionMeta> {
   return request<SessionMeta>('/api/sessions', {
     method: 'POST',
-    body: JSON.stringify({ name, workingDir, systemPrompt }),
+    body: JSON.stringify(input),
+  });
+}
+
+/** Patch any subset of a chat's settings (title, folder, engine, provider, model). */
+export function updateSession(
+  id: string,
+  patch: Partial<{
+    name: string;
+    systemPrompt: string;
+    model: string | null;
+    engineId: string | null;
+    providerId: string | null;
+    workingDir: string;
+  }>,
+): Promise<SessionMeta> {
+  return request<SessionMeta>(`/api/sessions/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
   });
 }
 
@@ -131,9 +122,8 @@ export function deleteSession(id: string): Promise<void> {
 }
 
 /**
- * Sets (or clears) the per-bot model override.
- * Pass a tier string ("haiku" | "sonnet" | "opus" | "fable"), or null to clear
- * the override and fall back to automatic model routing.
+ * Sets (or clears) the per-chat model override. Pass null to clear it and fall
+ * back to the provider's default routing.
  */
 export function setSessionModel(
   id: string,
@@ -160,18 +150,6 @@ export interface SkillInfo {
   slug: string;
   name: string;
   description: string;
-}
-
-export function fetchHubMessages(): Promise<HubMessage[]> {
-  return request<HubMessage[]>('/api/hub');
-}
-
-export function fetchTasks(): Promise<CompletedTask[]> {
-  return request<CompletedTask[]>('/api/hub/tasks');
-}
-
-export function acknowledgeTasks(): Promise<void> {
-  return request<void>('/api/hub/tasks/ack', { method: 'POST' });
 }
 
 export function fetchProjects(): Promise<ProjectSummary[]> {
@@ -239,20 +217,6 @@ export function updateQuickTask(
 
 export function deleteQuickTask(id: string): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>(`/api/quick-tasks/${id}`, { method: 'DELETE' });
-}
-
-// ── Approvals (human-in-the-loop guardrail) ──
-
-export function fetchApprovals(): Promise<ApprovalRequest[]> {
-  return request<ApprovalRequest[]>('/api/approvals');
-}
-
-export function approveRequest(id: string): Promise<ApprovalRequest> {
-  return request<ApprovalRequest>(`/api/approvals/${id}/approve`, { method: 'POST' });
-}
-
-export function denyRequest(id: string): Promise<ApprovalRequest> {
-  return request<ApprovalRequest>(`/api/approvals/${id}/deny`, { method: 'POST' });
 }
 
 export function fetchSkills(): Promise<{ skills: SkillInfo[]; ready: boolean }> {
@@ -523,24 +487,4 @@ export interface TokenUsagePeriod {
 
 export function fetchTokenUsage(period: 'day' | 'week' | 'month'): Promise<TokenUsagePeriod> {
   return request<TokenUsagePeriod>(`/api/token-usage?period=${period}`);
-}
-
-export type ComparePeriod = 'today' | 'yesterday' | 'this_week' | 'last_week' | 'this_month' | 'last_month';
-
-export interface ComparePeriodSummary {
-  label: string;
-  from: string;
-  to: string;
-  totalCostUsd: number;
-  totalMessages: number;
-  bySession: Record<string, SessionUsageBreakdown>;
-}
-
-export interface CompareResult {
-  a: ComparePeriodSummary;
-  b: ComparePeriodSummary;
-}
-
-export function fetchCompare(a: ComparePeriod, b: ComparePeriod): Promise<CompareResult> {
-  return request<CompareResult>(`/api/metrics/compare?a=${a}&b=${b}`);
 }

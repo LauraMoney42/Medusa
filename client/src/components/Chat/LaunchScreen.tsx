@@ -43,12 +43,12 @@ export default function LaunchScreen({ onDismiss }: LaunchScreenProps) {
         <h1 style={styles.title}>Medusa</h1>
 
         {/* Tagline */}
-        <p style={styles.tagline}>AI-Powered Development Hub</p>
+        <p style={styles.tagline}>Your coding agent, any engine</p>
 
         {/* About blurb */}
         <p style={styles.about}>
-          Coordinate your dev team, track projects, and ship faster —
-          with AI bots that work while you sleep.
+          One chat per project folder. Pick a provider, a model and an engine,
+          then let Medusa fan work out to subagents.
         </p>
 
         {/* Version / tap hint */}

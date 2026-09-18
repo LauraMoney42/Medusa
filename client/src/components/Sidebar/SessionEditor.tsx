@@ -3,6 +3,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { getSocket } from '../../socket';
 import { restartApp } from '../../api';
 import SkillPicker from '../Chat/SkillPicker';
+import { useProviderStore } from '../../stores/providerStore';
 import type { SessionMeta } from '../../types/session';
 
 interface SessionEditorProps {
@@ -10,15 +11,11 @@ interface SessionEditorProps {
   onClose: () => void;
 }
 
-// Model options shown in the per-bot model selector. Empty value = automatic
-// tier routing (server decides per interaction). The tier strings are passed
-// straight to the `claude` CLI as `--model` aliases.
-const MODEL_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: '', label: 'Auto (smart routing)' },
-  { value: 'haiku', label: 'Haiku — fastest, cheapest' },
-  { value: 'sonnet', label: 'Sonnet — balanced (default)' },
-  { value: 'opus', label: 'Opus — most capable' },
-  { value: 'fable', label: 'Fable' },
+/** Harnesses Medusa can spawn (ENGINE_IDS in server/src/routes/sessions.ts). */
+const ENGINE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'claude', label: 'Claude CLI' },
+  { value: 'kimi', label: 'Kimi CLI' },
+  { value: 'code-puppy', label: 'Code Puppy (ACP)' },
 ];
 
 export default function SessionEditor({ session, onClose }: SessionEditorProps) {
@@ -32,7 +29,25 @@ export default function SessionEditor({ session, onClose }: SessionEditorProps) 
   const [yolo, setYolo] = useState(session.yoloMode ?? false);
   const [skills, setSkills] = useState(session.skills ?? []);
   const [model, setModel] = useState(session.model ?? '');
+  const [engineId, setEngineId] = useState(session.engineId ?? 'claude');
+  const [providerId, setProviderId] = useState(session.providerId ?? 'claude');
   const [showSkillPicker, setShowSkillPicker] = useState(false);
+
+  // The model list follows the chat's provider rather than a hardcoded
+  // haiku/sonnet/opus/fable set, so OpenRouter and Kimi models show up too.
+  const providers = useProviderStore((s) => s.providers);
+  const fetchProviderList = useProviderStore((s) => s.fetchProviders);
+  const fetchProviderModels = useProviderStore((s) => s.fetchModels);
+  const modelOptions = useProviderStore((s) => s.modelsByProvider[providerId]) ?? [];
+  const updateSessionInStore = useSessionStore((s) => s.updateSession);
+
+  useEffect(() => {
+    void fetchProviderList();
+  }, [fetchProviderList]);
+
+  useEffect(() => {
+    void fetchProviderModels(providerId);
+  }, [providerId, fetchProviderModels]);
   // isSaving: true while ACKs from server are pending — blocks accidental close mid-save.
   const [isSaving, setIsSaving] = useState(false);
 
@@ -45,8 +60,10 @@ export default function SessionEditor({ session, onClose }: SessionEditorProps) 
     workingDir.trim() !== session.workingDir.trim() ||
     yolo !== (session.yoloMode ?? false) ||
     model !== (session.model ?? '') ||
+    engineId !== (session.engineId ?? 'claude') ||
+    providerId !== (session.providerId ?? 'claude') ||
     JSON.stringify(skills) !== JSON.stringify(session.skills ?? [])
-  ), [name, instructions, workingDir, yolo, model, skills, session]);
+  ), [name, instructions, workingDir, yolo, model, engineId, providerId, skills, session]);
 
   // Only reset form when opening a DIFFERENT session — never on socket-driven prop updates.
   // If we depended on session.name/systemPrompt etc., any socket event updating the session
@@ -125,11 +142,23 @@ export default function SessionEditor({ session, onClose }: SessionEditorProps) 
       );
     }
 
-    // Model change persists via REST PATCH (not a socket event) and requires a
-    // server restart to take effect on the bot's next spawn.
+    // Model change persists via REST PATCH, not a socket event. It takes
+    // effect on this chat's next spawn.
     const modelChanged = model !== (session.model ?? '');
     if (modelChanged) {
       emits.push(() => setSessionModel(session.id, model || null));
+    }
+
+    // Engine and provider ride the same PATCH; both take effect on the next spawn.
+    const engineChanged = engineId !== (session.engineId ?? 'claude');
+    const providerChanged = providerId !== (session.providerId ?? 'claude');
+    if (engineChanged || providerChanged) {
+      emits.push(() =>
+        updateSessionInStore(session.id, {
+          ...(engineChanged ? { engineId } : {}),
+          ...(providerChanged ? { providerId } : {}),
+        }),
+      );
     }
 
     if (emits.length === 0) {
@@ -139,7 +168,7 @@ export default function SessionEditor({ session, onClose }: SessionEditorProps) 
     }
 
     // After all saves land: if the model changed, offer to restart the server
-    // (the new model only applies to freshly spawned bot processes).
+    // (the new model only applies to freshly spawned engine processes).
     // Guard against double-firing — both the ACK resolution and the timeout
     // fallback can call finish(); only the first should run.
     let finished = false;
@@ -167,7 +196,7 @@ export default function SessionEditor({ session, onClose }: SessionEditorProps) 
       clearTimeout(timeout);
       finish();
     });
-  }, [session, name, instructions, workingDir, yolo, model, skills, renameSession, setSessionModel, onClose]);
+  }, [session, name, instructions, workingDir, yolo, model, engineId, providerId, skills, renameSession, setSessionModel, updateSessionInStore, onClose]);
 
   const handleToggleSkill = useCallback(
     (slug: string) => {
@@ -201,7 +230,7 @@ export default function SessionEditor({ session, onClose }: SessionEditorProps) 
     <div style={styles.overlay} onKeyDown={handleKeyDown}>
       <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
         <div style={styles.header}>
-          <h3 style={styles.title}>Edit Bot</h3>
+          <h3 style={styles.title}>Chat settings</h3>
           {/* ✕ blocked when editing or saving — require explicit Cancel/Save.
               When blocked, show a subtle "unsaved" hint so the user knows why. */}
           {isEditing && !isSaving && (
@@ -215,13 +244,13 @@ export default function SessionEditor({ session, onClose }: SessionEditorProps) 
         </div>
 
         <div style={styles.body}>
-          {/* Bot Name */}
-          <label style={styles.label}>Bot Name</label>
+          {/* Chat name */}
+          <label style={styles.label}>Chat name</label>
           <input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Bot name"
+            placeholder="Chat name"
             style={styles.nameInput}
           />
 
@@ -230,26 +259,51 @@ export default function SessionEditor({ session, onClose }: SessionEditorProps) 
           <textarea
             value={instructions}
             onChange={(e) => setInstructions(e.target.value)}
-            placeholder="Custom instructions for this bot..."
+            placeholder="Extra instructions for this chat..."
             style={styles.textarea}
             rows={5}
           />
 
-          {/* Model */}
+          {/* Provider */}
+          <label style={styles.label}>Provider</label>
+          <select
+            value={providerId}
+            onChange={(e) => setProviderId(e.target.value)}
+            style={styles.select}
+          >
+            {providers.map((p) => (
+              <option key={p.id} value={p.id}>{p.displayName}</option>
+            ))}
+          </select>
+
+          {/* Engine */}
+          <label style={styles.label}>Engine</label>
+          <select
+            value={engineId}
+            onChange={(e) => setEngineId(e.target.value)}
+            style={styles.select}
+          >
+            {ENGINE_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+
+          {/* Model — the option list follows the provider above. */}
           <label style={styles.label}>Model</label>
           <select
             value={model}
             onChange={(e) => setModel(e.target.value)}
             style={styles.select}
           >
-            {MODEL_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
+            <option value="">Auto</option>
+            {modelOptions.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.displayName}{m.cheap ? ' · cheap' : ''}
               </option>
             ))}
           </select>
           <span style={styles.fieldHint}>
-            Changing the model requires a server restart to take effect.
+            Engine, provider and model changes apply on this chat's next spawn.
           </span>
 
           {/* Working Directory */}

@@ -51,7 +51,7 @@ export const useProjectStore = create<ProjectState & ProjectActions>(
       try {
         const projects = await api.fetchProjects();
         // Bust cache entries whose updatedAt has changed — ensures ProjectPane
-        // shows fresh data after external bot PATCHes (e.g. marking complete).
+        // shows fresh data after external PATCHes (e.g. marking complete).
         set((s) => {
           const nextCache = { ...s.projectCache };
           for (const fresh of projects) {

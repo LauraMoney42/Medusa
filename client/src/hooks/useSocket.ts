@@ -3,7 +3,6 @@ import type { Socket } from 'socket.io-client';
 import { getSocket, disconnectSocket } from '../socket';
 import { useChatStore } from '../stores/chatStore';
 import { useSessionStore } from '../stores/sessionStore';
-import { useTaskStore } from '../stores/taskStore';
 import { useSubagentStore } from '../stores/subagentStore';
 import type {
   SubagentStartPayload,
@@ -13,7 +12,6 @@ import type {
 } from '../stores/subagentStore';
 import { useActivityStore, type ActivityEvent } from '../stores/activityStore';
 import type { ChatMessage, ToolUse } from '../types/message';
-import type { CompletedTask } from '../types/task';
 
 /**
  * Manages the Socket.IO lifecycle and dispatches incoming events
@@ -31,14 +29,10 @@ export function useSocket() {
   const finishStreaming = useChatStore((s) => s.finishStreaming);
   const setError = useChatStore((s) => s.setError);
   const setSessionStatus = useSessionStore((s) => s.setSessionStatus);
-  const setPendingTask = useSessionStore((s) => s.setPendingTask);
-  const setDevControl = useSessionStore((s) => s.setDevControl);
-  const removeDevControl = useSessionStore((s) => s.removeDevControl);
   const setSessionYolo = useSessionStore((s) => s.setSessionYolo);
   const setSessionSystemPrompt = useSessionStore((s) => s.setSessionSystemPrompt);
   const setSessionSkills = useSessionStore((s) => s.setSessionSkills);
   const setSessionWorkingDir = useSessionStore((s) => s.setSessionWorkingDir);
-  const addTask = useTaskStore((s) => s.addTask);
   const subagentStart = useSubagentStore((s) => s.start);
   const subagentDelta = useSubagentStore((s) => s.appendDelta);
   const subagentTool = useSubagentStore((s) => s.addToolEvent);
@@ -194,43 +188,6 @@ export function useSocket() {
       pushActivity(data);
     };
 
-    const handleTaskDone = (task: CompletedTask) => {
-      addTask(task);
-    };
-
-    const handleTasksAcknowledged = () => {
-      useTaskStore.getState().clearAll();
-    };
-
-    const handlePendingTask = (data: { sessionId: string; hasPendingTask: boolean }) => {
-      setPendingTask(data.sessionId, data.hasPendingTask);
-    };
-
-    const handleDevControlUpdate = (data: {
-      sessionId: string;
-      paused: boolean;
-      statusRequested: boolean;
-      interrupted: boolean;
-    }) => {
-      setDevControl(data.sessionId, {
-        paused: data.paused,
-        statusRequested: data.statusRequested,
-        interrupted: data.interrupted,
-      });
-    };
-
-    const handleDevControlRemoved = (data: { sessionId: string }) => {
-      removeDevControl(data.sessionId);
-    };
-
-    const handleTaskAssigned = (data: { sessionId: string }) => {
-      setPendingTask(data.sessionId, true);
-    };
-
-    const handleTaskCleared = (data: { sessionId: string }) => {
-      setPendingTask(data.sessionId, false);
-    };
-
     const handleServerShuttingDown = (data: { busySessions: { id: string; name: string }[] }) => {
       console.log('[socket] Server shutting down, waiting for:', data.busySessions);
       setServerShuttingDown(data.busySessions);
@@ -272,13 +229,6 @@ export function useSocket() {
     socket.on('subagent:tool', handleSubagentTool);
     socket.on('subagent:end', handleSubagentEnd);
     socket.on('activity:event', handleActivityEvent);
-    socket.on('task:done', handleTaskDone);
-    socket.on('tasks:acknowledged', handleTasksAcknowledged);
-    socket.on('session:pending-task', handlePendingTask);
-    socket.on('dev-control:update', handleDevControlUpdate);
-    socket.on('dev-control:removed', handleDevControlRemoved);
-    socket.on('bot:task-assigned', handleTaskAssigned);
-    socket.on('bot:task-cleared', handleTaskCleared);
     socket.on('server:shutting-down', handleServerShuttingDown);
 
     return () => {
@@ -303,13 +253,6 @@ export function useSocket() {
       socket.off('subagent:tool', handleSubagentTool);
       socket.off('subagent:end', handleSubagentEnd);
       socket.off('activity:event', handleActivityEvent);
-      socket.off('task:done', handleTaskDone);
-      socket.off('tasks:acknowledged', handleTasksAcknowledged);
-      socket.off('session:pending-task', handlePendingTask);
-      socket.off('dev-control:update', handleDevControlUpdate);
-      socket.off('dev-control:removed', handleDevControlRemoved);
-      socket.off('bot:task-assigned', handleTaskAssigned);
-      socket.off('bot:task-cleared', handleTaskCleared);
       socket.off('server:shutting-down', handleServerShuttingDown);
 
       window.removeEventListener('online', handleOnline);

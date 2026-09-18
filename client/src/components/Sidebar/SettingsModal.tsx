@@ -1,13 +1,30 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import * as api from '../../api';
 import type { SettingsResponse, OneNoteStatus, OneNoteDeviceCode, HeadroomStatus, TtsStatus } from '../../api';
 import { useTtsStore } from '../../stores/ttsStore';
+import { useSessionStore } from '../../stores/sessionStore';
+import UsagePane from '../Usage/UsagePane';
+import { getSocket } from '../../socket';
 
 interface SettingsModalProps {
   onClose: () => void;
 }
 
+/**
+ * Usage and Stop All left the left rail (2026-09-17 addendum) but kept their
+ * functionality, so they live here as tabs. The per-chat abort on the send
+ * button is unaffected.
+ */
+type SettingsTab = 'general' | 'usage' | 'stop';
+
+const TABS: Array<{ id: SettingsTab; label: string }> = [
+  { id: 'general', label: 'General' },
+  { id: 'usage', label: 'Usage' },
+  { id: 'stop', label: 'Stop All' },
+];
+
 export default function SettingsModal({ onClose }: SettingsModalProps) {
+  const [tab, setTab] = useState<SettingsTab>('general');
   const [settings, setSettings] = useState<SettingsResponse | null>(null);
   const [showPicker, setShowPicker] = useState(false);
   const [working, setWorking] = useState(false);
@@ -143,6 +160,28 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
           <button onClick={onClose} style={styles.closeBtn} title="Close">✕</button>
         </div>
 
+        <div style={styles.tabBar}>
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              style={{ ...styles.tab, ...(tab === t.id ? styles.tabActive : {}) }}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {tab === 'usage' && (
+          <div style={styles.tabPane}>
+            <UsagePane />
+          </div>
+        )}
+
+        {tab === 'stop' && <StopAllTab />}
+
+        {tab === 'general' && (
+          <>
         {/* Provider Login */}
         <div style={styles.section}>
           <span style={styles.sectionLabel}>Account</span>
@@ -305,9 +344,9 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
             ) : (
               <p style={styles.headroomHint}>
                 {headroom?.ready
-                  ? 'Waiting for traffic — savings appear as bots handle large outputs.'
+                  ? 'Waiting for traffic. Savings appear as chats handle large outputs.'
                   : headroom?.enabled
-                    ? 'Proxy starting… routes bot traffic through Headroom to cut tokens.'
+                    ? 'Proxy starting… routes engine traffic through Headroom to cut tokens.'
                     : 'Disabled. Set HEADROOM_ENABLED=true and restart to enable.'}
               </p>
             )}
@@ -362,8 +401,55 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
         <button onClick={handleRestart} disabled={restarting} style={styles.restartBtn}>
           {restarting ? 'Restarting…' : 'Restart App'}
         </button>
+          </>
+        )}
       </div>
     </>
+  );
+}
+
+/**
+ * Stop All: fires the existing per-chat abort at every chat at once. This is
+ * the same `message:abort` the send button's stop uses, not the old bot-era
+ * server shutdown, so nothing is lost and the server stays up.
+ */
+function StopAllTab() {
+  const sessions = useSessionStore((s) => s.sessions);
+  const statuses = useSessionStore((s) => s.statuses);
+  const [stopped, setStopped] = useState<number | null>(null);
+
+  const busy = sessions.filter((s) => statuses[s.id] === 'busy');
+
+  const handleStopAll = useCallback(() => {
+    const socket = getSocket();
+    for (const session of sessions) {
+      socket.emit('message:abort', { sessionId: session.id });
+    }
+    setStopped(sessions.length);
+  }, [sessions]);
+
+  return (
+    <div style={styles.tabPane}>
+      <div style={styles.section}>
+        <span style={styles.sectionLabel}>Stop every chat</span>
+        <div style={styles.accountCard}>
+          <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: 1.5 }}>
+            {busy.length > 0
+              ? `${busy.length} of ${sessions.length} ${sessions.length === 1 ? 'chat' : 'chats'} is working.`
+              : 'Nothing is running right now.'}{' '}
+            Stopping aborts the current turn in every chat; history and settings are kept.
+          </p>
+          <button onClick={handleStopAll} style={styles.actionBtnDanger}>
+            Stop all chats
+          </button>
+          {stopped != null && (
+            <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '8px 0 0' }}>
+              Abort sent to {stopped} {stopped === 1 ? 'chat' : 'chats'}.
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -385,8 +471,37 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 'var(--radius-md)',
     padding: '20px',
     boxShadow: '0 20px 60px rgba(0, 0, 0, 0.6)',
-    width: 360,
-    maxWidth: '90vw',
+    width: 520,
+    maxWidth: '92vw',
+    maxHeight: '86vh',
+    overflowY: 'auto',
+  },
+  tabBar: {
+    display: 'flex',
+    gap: 2,
+    marginBottom: 16,
+    borderBottom: '1px solid rgba(255,255,255,0.08)',
+    paddingBottom: 6,
+  },
+  tab: {
+    background: 'transparent',
+    border: '1px solid transparent',
+    color: 'var(--text-muted)',
+    fontSize: 12,
+    fontWeight: 600,
+    padding: '5px 12px',
+    borderRadius: 'var(--radius-sm)',
+    cursor: 'pointer',
+  },
+  tabActive: {
+    color: '#4aba6a',
+    background: 'rgba(26, 122, 60, 0.12)',
+    borderColor: 'rgba(26, 122, 60, 0.25)',
+  },
+  tabPane: {
+    display: 'flex',
+    flexDirection: 'column',
+    minHeight: 280,
   },
   header: {
     display: 'flex',

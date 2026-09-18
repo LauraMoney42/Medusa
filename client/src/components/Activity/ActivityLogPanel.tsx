@@ -217,6 +217,10 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: 6,
     padding: '8px 10px',
+    // This panel is the rightmost column, so its toolbar runs under the fixed
+    // CaffeineToggle (top:12, right:14). Reserve the same clearance ChatView's
+    // header does, or the Clear button ends up behind it.
+    paddingRight: 104,
     borderBottom: '1px solid var(--border)',
   },
   filter: {

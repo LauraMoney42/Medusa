@@ -36,11 +36,9 @@ interface ProviderState {
   modelsByProvider: Record<string, ProviderModel[]>;
   loaded: boolean;
   /**
-   * The globally active LLM provider (server-wide setting, not per-bot).
-   * Shared here — rather than duplicated as local state in ChatHeaderControls
-   * and MedusaChat — so that switching it in the header's picker is
-   * immediately reflected in the bottom-bar model picker too, instead of
-   * requiring a reload for the two to agree.
+   * The globally active LLM provider (server-wide default for new chats).
+   * A chat's own `providerId` overrides this; this is the value a new chat
+   * starts from and what the picker under the input falls back to.
    */
   activeProviderId: string;
   setActiveProviderId: (id: string) => void;
