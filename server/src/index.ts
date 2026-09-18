@@ -18,7 +18,7 @@ import filesRouter from "./routes/files.js";
 import sttRouter from "./routes/stt.js";
 import ttsRouter from "./routes/tts.js";
 import { createSkillsRouter } from "./routes/skills.js";
-import { setupSocketHandler } from "./socket/handler.js";
+import { setupSocketHandler, emitSubagentActivity } from "./socket/handler.js";
 import { ProcessManager } from "./claude/process-manager.js";
 import { SessionStore } from "./sessions/store.js";
 import { SkillCatalog } from "./skills/catalog.js";
@@ -145,7 +145,12 @@ const subagentManager = new SubagentManager({
       yoloMode: session.yoloMode ?? false,
     };
   },
-  emit: (sessionId, event, payload) => io.to(sessionId).emit(event, payload),
+  emit: (sessionId, event, payload) => {
+    io.to(sessionId).emit(event, payload);
+    // The Activity Log mirrors subagent traffic alongside the parent's own
+    // stream; this is the only place those events are visible server-side.
+    emitSubagentActivity(io, event, payload);
+  },
 });
 
 setupSocketHandler(io, processManager, sessionStore, skillCatalog, chatStore, tokenLogger, subagentManager);

@@ -1,8 +1,10 @@
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import type { ChatMessage } from '../../types/message';
+import type { ChatMessage, ToolUse } from '../../types/message';
 import ToolUseBlock from './ToolUseBlock';
+import SubagentCard from './SubagentCard';
+import { useSubagentStore, findSubagentForToolUse } from '../../stores/subagentStore';
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -23,6 +25,28 @@ function formatTime(timestamp: string): string {
 function formatCost(cost: number): string {
   if (cost < 0.01) return `$${cost.toFixed(4)}`;
   return `$${cost.toFixed(2)}`;
+}
+
+/** Both spellings reach the client; the MCP-mounted one is namespaced. */
+function isSpawnAgentTool(name: string): boolean {
+  return name === 'spawn_agent' || name === 'mcp__medusa__spawn_agent';
+}
+
+/**
+ * One tool block: the Medusa-managed subagent card when the call is a
+ * `spawn_agent`, the ordinary tool card otherwise. Falls back to the tool card
+ * while the subagent record has not arrived yet (the tool_use block is emitted
+ * before the MCP shim reaches `SubagentManager.spawn`).
+ */
+function ToolCard({ tool, sessionId }: { tool: ToolUse; sessionId: string }) {
+  const spawn = isSpawnAgentTool(tool.name);
+  const agent = useSubagentStore((s) =>
+    spawn ? findSubagentForToolUse(s, sessionId, tool.id) : undefined,
+  );
+  if (spawn && agent) {
+    return <SubagentCard agentId={agent.id} sessionId={sessionId} />;
+  }
+  return <ToolUseBlock tool={tool} />;
 }
 
 export default function MessageBubble({ message, botName, onSpeak }: MessageBubbleProps) {
@@ -119,13 +143,19 @@ export default function MessageBubble({ message, botName, onSpeak }: MessageBubb
           <div style={styles.noResponse}>No response</div>
         )}
 
-        {/* Tool uses — one card per call, with its input and its result */}
+        {/* Tool uses — one card per call, with its input and its result.
+            A `spawn_agent` call renders as a SubagentCard instead: the tool's
+            own input/output says nothing the card does not say better. */}
         {message.toolUses && message.toolUses.length > 0 && (
           <div style={styles.tools}>
             {message.toolUses.map((tool, i) => (
               // Prefer the tool id so a card keeps its expand state when a
               // sibling's result lands and the array is rebuilt.
-              <ToolUseBlock key={tool.id ?? i} tool={tool} />
+              <ToolCard
+                key={tool.id ?? i}
+                tool={tool}
+                sessionId={message.sessionId}
+              />
             ))}
           </div>
         )}
