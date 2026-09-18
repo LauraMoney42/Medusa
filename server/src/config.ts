@@ -190,9 +190,12 @@ const config: Config = {
   headroomEnabled: process.env.HEADROOM_ENABLED !== "false",
   headroomPort: parseInt(process.env.HEADROOM_PORT || "8787", 10),
   sttEnabled: process.env.STT_ENABLED !== "false",
-  sttApiBaseUrl: process.env.STT_API_BASE_URL || "https://api.openai.com/v1",
-  sttApiKey: process.env.STT_API_KEY || "",
-  sttModel: process.env.STT_MODEL || "whisper-1",
+  // Default to the local faster-whisper server the manager supervises, matching
+  // TTS, so a fresh install (the desktop sidecar's auto-generated .env) has
+  // working voice without a cloud key.
+  sttApiBaseUrl: process.env.STT_API_BASE_URL || "http://localhost:8000/v1",
+  sttApiKey: process.env.STT_API_KEY || "local",
+  sttModel: process.env.STT_MODEL || "base.en",
   sttAutostart: process.env.STT_AUTOSTART !== "false",
   sttRunScript: process.env.STT_RUN_SCRIPT || path.join(
     process.env.HOME || process.env.USERPROFILE || "~",
