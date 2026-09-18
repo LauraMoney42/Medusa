@@ -45,6 +45,8 @@ export interface Config {
   host: string;
   port: number;
   authToken: string;
+  /** True when this server was spawned as the desktop shell's sidecar (env: MEDUSA_DESKTOP). No behavior change today: reserved so future features can branch on desktop vs. browser. */
+  isDesktop: boolean;
   allowedOrigins: string[];
   /** Directory holding uploads/ and default-bots.json (override: MEDUSA_DATA_DIR) */
   dataDir: string;
@@ -121,6 +123,7 @@ const config: Config = {
   host: process.env.HOST || "0.0.0.0",
   port: parseInt(process.env.PORT || "3456", 10),
   authToken: process.env.AUTH_TOKEN || "",
+  isDesktop: process.env.MEDUSA_DESKTOP === "1",
   // P2-5: Default localhost origins are development-only. For any network-accessible
   // deployment, set ALLOWED_ORIGINS explicitly. The fallback is intentionally kept
   // to avoid breaking local dev workflows (this app is designed for localhost use).
