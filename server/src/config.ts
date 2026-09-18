@@ -53,21 +53,10 @@ export interface Config {
   uploadsDir: string;
   sessionsFile: string;
   skillsCacheDir: string;
-  hubFile: string;
   projectsFile: string;
   quickTasksFile: string;
-  /** Path to persist human-in-the-loop approval requests (bot escalations) */
-  approvalsFile: string;
   /** Path to persist interrupted session state for auto-resume on next startup */
   interruptedSessionsFile: string;
-  /** Path to persist per-session dev control state (pause / interrupt / status request) */
-  devControlFile: string;
-  /** Enable background Hub polling for idle bots (default: false) */
-  hubPolling: boolean;
-  /** Interval in ms between poll ticks (default: 120000 = 2 min) */
-  hubPollIntervalMs: number;
-  /** Time in ms before a pending task is considered stale and the bot gets nudged (default: 600000 = 10 min) */
-  staleTaskThresholdMs: number;
   /** Max time in ms to wait for active sessions to finish during shutdown (default: 30000 = 30s) */
   gracefulTimeoutMs: number;
   /** Max subagents running at once across every chat (default: 6) */
@@ -82,7 +71,7 @@ export interface Config {
   summarizationThreshold: number;
   /** Enable tiered model routing (Haiku for simple, Sonnet for coding, Opus for architecture) (default: true) */
   modelRoutingEnabled: boolean;
-  /** Enable hub context compression before injection (default: true) */
+  /** Enable system-prompt compression before injection (default: true) */
   compressionEnabled: boolean;
   /** Compression level: conservative | moderate | aggressive (default: moderate) */
   compressionLevel: "conservative" | "moderate" | "aggressive";
@@ -148,11 +137,6 @@ const config: Config = {
     process.env.HOME || process.env.USERPROFILE || "~",
     ".claude-chat"
   ),
-  hubFile: path.join(
-    process.env.HOME || process.env.USERPROFILE || "~",
-    ".claude-chat",
-    "hub.json"
-  ),
   projectsFile: path.join(
     process.env.HOME || process.env.USERPROFILE || "~",
     ".claude-chat",
@@ -163,24 +147,11 @@ const config: Config = {
     ".claude-chat",
     "quick-tasks.json"
   ),
-  approvalsFile: path.join(
-    process.env.HOME || process.env.USERPROFILE || "~",
-    ".claude-chat",
-    "approvals.json"
-  ),
   interruptedSessionsFile: path.join(
     process.env.HOME || process.env.USERPROFILE || "~",
     ".claude-chat",
     "interrupted-sessions.json"
   ),
-  devControlFile: path.join(
-    process.env.HOME || process.env.USERPROFILE || "~",
-    ".claude-chat",
-    "dev-control.json"
-  ),
-  hubPolling: process.env.HUB_POLLING === "true",
-  hubPollIntervalMs: parseInt(process.env.HUB_POLL_INTERVAL_MS || "120000", 10),
-  staleTaskThresholdMs: parseInt(process.env.STALE_TASK_THRESHOLD_MS || "600000", 10),
   gracefulTimeoutMs: parseInt(process.env.GRACEFUL_TIMEOUT_MS || "30000", 10),
   maxSubagentsTotal: parseInt(process.env.MEDUSA_MAX_SUBAGENTS_TOTAL || "6", 10),
   maxSubagentsPerSession: parseInt(

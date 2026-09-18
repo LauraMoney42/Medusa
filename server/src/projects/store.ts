@@ -37,7 +37,7 @@ export type Project = z.infer<typeof ProjectSchema>;
 
 /**
  * Persists projects to a JSON file using atomic writes.
- * Same pattern as HubStore and SessionStore.
+ * Same pattern as SessionStore.
  */
 export class ProjectStore {
   private projects: Project[] = [];
@@ -191,7 +191,7 @@ export class ProjectStore {
     return true;
   }
 
-  /** Helper: load all projects (alias for getAll, used by task-sync) */
+  /** Helper: load all projects (alias for getAll) */
   loadAll(): Project[] {
     return this.getAll();
   }

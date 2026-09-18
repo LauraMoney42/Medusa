@@ -17,18 +17,6 @@ describe("selectModel — overrides", () => {
   });
 });
 
-describe("selectModel — source routing", () => {
-  it("routes poll and nudge sources to haiku", () => {
-    expect(selectModel({ prompt: "anything", source: "poll" })).toBe("haiku");
-    expect(selectModel({ prompt: "anything", source: "nudge" })).toBe("haiku");
-  });
-
-  it("routes short mentions to haiku and long mentions to sonnet", () => {
-    expect(selectModel({ prompt: "ok thanks", source: "mention" })).toBe("haiku");
-    expect(selectModel({ prompt: "x".repeat(250), source: "mention" })).toBe("sonnet");
-  });
-});
-
 describe("selectModel — user prompt patterns", () => {
   it("escalates architecture/review prompts to opus", () => {
     expect(selectModel({ prompt: "Please architect the auth flow", source: "user" })).toBe("opus");
@@ -37,8 +25,8 @@ describe("selectModel — user prompt patterns", () => {
   });
 
   it("routes status/ack prompts to haiku", () => {
-    expect(selectModel({ prompt: "[NO-ACTION] standing by", source: "user" })).toBe("haiku");
     expect(selectModel({ prompt: "just a status update", source: "user" })).toBe("haiku");
+    expect(selectModel({ prompt: "please confirm", source: "user" })).toBe("haiku");
   });
 
   it("defaults ordinary user prompts to sonnet", () => {

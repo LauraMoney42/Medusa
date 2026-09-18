@@ -2,6 +2,7 @@ import type { ParsedEvent } from "./types.js";
 import { getActiveProvider } from "../settings/store.js";
 import { getEngineOrDefault } from "../engine/registry.js";
 import type { EngineSessionState } from "../engine/types.js";
+import type { MedusaMcpDescriptor } from "../mcp/descriptor.js";
 
 interface SessionEntry extends EngineSessionState {
   /** Lock to prevent concurrent sendMessage calls */
@@ -127,7 +128,14 @@ export class ProcessManager {
     systemPrompt?: string,
     model?: string,
     files?: string[],
-    engine?: SessionEngineOptions
+    engine?: SessionEngineOptions,
+    /**
+     * The Medusa MCP server descriptor for this chat. Passing it is what turns
+     * subagents on: every engine family injects it in its own spelling
+     * (--mcp-config for the claude/kimi CLIs, mcpServers for ACP). Subagent
+     * spawns never receive one, so the tree stays one level deep.
+     */
+    mcpConfig?: MedusaMcpDescriptor
   ): Promise<number | null> {
     const entry = this.sessions.get(sessionId);
     if (!entry) {
@@ -159,6 +167,7 @@ export class ProcessManager {
       model,
       yoloMode,
       providerId: resolved.providerId,
+      mcpConfig,
       onEvent,
     });
     entry.spawnLock = spawnPromise;

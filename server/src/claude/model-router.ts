@@ -1,7 +1,7 @@
 /**
  * Model routing logic for tiered model selection.
  * Routes interactions to the cheapest model that can handle them:
- * - haiku: Hub checks, status updates, acknowledgments, [NO-ACTION], simple Q&A
+ * - haiku: status updates, acknowledgments, simple Q&A
  * - sonnet: Coding tasks, code edits, feature implementation, devlog writes (default)
  * - opus: Architecture decisions, complex reviews, multi-step planning
  */
@@ -21,7 +21,7 @@ export interface RoutingContext {
   /** The prompt text being sent */
   prompt: string;
   /** Where the interaction originates */
-  source: "user" | "poll" | "mention" | "nudge";
+  source: "user";
   /** Optional override from session config */
   modelOverride?: string;
 }
@@ -41,8 +41,6 @@ const OPUS_PATTERNS = [
 
 // Patterns that suggest simple/routine work (-> haiku)
 const HAIKU_PATTERNS = [
-  /\[Hub Check\]/i,
-  /\[NO-ACTION\]/i,
   /status.*check/i,
   /status.*update/i,
   /acknowledge/i,
@@ -63,18 +61,6 @@ export function selectModel(ctx: RoutingContext): ModelTier {
       return lower as ModelTier;
     }
     // If it's a full model name, pass it through (handled by caller)
-    return "sonnet";
-  }
-
-  // Poll checks and nudges are always cheap
-  if (ctx.source === "poll" || ctx.source === "nudge") {
-    return "haiku";
-  }
-
-  // Mention delivery: haiku for simple acks, sonnet for task work
-  if (ctx.source === "mention") {
-    // Short mentions are likely acks/status — use haiku
-    if (ctx.prompt.length < 200) return "haiku";
     return "sonnet";
   }
 

@@ -5,7 +5,6 @@ import path from "path";
 import { v4 as uuidv4 } from "uuid";
 import config from "../config.js";
 import { compress, assembleSystemPrompt, estimateTokens } from "../compressor/engine.js";
-import { loadCompressorConfig } from "../compressor/config.js";
 import { startScreencast, stopScreencast, sendCoworkInput, type CoworkInput } from "../cowork/screencast.js";
 import { startSimulatorStream, stopSimulatorStream, sendSimulatorInput, type SimulatorInput } from "../cowork/simulator-stream.js";
 
@@ -79,351 +78,39 @@ import { ProcessManager } from "../claude/process-manager.js";
 import { SessionStore } from "../sessions/store.js";
 import { SkillCatalog } from "../skills/catalog.js";
 import { ChatStore } from "../chat/store.js";
-import { HubStore } from "../hub/store.js";
-import { MentionRouter } from "../hub/mention-router.js";
 import type { ParsedEvent } from "../claude/types.js";
 import type { TokenLogger } from "../metrics/token-logger.js";
 import { selectModel, NEXT_TIER, type ModelTier } from "../claude/model-router.js";
 import { summarizeConversation } from "../chat/conversation-summarizer.js";
-import { processHubPosts } from "../hub/post-processor.js";
 import { summarizingSessionIds } from "../chat/summarization-guard.js";
 import { getActiveProvider, getActiveConfigDir } from "../settings/store.js";
 import { isAnthropicCompatibleProvider, getDefaultModel } from "../settings/providers.js";
 import { isAuthError, ConsecutiveErrorDeduper, buildAllTiersFailedMessage } from "./error-policy.js";
+import type { SubagentManager } from "../subagents/manager.js";
+import { descriptorForSession } from "../mcp/config.js";
 
-// ---- Hub Post Detection ----
+// ---- Per-session send queue ----
+// A minimal stand-in for the old MentionRouter's queueDirectMessage/onSessionIdle:
+// if a user sends a message while the session is already busy, hold it here and
+// drain it once the in-flight turn finishes. One pending call per session is all
+// the client can produce (the input is disabled while busy), so a simple FIFO
+// array is enough.
+const pendingSendQueues = new Map<string, Array<() => void>>();
 
-interface DetectorResult {
-  cleanDelta: string;
-  hubPosts: string[];
-  /** Raw inner content of [BOT-TASK: ...] tokens, e.g. "@Backend Dev check the API" */
-  botTasks: string[];
+function queueDirectMessage(sessionId: string, fn: () => void): void {
+  const queue = pendingSendQueues.get(sessionId) ?? [];
+  queue.push(fn);
+  pendingSendQueues.set(sessionId, queue);
 }
 
-const HUB_PREFIX = "[HUB-POST: ";
-const HUB_PREFIX_LOWER = "[hub-post: ";
-const BOT_TASK_PREFIX = "[BOT-TASK: ";
-const BOT_TASK_PREFIX_LOWER = "[bot-task: ";
-
-/**
- * Buffers streaming deltas and detects `[HUB-POST: ...]` and `[BOT-TASK: ...]` patterns.
- * Both token types are stripped from the clean output and returned for routing.
- * Handles: splits across deltas, nested brackets, multiple tokens per response.
- */
-export class HubPostDetector {
-  private buffer = "";
-  private pendingHubPosts: string[] = [];
-  private pendingBotTasks: string[] = [];
-
-  /**
-   * Feed a delta chunk. Returns clean text (with hub posts and bot tasks stripped)
-   * and any fully extracted hub posts / bot tasks.
-   */
-  feed(delta: string): DetectorResult {
-    this.buffer += delta;
-    return this.extract();
-  }
-
-  /** Flush remaining buffer as clean output (called on stream end).
-   *  Also extracts any unclosed [HUB-POST: ...] or [BOT-TASK: ...] markers
-   *  that never received a closing bracket (e.g. model truncation).
-   */
-  flush(): string {
-    this.extractUnclosed();
-    const remaining = this.buffer;
-    this.buffer = "";
-    return remaining;
-  }
-
-  /** Hub posts extracted during the last flush() from unclosed markers. */
-  getPendingHubPosts(): string[] {
-    return this.pendingHubPosts;
-  }
-
-  /** Bot tasks extracted during the last flush() from unclosed markers. */
-  getPendingBotTasks(): string[] {
-    return this.pendingBotTasks;
-  }
-
-  /** Clear pending posts/tasks after processing them. */
-  clearPending(): void {
-    this.pendingHubPosts = [];
-    this.pendingBotTasks = [];
-  }
-
-  private extract(): DetectorResult {
-    const hubPosts: string[] = [];
-    const botTasks: string[] = [];
-    let cleanDelta = "";
-
-    while (this.buffer.length > 0) {
-      const lowerBuf = this.buffer.toLowerCase();
-
-      // Find whichever token prefix appears first in the buffer
-      const hubIdx = lowerBuf.indexOf(HUB_PREFIX_LOWER);
-      const botIdx = lowerBuf.indexOf(BOT_TASK_PREFIX_LOWER);
-
-      let startIdx: number;
-      let prefixLen: number;
-      let isBot: boolean;
-
-      if (hubIdx === -1 && botIdx === -1) {
-        // No token start found — check for a partial prefix at the end of the buffer
-        const partialLen = this.findPartialPrefix(lowerBuf);
-        if (partialLen > 0) {
-          cleanDelta += this.buffer.slice(0, this.buffer.length - partialLen);
-          this.buffer = this.buffer.slice(this.buffer.length - partialLen);
-          break;
-        }
-        cleanDelta += this.buffer;
-        this.buffer = "";
-        break;
-      } else if (botIdx !== -1 && (hubIdx === -1 || botIdx < hubIdx)) {
-        startIdx = botIdx;
-        prefixLen = BOT_TASK_PREFIX.length;
-        isBot = true;
-      } else {
-        startIdx = hubIdx;
-        prefixLen = HUB_PREFIX.length;
-        isBot = false;
-      }
-
-      // Emit text before the token marker
-      cleanDelta += this.buffer.slice(0, startIdx);
-
-      // Scan forward to find the matching closing bracket (depth-tracks nested brackets)
-      const contentStart = startIdx + prefixLen;
-      let depth = 1;
-      let i = contentStart;
-      let found = false;
-
-      while (i < this.buffer.length) {
-        if (this.buffer[i] === "[") {
-          depth++;
-        } else if (this.buffer[i] === "]") {
-          depth--;
-          if (depth === 0) {
-            const content = this.buffer.slice(contentStart, i).trim();
-            if (content) {
-              if (isBot) botTasks.push(content);
-              else hubPosts.push(content);
-            }
-            this.buffer = this.buffer.slice(i + 1);
-            found = true;
-            break;
-          }
-        }
-        i++;
-      }
-
-      if (!found) {
-        // Token is incomplete — keep buffering until more deltas arrive
-        break;
-      }
-    }
-
-    return { cleanDelta, hubPosts, botTasks };
-  }
-
-  /**
-   * Check if the tail of the buffer could be the start of either prefix.
-   * Returns the longest partial match length found, or 0 if none.
-   * Used to hold back text that might be the beginning of a token.
-   */
-  private findPartialPrefix(lowerBuf: string): number {
-    const prefixes = [HUB_PREFIX_LOWER, BOT_TASK_PREFIX_LOWER];
-    let maxLen = 0;
-    for (const prefix of prefixes) {
-      for (let len = Math.min(lowerBuf.length, prefix.length - 1); len >= 1; len--) {
-        if (lowerBuf.slice(-len) === prefix.slice(0, len)) {
-          maxLen = Math.max(maxLen, len);
-          break;
-        }
-      }
-    }
-    return maxLen;
-  }
-
-  /**
-   * At stream end, extract any [HUB-POST: ...] or [BOT-TASK: ...] markers
-   * that were never closed with a `]`. This handles model truncation where
-   * the closing bracket is omitted (common with very long hub posts).
-   *
-   * CONSERVATIVE: only extracts if the unclosed marker is at the very start
-   * of the buffer (after optional whitespace). This prevents extracting
-   * examples like "(e.g., [HUB-POST: ..." that appear mid-sentence.
-   */
-  private extractUnclosed(): void {
-    const trimmed = this.buffer.trimStart();
-    const trimOffset = this.buffer.length - trimmed.length;
-    const lowerBuf = trimmed.toLowerCase();
-
-    const hubIdx = lowerBuf.indexOf(HUB_PREFIX_LOWER);
-    const botIdx = lowerBuf.indexOf(BOT_TASK_PREFIX_LOWER);
-
-    // Only proceed if a marker appears at the very start of (trimmed) buffer
-    const firstMarkerIdx =
-      hubIdx === -1 ? Infinity :
-      botIdx === -1 ? hubIdx :
-      Math.min(hubIdx, botIdx);
-
-    if (firstMarkerIdx !== 0) return;
-
-    let prefixLen: number;
-    let isBot: boolean;
-
-    if (botIdx === 0) {
-      prefixLen = BOT_TASK_PREFIX.length;
-      isBot = true;
-    } else {
-      prefixLen = HUB_PREFIX.length;
-      isBot = false;
-    }
-
-    const afterPrefix = trimmed.slice(prefixLen);
-
-    // If there's a closing bracket anywhere after the marker, normal extract()
-    // would have handled it (or it's a nested bracket inside content).
-    if (afterPrefix.includes("]")) return;
-
-    const content = afterPrefix.trim();
-    if (!content) return;
-
-    // Keep any leading whitespace that was before the marker
-    this.buffer = this.buffer.slice(0, trimOffset);
-
-    if (isBot) {
-      this.pendingBotTasks.push(content);
-    } else {
-      this.pendingHubPosts.push(content);
-    }
-  }
+function drainSendQueue(sessionId: string): void {
+  const queue = pendingSendQueues.get(sessionId);
+  if (!queue || queue.length === 0) return;
+  const next = queue.shift();
+  if (queue.length === 0) pendingSendQueues.delete(sessionId);
+  next?.();
 }
 
-// ---- Task-Done Detection ----
-
-/**
- * Extract [TASK-DONE: description] from hub message text.
- * Returns the description string or null if not found.
- */
-export function extractTaskDone(text: string): string | null {
-  const match = text.match(/\[TASK-DONE:\s*(.*?)\]/i);
-  return match ? match[1].trim() : null;
-}
-
-// ---- Hub System Prompt Builder ----
-
-export function buildHubPromptSection(
-  hubStore: HubStore,
-  sessionStore: SessionStore,
-  forSessionId?: string,
-  forSessionName?: string,
-  compactMode = false,
-  /** TC-5: Last message ID the bot already saw. Enables delta mode — only new messages
-   *  are included as full context, with a summary anchor for previously seen messages. */
-  sinceMessageId?: string
-): string {
-  // Compact mode: fewer messages to reduce input tokens
-  const messageLimit = compactMode ? 5 : 20;
-
-  // TC-5: Use delta-based message fetching when sinceMessageId is provided
-  let recentMessages: ReturnType<typeof hubStore.getRecent>;
-  let deltaAnchor = "";
-
-  if (sinceMessageId && forSessionId && forSessionName) {
-    const delta = hubStore.getRecentForSessionDelta(
-      messageLimit, forSessionId, forSessionName, sinceMessageId
-    );
-    recentMessages = delta.newMessages;
-    if (delta.previousCount > 0) {
-      deltaAnchor = `\n[Context: ${delta.previousCount} previous message(s) already reviewed. ${recentMessages.length} new message(s) below.]`;
-    }
-  } else if (forSessionId && forSessionName) {
-    recentMessages = hubStore.getRecentForSession(messageLimit, forSessionId, forSessionName);
-  } else {
-    recentMessages = hubStore.getRecent(messageLimit);
-  }
-
-  // Compact mode: minimal instructions for poll checks and routine ops
-  if (compactMode) {
-    let section = `\n\n--- HUB ---
-You are in COMPACT MODE. Respond in under 100 tokens unless the task requires more.
-Skip preamble, context-setting, and sign-offs. Do not restate the question or assignment.
-If no action needed: [NO-ACTION]. If action needed: do it immediately.
-Post via [HUB-POST: ...]. Task completions: [TASK-DONE: description].
-Escalate: [HUB-POST: @You 🚨🚨🚨 APPROVAL NEEDED: <what>]
-For internal coordination, use [BOT-TASK: @BotName message] — routes directly, invisible to user.
-You may spin up sub-agents using the Agent tool when parallel work helps.`;
-
-    if (deltaAnchor) section += deltaAnchor;
-
-    if (recentMessages.length > 0) {
-      section += "\n";
-      for (const msg of recentMessages) {
-        section += `\n[${msg.from} @ ${msg.timestamp}]: ${msg.text}`;
-      }
-    }
-    section += "\n--- END HUB ---";
-    return section;
-  }
-
-  let section = `\n\n--- HUB (shared awareness feed) ---
-The Hub is a shared message board for visibility.
-To post a new message to the Hub, include [HUB-POST: your message here] anywhere in your response.
-Use [HUB-POST: ...] for: task completions, escalations, blockers, or anything the user needs to see.
-When you complete work, include [TASK-DONE: brief description] inside your hub post.
-If you are stuck or blocked, say so.
-
-You may spin up sub-agents using the Agent tool when parallel work helps.
-You may also use [BOT-TASK: @BotName message] to delegate to another bot session if one exists.
-
-IMPORTANT — Escalation:
-- If you need human approval or are blocked on something only the user can resolve, post to the Hub with this exact format:
-  [HUB-POST: @You 🚨🚨🚨 APPROVAL NEEDED: <description of what you need>]
-- Do NOT silently wait. Always escalate visibly.
-
-IMPORTANT — Token Efficiency:
-- When posting to the Hub, keep it under 50 tokens. No pleasantries, no restating what was already said.
-- Status updates: state only what changed and what's next. Skip context the reader already has.
-- Acknowledgments: "Acknowledged" or "Confirmed" is sufficient. Do not restate the assignment.
-- [NO-ACTION] responses: respond with exactly "[NO-ACTION]" — no explanation needed.
-- Never open with "Great question!", "Absolutely!", "Thanks for the update!" or similar filler.`;
-
-  if (deltaAnchor) section += deltaAnchor;
-
-  if (recentMessages.length > 0) {
-    section += "\n";
-    for (const msg of recentMessages) {
-      section += `\n[${msg.from} @ ${msg.timestamp}]: ${msg.text}`;
-    }
-  }
-
-  section += "\n--- END HUB ---";
-
-  // TC-4: Compress hub context before injection to reduce token usage.
-  // Respects config flags — disabled via COMPRESSION_ENABLED=false.
-  if (config.compressionEnabled) {
-    const level = config.compressionLevel;
-    const audit = config.compressionAudit;
-    // TC-2: Load compressor config for exclusion patterns + safety limits
-    const compressorConfig = loadCompressorConfig(config.compressorConfigFile);
-    const result = compress(section, level, { audit }, compressorConfig);
-
-    if (audit && result.audit) {
-      console.log(
-        `[token-compressor] Hub context compressed: ratio=${result.audit.ratio}, ` +
-        `removed=${result.audit.removed.length} items, level=${level}`
-      );
-      for (const entry of result.audit.removed) {
-        console.log(`  [${entry.strategy}] ${entry.reason}`);
-      }
-    }
-
-    return result.compressed;
-  }
-
-  return section;
-}
 
 // ---- Socket Handler ----
 
@@ -436,11 +123,8 @@ export function setupSocketHandler(
   store: SessionStore,
   skillCatalog: SkillCatalog,
   chatStore: ChatStore,
-  hubStore: HubStore,
-  mentionRouter: MentionRouter,
   tokenLogger?: TokenLogger,
-  quickTaskStore?: import("../projects/quick-task-store.js").QuickTaskStore,
-  approvalStore?: import("../hub/approval-store.js").ApprovalStore
+  subagentManager?: SubagentManager
 ): void {
   // ---- Auth middleware (rate-limited + constant-time comparison) ----
   io.use((socket, next) => {
@@ -489,7 +173,7 @@ export function setupSocketHandler(
 
   // ---- Core message send pipeline ----
   // Extracted from the message:send socket handler so it can be called both
-  // directly (session idle) and via mentionRouter.queueDirectMessage (session was busy).
+  // directly (session idle) and via queueDirectMessage (session was busy).
   // All deps are closed over from setupSocketHandler scope — no `socket` needed here
   // since every emission uses io.to(sessionId) (room broadcast).
   async function handleMessageSend(
@@ -554,9 +238,6 @@ export function setupSocketHandler(
     let assistantCost: number | undefined;
     let assistantDurationMs: number | undefined;
 
-    // Hub post detector for this stream
-    const hubDetector = new HubPostDetector();
-
     // Tracks whether the last error emitted was a repeat, so tier-escalation
     // retries don't render the same "Not logged in" (or any other) message
     // two or three times in a row. Also records whether any error seen so
@@ -569,19 +250,10 @@ export function setupSocketHandler(
     // `currentModel` is assigned once the model is selected further down; onEvent
     // is a closure over this same block scope, so by the time the "result" event
     // actually fires (after the child process has been spawned) it will be set.
-    const activeProviderId = getActiveProvider();
+    // S2: the chat's own provider wins; the global setting is only the fallback,
+    // so one chat can run on OpenRouter while another stays native.
+    const activeProviderId = meta.providerId ?? getActiveProvider();
     let currentModel = "";
-
-    // Helper: process extracted hub posts via shared post-processor
-    const handleHubPosts = (posts: string[]) =>
-      processHubPosts(posts, { from: meta.name, sessionId, hubStore, mentionRouter, io, quickTaskStore, approvalStore });
-
-    // Helper: route [BOT-TASK: ...] tokens directly to target bots (no Hub write)
-    const handleBotTasks = (tasks: string[]) => {
-      if (tasks.length > 0) {
-        mentionRouter.processBotTaskContent(tasks, sessionId, meta.name, 0);
-      }
-    };
 
     // Stream callback — translate ParsedEvents into client-expected shapes
     const onEvent = (event: ParsedEvent) => {
@@ -594,26 +266,18 @@ export function setupSocketHandler(
 
         case "delta": {
           // Subagent text (forwarded with --forward-subagent-text) is not the
-          // bot's own answer: it must not join the hub-marker buffer, and it
-          // must not suppress the main message's assistant_complete text.
+          // agent's own answer: it goes to the subagent card, and it must not
+          // suppress the main message's assistant_complete text.
           if (event.parentToolUseId) break;
 
           gotDeltas = true;
 
-          // Run through hub post detector — strips [HUB-POST: ...] and [BOT-TASK: ...] markers
-          const { cleanDelta, hubPosts, botTasks } = hubDetector.feed(event.text);
-
-          if (cleanDelta) {
-            assistantText += cleanDelta;
-            io.to(sessionId).emit("message:stream:delta", {
-              sessionId,
-              messageId: assistantMsgId,
-              delta: cleanDelta,
-            });
-          }
-
-          handleHubPosts(hubPosts);
-          handleBotTasks(botTasks);
+          assistantText += event.text;
+          io.to(sessionId).emit("message:stream:delta", {
+            sessionId,
+            messageId: assistantMsgId,
+            delta: event.text,
+          });
           break;
         }
 
@@ -634,6 +298,16 @@ export function setupSocketHandler(
               parentToolUseId: event.parentToolUseId ?? null,
             },
           });
+          // S1 2e: the MCP shim is never told the id of the tool call it is
+          // servicing, so correlate the card to this block on the server side.
+          if (
+            event.toolName === "spawn_agent" ||
+            event.toolName === "mcp__medusa__spawn_agent"
+          ) {
+            const input = event.input as { task?: unknown } | undefined;
+            const task = typeof input?.task === "string" ? input.task : null;
+            subagentManager?.registerSpawnToolUse(sessionId, event.toolId, task);
+          }
           break;
 
         case "tool_input_delta":
@@ -673,39 +347,20 @@ export function setupSocketHandler(
           if (!gotDeltas) {
             for (const block of event.content) {
               if (block.type === "text" && block.text) {
-                const { cleanDelta, hubPosts, botTasks } = hubDetector.feed(block.text);
-                if (cleanDelta) {
-                  assistantText += cleanDelta;
-                  io.to(sessionId).emit("message:stream:delta", {
-                    sessionId,
-                    messageId: assistantMsgId,
-                    delta: cleanDelta,
-                  });
-                }
-                handleHubPosts(hubPosts);
-                handleBotTasks(botTasks);
+                assistantText += block.text;
+                io.to(sessionId).emit("message:stream:delta", {
+                  sessionId,
+                  messageId: assistantMsgId,
+                  delta: block.text,
+                });
               }
             }
           }
           break;
 
         case "result": {
-          // Flush any remaining buffered text from the hub detector
-          const remaining = hubDetector.flush();
-          const pendingHub = hubDetector.getPendingHubPosts();
-          const pendingBot = hubDetector.getPendingBotTasks();
-          hubDetector.clearPending();
-          if (pendingHub.length > 0) handleHubPosts(pendingHub);
-          if (pendingBot.length > 0) handleBotTasks(pendingBot);
-          if (remaining) {
-            assistantText += remaining;
-            io.to(sessionId).emit("message:stream:delta", {
-              sessionId,
-              messageId: assistantMsgId,
-              delta: remaining,
-            });
-          }
-
+          // Drop any spawn_agent block that was never claimed by a shim call.
+          subagentManager?.clearSpawnToolUses(sessionId);
           streamEnded = true;
           assistantCost = event.totalCostUsd;
           assistantDurationMs = event.durationMs;
@@ -751,39 +406,38 @@ export function setupSocketHandler(
               messageId: assistantMsgId,
               error: errMsg,
             });
-            // Also post to Hub so errors are visible globally
-            const hubErrMsg = hubStore.add({
-              from: "System",
-              text: `❌ **Error** in ${meta.name}: ${errMsg}`,
-              sessionId: "",
-            });
-            io.emit("hub:message", hubErrMsg);
           }
           break;
         }
       }
     };
 
-    // Build combined system prompt (custom instructions + skills + summary + hub context)
+    // Build combined system prompt (custom instructions + skills + summary)
     const skillsPrompt =
       meta.skills && meta.skills.length > 0
         ? await skillCatalog.buildSkillsPrompt(meta.skills)
         : "";
     const summary = chatStore.loadSummary(sessionId);
-    const hubSection = buildHubPromptSection(hubStore, store, sessionId, meta.name);
 
     let finalSystemPrompt = assembleSystemPrompt(
       meta.systemPrompt || "",
       skillsPrompt,
       summary,
-      hubSection
+      ""
     );
 
-    // TC-4: Compress the assembled system prompt (hub context + summary + instructions).
+    // TC-4: Compress the assembled system prompt (summary + instructions).
     // Uses moderate level — balances token savings with semantic preservation.
     finalSystemPrompt = compress(finalSystemPrompt, "moderate").compressed;
 
+    // S1 2d: hand this chat's Medusa MCP server to every engine spawn. Returns
+    // null when no AUTH_TOKEN is configured, which correctly disables the MCP
+    // server rather than exposing an unauthenticated one.
+    const mcpConfig = descriptorForSession(sessionId) ?? undefined;
+
     try {
+      // S2: per-session engine/provider resolution belongs here; see
+      // server/src/sessions/HANDLER_PATCH.md.
       // Anthropic-compatible custom providers (OpenRouter, etc.) use full model
       // ids (e.g. "openai/gpt-5.1"), not the haiku/sonnet/opus tiers the model
       // router classifies native Claude prompts into, so routing/escalation is
@@ -809,7 +463,9 @@ export function setupSocketHandler(
         meta.yoloMode === true,
         finalSystemPrompt || undefined,
         selectedModel,
-        sanitizedFiles
+        sanitizedFiles,
+        { engineId: meta.engineId, providerId: meta.providerId },
+        mcpConfig
       );
 
       // Escalate to next tier if this tier failed with no output. Not applicable
@@ -831,7 +487,9 @@ export function setupSocketHandler(
             meta.yoloMode === true,
             finalSystemPrompt || undefined,
             nextTier,
-            sanitizedFiles
+            sanitizedFiles,
+            { engineId: meta.engineId, providerId: meta.providerId },
+            mcpConfig
           );
         }
       }
@@ -850,7 +508,9 @@ export function setupSocketHandler(
           meta.yoloMode === true,
           finalSystemPrompt || undefined,
           "opus",
-          sanitizedFiles
+          sanitizedFiles,
+          { engineId: meta.engineId, providerId: meta.providerId },
+          mcpConfig
         );
       }
 
@@ -866,12 +526,6 @@ export function setupSocketHandler(
           messageId: assistantMsgId,
           error: summary,
         });
-        const hubErrMsg = hubStore.add({
-          from: "System",
-          text: `❌ **Error** in ${meta.name}: ${summary}`,
-          sessionId: "",
-        });
-        io.emit("hub:message", hubErrMsg);
       }
     } catch (err: unknown) {
       const message =
@@ -881,27 +535,10 @@ export function setupSocketHandler(
         messageId: assistantMsgId,
         error: message,
       });
-      // Also post to Hub so errors are visible globally
-      const hubErrMsg = hubStore.add({
-        from: "System",
-        text: `❌ **Error** in ${meta.name}: ${message}`,
-        sessionId: "",
-      });
-      io.emit("hub:message", hubErrMsg);
     }
 
     // Always finalize the stream if the parser didn't emit a result event
     if (!streamEnded) {
-      const remaining = hubDetector.flush();
-      const pendingHub = hubDetector.getPendingHubPosts();
-      const pendingBot = hubDetector.getPendingBotTasks();
-      hubDetector.clearPending();
-      if (pendingHub.length > 0) handleHubPosts(pendingHub);
-      if (pendingBot.length > 0) handleBotTasks(pendingBot);
-      if (remaining) {
-        assistantText += remaining;
-      }
-
       io.to(sessionId).emit("message:stream:end", {
         sessionId,
         messageId: assistantMsgId,
@@ -958,7 +595,10 @@ export function setupSocketHandler(
               `[summarization] Session ${sessionId} summarized and trimmed to ${trimmed.length} messages`
             );
             // Reset the session to start fresh on next message
-            processManager.createSession(sessionId, meta.workingDir, true);
+            processManager.createSession(sessionId, meta.workingDir, true, {
+              engineId: meta.engineId,
+              providerId: meta.providerId,
+            });
           })
           .catch((err) => {
             console.error(
@@ -972,8 +612,8 @@ export function setupSocketHandler(
       }
     }
 
-    // Deliver any pending @mentions (or queued direct messages) now that this session is idle
-    mentionRouter.onSessionIdle(sessionId);
+    // Drain any message that was queued while this session was busy.
+    drainSendQueue(sessionId);
   }
 
   // ---- Connection handler ----
@@ -1044,16 +684,19 @@ export function setupSocketHandler(
 
         // Lazily create the process-manager entry if it was lost on restart
         try {
-          processManager.createSession(sessionId, meta.workingDir);
+          processManager.createSession(sessionId, meta.workingDir, undefined, {
+            engineId: meta.engineId,
+            providerId: meta.providerId,
+          });
         } catch {
           // Already exists -- that is fine
         }
 
         // Guard: if the session is already processing, queue the message rather
-        // than dropping it. MentionRouter drains the queue in onSessionIdle so
-        // the user's message is delivered as soon as the bot finishes its current turn.
+        // than dropping it. drainSendQueue() runs it as soon as the current turn
+        // finishes, so the user's message is delivered rather than lost.
         if (processManager.isSessionBusy(sessionId)) {
-          mentionRouter.queueDirectMessage(sessionId, () => {
+          queueDirectMessage(sessionId, () => {
             void handleMessageSend(sessionId, text, images, files);
           });
           socket.emit("message:queued", { sessionId });
@@ -1160,31 +803,16 @@ export function setupSocketHandler(
       }
     );
 
-    // -- User posts to the hub --
+    // -- Stop one subagent from its card's Stop button --
     socket.on(
-      "hub:post",
-      ({ sessionId, text, from, images, files }: { sessionId?: string; text: string; from?: string; images?: string[]; files?: string[] }) => {
-        console.log(`[hub] post received: sessionId=${sessionId ?? "none"} text="${text.slice(0, 80)}"`);
-
-        // sessionId is optional — user posts from the Hub input may not have an active session.
-        const meta = sessionId ? store.get(sessionId) : null;
-        const resolvedFrom = from || meta?.name || "User";
-        const resolvedSessionId = sessionId || "user";
-
-        const hubMsg = hubStore.add({
-          from: resolvedFrom,
-          text,
-          sessionId: resolvedSessionId,
-          ...(images && images.length > 0 ? { images } : {}),
-          ...(files && files.length > 0 ? { files } : {}),
-        });
-
-        // Broadcast to all connected clients
-        console.log(`[hub] broadcasting message: id=${hubMsg.id} from=${hubMsg.from}`);
-        io.emit("hub:message", hubMsg);
-
-        // Route any @mentions
-        mentionRouter.processMessage(hubMsg);
+      "subagent:cancel",
+      ({ sessionId, agentId }: { sessionId: string; agentId: string }) => {
+        if (!subagentManager || !sessionId || !agentId) return;
+        // Scoped by parent session on purpose: a socket may only cancel a
+        // subagent belonging to the chat it names, never another chat's.
+        const record = subagentManager.getForParent(agentId, sessionId);
+        if (!record) return;
+        subagentManager.cancel(agentId);
       }
     );
 
@@ -1192,6 +820,8 @@ export function setupSocketHandler(
     socket.on("message:abort", ({ sessionId }: { sessionId: string }) => {
       const wasBusy = processManager.isSessionBusy(sessionId);
       processManager.abort(sessionId);
+      // A subagent must never outlive its parent turn (spec A.8).
+      subagentManager?.cancelForParent(sessionId);
       // If the process wasn't running (e.g. server restarted and lost it),
       // force the client out of the stuck 'busy' state.
       if (!wasBusy) {

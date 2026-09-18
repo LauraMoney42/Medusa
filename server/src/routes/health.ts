@@ -1,13 +1,13 @@
 import { Router, Request, Response } from "express";
 import type { ProcessManager } from "../claude/process-manager.js";
-import type { HubPollScheduler } from "../hub/poll-scheduler.js";
 import type { Server as IOServer } from "socket.io";
 import config from "../config.js";
+import type { SubagentManager } from "../subagents/manager.js";
 
 export function createHealthRouter(
   processManager: ProcessManager,
-  pollScheduler: HubPollScheduler | null,
-  io: IOServer
+  io: IOServer,
+  subagentManager?: SubagentManager
 ): Router {
   const router = Router();
 
@@ -41,7 +41,7 @@ export function createHealthRouter(
 
     // Trigger the graceful shutdown asynchronously (don't wait)
     setImmediate(() => {
-      gracefulShutdown(processManager, pollScheduler, io);
+      gracefulShutdown(processManager, io, subagentManager);
     });
   });
 
@@ -68,15 +68,14 @@ export function createHealthRouter(
 /**
  * Graceful shutdown sequence:
  * 1. Stop accepting new connections (if we had a server ref, would call server.close())
- * 2. Stop the Hub poll scheduler
- * 3. Wait for active Claude sessions to finish (up to timeout)
- * 4. Notify clients
- * 5. Exit process
+ * 2. Wait for active Claude sessions to finish (up to timeout)
+ * 3. Notify clients
+ * 4. Exit process
  */
 async function gracefulShutdown(
   processManager: ProcessManager,
-  pollScheduler: HubPollScheduler | null,
-  io: IOServer
+  io: IOServer,
+  subagentManager?: SubagentManager
 ): Promise<void> {
   const config = (await import("../config.js")).default;
   const timeout = config.gracefulTimeoutMs || 30000;
@@ -84,11 +83,8 @@ async function gracefulShutdown(
 
   console.log("[shutdown] Starting graceful shutdown...");
 
-  // Stop polling
-  if (pollScheduler) {
-    pollScheduler.stop();
-    console.log("[shutdown] Stopped Hub poll scheduler");
-  }
+  // Subagents are children of a chat's turn; none may outlive the server.
+  subagentManager?.cancelAll();
 
   // Get currently busy sessions
   const busySessions = processManager.getBusySessions();

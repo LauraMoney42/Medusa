@@ -7,15 +7,6 @@ import { SessionStore, type SessionMeta } from "../sessions/store.js";
 import { ProcessManager } from "../claude/process-manager.js";
 import { ChatStore } from "../chat/store.js";
 
-/**
- * Structural type for the per-session cleanup hooks index.ts still passes
- * (the mention router and the poll scheduler). Typed structurally rather than
- * imported so deleting those modules does not break this router.
- */
-interface SessionCleanup {
-  removeSession(id: string): void;
-}
-
 /** Engines Medusa knows how to spawn. */
 const ENGINE_IDS = ["claude", "kimi", "code-puppy"];
 /** Providers whose env Medusa knows how to build. */
@@ -59,9 +50,7 @@ function dedupeName(base: string, existing: SessionMeta[]): string {
 export function createSessionsRouter(
   store: SessionStore,
   processManager: ProcessManager,
-  chatStore: ChatStore,
-  mentionRouter?: SessionCleanup,
-  pollScheduler?: SessionCleanup
+  chatStore: ChatStore
 ): Router {
   const router = Router();
 
@@ -222,9 +211,6 @@ export function createSessionsRouter(
     const id = req.params.id as string;
     processManager.deleteSession(id);
     chatStore.deleteSession(id);
-    // Clean up orphaned Map entries to prevent memory growth
-    mentionRouter?.removeSession(id);
-    pollScheduler?.removeSession(id);
     const removed = store.remove(id);
 
     if (!removed) {

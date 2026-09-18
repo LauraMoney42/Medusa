@@ -24,29 +24,18 @@ import { SessionStore } from "./sessions/store.js";
 import { SkillCatalog } from "./skills/catalog.js";
 import { ChatStore } from "./chat/store.js";
 import { createChatRouter } from "./routes/chat.js";
-import { HubStore } from "./hub/store.js";
-import { MentionRouter } from "./hub/mention-router.js";
-import { createHubRouter } from "./routes/hub.js";
 import { ProjectStore } from "./projects/store.js";
 import { createProjectsRouter } from "./routes/projects.js";
 import { QuickTaskStore } from "./projects/quick-task-store.js";
 import { createQuickTasksRouter } from "./routes/quick-tasks.js";
-import { ApprovalStore } from "./hub/approval-store.js";
-import { createApprovalsRouter } from "./routes/approvals.js";
 import { createCaffeineRouter, shutdownCaffeine } from "./routes/caffeine.js";
 import { createSettingsRouter } from "./routes/settings.js";
 import { createProvidersRouter } from "./routes/providers.js";
 import { createTicTalkRouter } from "./routes/tictalk.js";
-import { TaskSyncManager } from "./projects/task-sync.js";
-import { HubPollScheduler } from "./hub/poll-scheduler.js";
 import { paginateDevlogs } from "./utils/devlog-paginator.js";
-import { autonomousDeliver } from "./claude/autonomous-deliver.js";
 import { TokenLogger } from "./metrics/token-logger.js";
 import { createMetricsRouter } from "./routes/metrics.js";
 import { createOneNoteRouter } from "./routes/onenote.js";
-import { createDevControlRouter } from "./routes/dev-control.js";
-import { devControlStore } from "./dev-control/store.js";
-import { DevControlController } from "./dev-control/controller.js";
 import { startHeadroomProxy, stopHeadroomProxy } from "./headroom/proxy-manager.js";
 import { startWhisperServer, stopWhisperServer } from "./stt/whisper-manager.js";
 import { startTtsServer, stopTtsServer } from "./tts/tts-manager.js";
@@ -55,6 +44,9 @@ import { stopSimulatorStream } from "./cowork/simulator-stream.js";
 import { RunnerManager } from "./runner/runner-manager.js";
 import { createRunnersRouter } from "./routes/runners.js";
 import { createHeadroomRouter } from "./routes/headroom.js";
+import { SubagentManager } from "./subagents/manager.js";
+import { createSubagentsRouter } from "./routes/subagents.js";
+import { getActiveProvider } from "./settings/store.js";
 import { z } from "zod";
 
 // ---- Instantiate shared services ----
@@ -63,10 +55,8 @@ const sessionStore = new SessionStore();
 const skillCatalog = new SkillCatalog(config.skillsCacheDir);
 skillCatalog.initialize().catch(console.error);
 const chatStore = new ChatStore(path.dirname(config.sessionsFile));
-const hubStore = new HubStore(config.hubFile);
 const projectStore = new ProjectStore(config.projectsFile);
 const quickTaskStore = new QuickTaskStore(config.quickTasksFile);
-const approvalStore = new ApprovalStore(config.approvalsFile);
 const tokenLogger = new TokenLogger(config.tokenUsageLogFile);
 
 // Pre-load existing sessions into the process manager so that
@@ -75,7 +65,10 @@ const tokenLogger = new TokenLogger(config.tokenUsageLogFile);
 // the "No conversation found" fallback in process-manager retries with --session-id.
 const allSessions = sessionStore.loadAll();
 for (const meta of allSessions) {
-  processManager.createSession(meta.id, meta.workingDir, false);
+  processManager.createSession(meta.id, meta.workingDir, false, {
+    engineId: meta.engineId,
+    providerId: meta.providerId,
+  });
 }
 
 // Paginate devlog.md files in all session working directories on startup.
@@ -136,21 +129,26 @@ runnerNamespace.use((socket: any, next: (err?: Error) => void) => {
 });
 runnerManager.attach(runnerNamespace);
 
-// MentionRouter needs io for streaming responses to session rooms
-const mentionRouter = new MentionRouter(processManager, sessionStore, hubStore, chatStore, io, tokenLogger, quickTaskStore, approvalStore);
+// ---- Subagents ----
+// One chat = one folder + one engine + one model (spec B.1), so a subagent
+// inherits the parent chat's engine/provider unless the spawn call overrides it.
+// Resolution mirrors ProcessManager.resolveEngine: session engine, then session
+// provider, then the global setting.
+const subagentManager = new SubagentManager({
+  getParent: (sessionId) => {
+    const session = sessionStore.get(sessionId);
+    if (!session) return null;
+    return {
+      workingDir: session.workingDir,
+      engineId: session.engineId ?? session.providerId ?? getActiveProvider() ?? "claude",
+      model: session.model ?? null,
+      yoloMode: session.yoloMode ?? false,
+    };
+  },
+  emit: (sessionId, event, payload) => io.to(sessionId).emit(event, payload),
+});
 
-setupSocketHandler(io, processManager, sessionStore, skillCatalog, chatStore, hubStore, mentionRouter, tokenLogger, quickTaskStore, approvalStore);
-
-// ---- Per-session dev control (pause / interrupt / status) ----
-const devControlController = new DevControlController(
-  devControlStore, processManager, sessionStore, io, chatStore, hubStore, mentionRouter, tokenLogger, quickTaskStore, approvalStore
-);
-
-// ---- Background hub polling + stale assignment tracking ----
-const pollScheduler = new HubPollScheduler(
-  processManager, sessionStore, hubStore, mentionRouter, io, chatStore, tokenLogger, quickTaskStore,
-  devControlStore, devControlController.deliverStatusRequest.bind(devControlController), approvalStore
-);
+setupSocketHandler(io, processManager, sessionStore, skillCatalog, chatStore, tokenLogger, subagentManager);
 
 // ---- P2-2: HTTP rate limiting ----
 // This is a local single-user app — limits are generous to avoid self-DoS.
@@ -179,21 +177,22 @@ const uploadLimiter = rateLimit({
   message: { error: "Upload limit reached — try again later" },
 });
 
-// ---- Routes (now we can reference pollScheduler for shutdown endpoint) ----
+// ---- Routes ----
 app.use("/api/auth", createAuthRouter());
-app.use("/api/health", generalLimiter, createHealthRouter(processManager, pollScheduler, io));
-app.use("/api/sessions", sessionCreateLimiter, createSessionsRouter(sessionStore, processManager, chatStore, mentionRouter, pollScheduler));
+app.use("/api/health", generalLimiter, createHealthRouter(processManager, io, subagentManager));
+app.use("/api/sessions", sessionCreateLimiter, createSessionsRouter(sessionStore, processManager, chatStore));
 app.use("/api/images", uploadLimiter, imagesRouter);
 app.use("/api/files", uploadLimiter, filesRouter);
 app.use("/api/stt", uploadLimiter, sttRouter);
 app.use("/api/tts", generalLimiter, ttsRouter);
 app.use("/api/skills", generalLimiter, createSkillsRouter(skillCatalog));
 app.use("/api/chat", generalLimiter, createChatRouter(chatStore));
-app.use("/api/hub", generalLimiter, createHubRouter(hubStore, io, mentionRouter, sessionStore, approvalStore));
 app.use("/api/projects", generalLimiter, createProjectsRouter(projectStore));
 app.use("/api/quick-tasks", generalLimiter, createQuickTasksRouter(quickTaskStore));
-app.use("/api/approvals", generalLimiter, createApprovalsRouter(approvalStore, hubStore, mentionRouter, io));
 app.use("/api/runners", generalLimiter, createRunnersRouter(runnerManager));
+// `spawn_agent` with wait:true holds this request open for the whole subagent
+// run, so this mount must stay out of any future request-timeout middleware.
+app.use("/api/subagents", generalLimiter, createSubagentsRouter(subagentManager));
 const { metricsRouter, tokenUsageHandler } = createMetricsRouter(tokenLogger);
 app.use("/api/metrics", generalLimiter, metricsRouter);
 // Clean alias: GET /api/token-usage?period=day|week|month (for Token Usage Dashboard)
@@ -202,7 +201,6 @@ app.use("/api/caffeine", generalLimiter, createCaffeineRouter());
 app.use("/api/settings", generalLimiter, createSettingsRouter(processManager, io));
 app.use("/api/providers", generalLimiter, createProvidersRouter());
 app.use("/api/headroom", generalLimiter, createHeadroomRouter());
-app.use("/api/dev-control", generalLimiter, createDevControlRouter(devControlController));
 app.use("/api/onenote", generalLimiter, createOneNoteRouter());
 // TicTalk proxy — forwards TicBuddy/TicTamer iOS app messages to Anthropic Claude API.
 // Has its own stricter rate limiter (20 req/min) since each call hits the paid API.
@@ -224,12 +222,13 @@ async function gracefulShutdown(signal: string) {
   stopTtsServer();
   stopScreencast();
   stopSimulatorStream();
+  // A subagent must never outlive the server that owns its socket room.
+  subagentManager.cancelAll();
 
   // 1. Stop accepting new connections
   server.close();
 
-  // 2. Stop the poll scheduler (no new polls) and release caffeine assertion
-  pollScheduler.stop();
+  // 2. Release the caffeine assertion
   shutdownCaffeine();
 
   // 3. Check for busy sessions
@@ -279,15 +278,14 @@ async function gracefulShutdown(signal: string) {
         clearInterval(check);
         console.log(`[medusa] Timeout (${timeout}ms) — force killing ${stillBusy.length} session(s):`);
 
-        // Persist interrupted session state before killing so AR2 can auto-resume on next startup.
+        // Persist interrupted session state before killing so a future restart
+        // can tell the user what was in flight.
         const interrupted = stillBusy.map((id) => {
-          const meta = sessionStore.get(id);
           const messages = chatStore.loadMessages(id);
-          // Find the last user message — that's the task the bot was working on.
+          // Find the last user message: that's the task the session was working on.
           const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
           return {
             sessionId: id,
-            botName: meta?.name ?? id,
             lastMessageId: lastUserMsg?.id ?? "",
             lastMessageText: lastUserMsg?.text ?? "",
             interruptedAt: new Date().toISOString(),
@@ -333,29 +331,6 @@ app.get("*", (_req, res, next) => {
   });
 });
 
-if (config.hubPolling) {
-  pollScheduler.start();
-  console.log(`[medusa] Hub polling enabled (interval: ${config.hubPollIntervalMs}ms)`);
-}
-
-// ---- Project/Devlog Hygiene: Auto-update projects on [TASK-DONE:] ----
-const taskSyncManager = new TaskSyncManager(projectStore);
-
-// Intercept task:done events to auto-update project assignment statuses.
-// Note: bot:pending-task events are emitted for coordination but not yet hooked
-// to the poll scheduler (trackPendingTask/clearPendingTask don't exist yet).
-// This keeps concerns cleanly separated and is ready for future hibernation features.
-const originalEmit = io.emit.bind(io);
-io.emit = ((event: string, ...args: unknown[]) => {
-  if (event === "task:done") {
-    const task = args[0] as any;
-    if (task) {
-      taskSyncManager.handleTaskDone(task);
-    }
-  }
-  return originalEmit(event, ...args);
-}) as typeof io.emit;
-
 // ---- Free the port if a stale process is holding it ----
 function freePort(port: number): void {
   // Guard: port must be a safe integer in valid range — prevents command injection
@@ -392,12 +367,15 @@ function freePort(port: number): void {
 
 freePort(config.port);
 
-// ---- AR2: Startup detection + auto-re-trigger of interrupted sessions ----
+// ---- Startup cleanup of interrupted-sessions.json ----
+// The multi-bot auto-resume pipeline (autonomousDeliver) is gone: a chat that
+// was force-killed mid-turn is no longer automatically re-sent on the next
+// boot. This just clears the bookkeeping file left behind by a forced
+// shutdown so it doesn't grow stale between restarts.
 
-/** Shape of each entry in interrupted-sessions.json (written by AR1 on forced shutdown). */
+/** Shape of each entry in interrupted-sessions.json (written on forced shutdown). */
 export interface InterruptedSession {
   sessionId: string;
-  botName: string;
   lastMessageId: string;
   lastMessageText: string;
   interruptedAt: string;
@@ -406,7 +384,6 @@ export interface InterruptedSession {
 // P2-6: Zod schema for validating interrupted-sessions.json
 const InterruptedSessionSchema = z.object({
   sessionId: z.string(),
-  botName: z.string(),
   lastMessageId: z.string(),
   lastMessageText: z.string(),
   interruptedAt: z.string(),
@@ -415,14 +392,9 @@ const InterruptedSessionSchema = z.object({
 const InterruptedSessionsFileSchema = z.array(InterruptedSessionSchema);
 
 /**
- * Reads interrupted-sessions.json (if present), re-queues the original user message
- * for each session, then immediately deletes the file to prevent re-triggering on the
- * next restart.
- *
- * Returns the list of entries that were successfully queued — AR3 (Backend Dev) uses
- * this list to post Hub notifications.
- *
- * Called after server.listen() so that `io` is active and clients can receive events.
+ * Reads interrupted-sessions.json (if present), logs what was in flight, then
+ * deletes the file. Called after server.listen() purely for bookkeeping:
+ * there is no automatic resume anymore.
  */
 async function resumeInterruptedSessions(): Promise<InterruptedSession[]> {
   const filePath = config.interruptedSessionsFile;
@@ -436,62 +408,23 @@ async function resumeInterruptedSessions(): Promise<InterruptedSession[]> {
     const raw = fs.readFileSync(filePath, "utf-8");
     entries = InterruptedSessionsFileSchema.parse(JSON.parse(raw));
   } catch (err) {
-    console.error("[medusa] AR2: Failed to read interrupted-sessions.json — skipping auto-resume:", err);
+    console.error("[medusa] Failed to read interrupted-sessions.json, discarding:", err);
+    try {
+      fs.unlinkSync(filePath);
+    } catch {
+      // best-effort cleanup
+    }
     return [];
   }
 
-  // Delete the file immediately — before triggering anything — so a crash mid-resume
-  // cannot cause an infinite re-trigger loop on the next restart.
   try {
     fs.unlinkSync(filePath);
-    console.log("[medusa] AR2: Deleted interrupted-sessions.json");
+    console.log(`[medusa] Deleted interrupted-sessions.json (${entries.length} entr${entries.length === 1 ? "y" : "ies"})`);
   } catch (err) {
-    console.error("[medusa] AR2: Failed to delete interrupted-sessions.json:", err);
-    // Continue anyway — re-triggering is more important than file cleanup failure.
+    console.error("[medusa] Failed to delete interrupted-sessions.json:", err);
   }
 
-  const queued: InterruptedSession[] = [];
-
-  for (const entry of entries) {
-    const { sessionId, botName, lastMessageText } = entry;
-
-    if (!lastMessageText) {
-      console.log(`[medusa] AR2: Skipping ${botName} (${sessionId}) — no lastMessageText`);
-      continue;
-    }
-
-    const meta = sessionStore.get(sessionId);
-    if (!meta) {
-      // Session was deleted between shutdown and restart — skip silently per spec.
-      console.log(`[medusa] AR2: Session ${sessionId} (${botName}) no longer exists — skipping`);
-      continue;
-    }
-
-    const prompt = `[Auto-Resume] Your previous task was interrupted by a server restart. Resuming: ${lastMessageText}`;
-
-    autonomousDeliver({
-      sessionId,
-      prompt,
-      source: "resume",
-      io,
-      processManager,
-      sessionStore,
-      hubStore,
-      chatStore,
-      mentionRouter,
-      tokenLogger,
-      quickTaskStore,
-      approvalStore,
-    }).catch((err) => {
-      console.error(`[medusa] AR2: autonomousDeliver failed for ${botName} (${sessionId}):`, err);
-    });
-
-    console.log(`[medusa] AR2: Queued auto-resume for ${botName} (${sessionId})`);
-    queued.push(entry);
-  }
-
-  console.log(`[medusa] AR2: Queued ${queued.length} / ${entries.length} interrupted session(s) for auto-resume`);
-  return queued;
+  return entries;
 }
 
 // ---- Start listening ----
@@ -524,60 +457,12 @@ server.listen(config.port, config.host, () => {
     io.emit("quick-tasks:updated", tasks);
   });
 
-  // ---- BOT-ANNOUNCE: Post startup announcement for all bot sessions ----
-  // Fixes visibility gap: after server restart / session compaction, bots appear
-  // "dead" to Medusa because they don't auto-announce. This ensures every bot session
-  // posts a "back online" message to Hub on every server start.
+  // Clean up any interrupted-sessions.json left behind by a forced shutdown.
+  // Small delay to let socket handlers settle first.
   setTimeout(() => {
-    const sessions = sessionStore.loadAll();
-    const botSessions = sessions.filter((s) => s.name !== "You" && s.name !== "System");
-    if (botSessions.length > 0) {
-      const botNames = botSessions.map((s) => s.name).join(", ");
-      const announceMsg = hubStore.add({
-        from: "System",
-        text: `🟢 Server restarted. ${botSessions.length} bot(s) online: ${botNames}. All sessions restored.`,
-        sessionId: "",
-      });
-      io.emit("hub:message", announceMsg);
-      console.log(`[medusa] BOT-ANNOUNCE: Posted startup announcement for ${botSessions.length} bot(s)`);
-
-      // Initialize heartbeat tracking for all bot sessions
-      for (const session of botSessions) {
-        pollScheduler.recordHeartbeat(session.id);
-      }
-    }
-  }, 500);
-
-  // AR2 + AR3: Check for interrupted sessions, auto-resume them, then post Hub
-  // notifications for each resumed bot. Small delay to let socket handlers settle.
-  setTimeout(() => {
-    resumeInterruptedSessions()
-      .then((resumed) => {
-        // AR3: Post one Hub message per resumed bot so the team knows what was auto-resumed.
-        for (const entry of resumed) {
-          const preview =
-            entry.lastMessageText.length > 80
-              ? entry.lastMessageText.slice(0, 80) + "..."
-              : entry.lastMessageText;
-
-          const hubMessage = `Resuming interrupted work for ${entry.botName}: "${preview}"`;
-
-          // Use the session's own ID as the Hub message author — Medusa system message.
-          const stored = hubStore.add({
-            from: "Medusa",
-            text: hubMessage,
-            sessionId: entry.sessionId,
-          });
-
-          // Broadcast to all connected clients so the Hub panel updates live.
-          io.emit("hub:message", stored);
-
-          console.log(`[medusa] AR3: Posted Hub notification for ${entry.botName}`);
-        }
-      })
-      .catch((err) => {
-        console.error("[medusa] AR2/AR3: Unhandled error during auto-resume:", err);
-      });
+    resumeInterruptedSessions().catch((err) => {
+      console.error("[medusa] Unhandled error during interrupted-sessions cleanup:", err);
+    });
   }, 1000);
 });
 
