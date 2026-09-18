@@ -79,6 +79,19 @@ describe("POST /api/sessions", () => {
     expect(res.status).toBe(400);
   });
 
+  it("expands a leading tilde to the home directory", async () => {
+    const tilde = "~/" + path.relative(os.homedir(), projectDir);
+    const res = await post({ workingDir: tilde });
+    expect(res.status).toBe(201);
+    expect((await res.json()).workingDir).toBe(projectDir);
+  });
+
+  it("accepts a bare tilde as the home directory", async () => {
+    const res = await post({ workingDir: "~" });
+    expect(res.status).toBe(201);
+    expect((await res.json()).workingDir).toBe(os.homedir());
+  });
+
   it("defaults the title to the folder basename", async () => {
     const res = await post({ workingDir: projectDir });
     expect(res.status).toBe(201);

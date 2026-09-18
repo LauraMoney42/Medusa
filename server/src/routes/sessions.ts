@@ -18,8 +18,17 @@ const PROVIDER_IDS = ["claude", "kimi", "openrouter"];
  */
 function resolveWorkingDir(workingDir: string): string | null {
   // Normalize backslashes to forward slashes (Windows input on Mac)
-  const normalized = workingDir.trim().replace(/\\/g, "/");
+  let normalized = workingDir.trim().replace(/\\/g, "/");
   const homeDir = os.homedir();
+  // Expand a leading "~" the way a shell would. Without this, "~/Documents"
+  // would be treated as a relative path and resolve to "<home>/~/Documents",
+  // which never exists. The New Chat placeholder shows a tilde path, so this
+  // is a common input.
+  if (normalized === "~") {
+    normalized = homeDir;
+  } else if (normalized.startsWith("~/")) {
+    normalized = path.join(homeDir, normalized.slice(2));
+  }
   const resolved = path.isAbsolute(normalized)
     ? path.normalize(normalized)
     : path.resolve(homeDir, normalized);
