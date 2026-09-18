@@ -151,10 +151,15 @@ function installStreamTap(io: IOServer): void {
       const data = packet?.data;
       if (Array.isArray(data) && typeof data[0] === "string" && opts?.rooms?.size) {
         for (const room of opts.rooms) {
-          const session = sessions.get(room);
-          if (session) handleTappedEvent(session, data[0] as string, data[1]);
+          // One voice owner per room: while Live holds the chat, the pipeline
+          // session (if one lingers) must not synthesize the same stream too.
           const live = liveSessions.get(room);
-          if (live) handleTappedLiveEvent(live, data[0] as string, data[1]);
+          if (live) {
+            handleTappedLiveEvent(live, data[0] as string, data[1]);
+          } else {
+            const session = sessions.get(room);
+            if (session) handleTappedEvent(session, data[0] as string, data[1]);
+          }
         }
       }
     } catch (err) {

@@ -164,6 +164,10 @@ export function buildGeminiSetup(
       // The API wants the fully qualified resource name.
       model: model.startsWith("models/") ? model : `models/${model}`,
       generationConfig: {
+        // No thinking for the spoken reply: it adds seconds before the first
+        // word and leaks reasoning text parts. Verified accepted by
+        // gemini-2.5-flash-native-audio-latest (audio only, zero text parts).
+        thinkingConfig: { thinkingBudget: 0 },
         // Audio only: the spoken reply is the reply. The chat text comes from
         // output transcription instead, so there is no second generation to
         // pay for and no risk of the two diverging.
@@ -396,8 +400,11 @@ export class GeminiLiveProvider implements RealtimeVoiceProvider {
             data: String(inline.data),
           });
         } else if (typeof part?.text === "string" && part.text) {
-          assistantText += part.text;
-          opts.onAssistantDelta?.(part.text);
+          // With responseModalities AUDIO, text parts are the model's own
+          // reasoning ("why I chose this tone"), never the reply. The reply's
+          // words arrive as outputTranscription. Forwarding these made Kokoro
+          // read the reasoning aloud over Gemini's voice.
+          opts.onActivity?.("live: model reasoning (not spoken)", part.text.slice(0, 400));
         }
       }
 
