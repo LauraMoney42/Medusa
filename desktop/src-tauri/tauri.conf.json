@@ -25,7 +25,8 @@
       "icons/icon.ico"
     ],
     "externalBin": [
-      "binaries/medusa-server"
+      "binaries/medusa-server",
+      "binaries/medusa-mcp-shim"
     ],
     "resources": [
       "resources/public"

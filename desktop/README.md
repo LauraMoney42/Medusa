@@ -148,6 +148,44 @@ directory, `MEDUSA_STATIC_DIR` at the bundled `resources/public` resource),
 so `desktop/scripts/build-sidecar.sh` now compiles `server/dist/index.js`
 directly - no shim entrypoint needed.
 
+## Subagent MCP shim
+
+The same `import.meta.url` problem above also hit `server/src/mcp/descriptor.ts`'s
+`resolveShimPath()`, which locates the compiled `medusa-mcp-shim.js` (the
+stdio bridge every engine spawns to reach Medusa's subagent tools) the same
+`__dirname`-relative way. Once the server was compiled into a single sidecar
+binary, that path resolved inside the binary's own virtual filesystem - there
+is no real `dist/mcp/medusa-mcp-shim.js` file on disk to hand `node` - so the
+shim never started. The failure mode was worse than a missing feature: an
+engine whose MCP server fails to connect (Kimi in particular) fails its
+*entire* turn with "Failed to connect MCP servers", so the user saw no reply
+at all.
+
+The fix mirrors the server binary's own fix above: compile the shim too.
+`desktop/scripts/build-sidecar.sh` runs a second `bun build --compile
+--target=bun` on `server/dist/mcp/medusa-mcp-shim.js`, producing
+`desktop/src-tauri/binaries/medusa-mcp-shim-<target-triple>`, registered in
+`tauri.conf.json`'s `bundle.externalBin` next to `medusa-server`. In the
+packaged app both binaries land side by side, with the triple suffix
+stripped, in `Contents/MacOS/`.
+
+`src-tauri/src/main.rs`'s `resolve_mcp_shim_path()` resolves that bundled
+binary's real path the same way Tauri resolves `medusa-server` itself
+(`Shell::sidecar("medusa-mcp-shim")`, converted to a `std::process::Command`
+and read back with `.get_program()` - this never actually spawns anything, so
+it needs no `shell:allow-*` capability grant) and passes it to the server
+sidecar as `MEDUSA_MCP_SHIM_BIN`. `server/src/mcp/descriptor.ts` then runs
+that binary directly (`command: <path>, args: []`) instead of `node <shim
+path>` whenever it's set.
+
+If the shim binary is missing for any reason (e.g. a `cargo run` dev build
+with no sidecar build step), this degrades gracefully instead of breaking
+chat: `server/src/mcp/config.ts` `descriptorForSession` checks the resolved
+target actually exists before use, logs one warning, and returns null so
+engines spawn without `--mcp-config` - subagent tools are unavailable for
+that session, but the chat itself still works. The same warning reaches the
+Activity Log as an `activity:event` of kind `"warning"`.
+
 ## Screen/window/region capture
 
 Ported from `app/Sources/WindowPickerController.swift` /

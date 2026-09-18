@@ -37,6 +37,27 @@ export const MCP_ENV = {
   toolsets: "MEDUSA_MCP_TOOLSETS",
 } as const;
 
+/**
+ * Set by desktop/src-tauri/src/main.rs to the absolute path of the bundled
+ * `medusa-mcp-shim` sidecar binary (a `bun build --compile` standalone
+ * executable, built by desktop/scripts/build-sidecar.sh next to
+ * medusa-server). Inside the compiled server sidecar, `resolveShimPath()`'s
+ * `import.meta.url`-relative resolution lands in the bun binary's virtual
+ * filesystem (there is no real `server/dist/mcp/medusa-mcp-shim.js` on disk),
+ * so the shim never starts and every engine's MCP connection fails outright.
+ * When this is set, the descriptor runs the shim binary directly instead of
+ * `node <path>`.
+ */
+const SHIM_BIN_ENV = "MEDUSA_MCP_SHIM_BIN";
+
+/**
+ * Overrides the `node`-launched shim's script path (tests, and any
+ * non-desktop deployment that stages the shim somewhere other than next to
+ * this module). Takes effect only when `MEDUSA_MCP_SHIM_BIN` is unset --
+ * a bundled shim binary needs no `node` and no script path at all.
+ */
+const SHIM_PATH_ENV = "MEDUSA_MCP_SHIM_PATH";
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 
 /**
@@ -50,7 +71,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
  * than as a silently missing MCP server.
  */
 export function resolveShimPath(): string {
-  const override = process.env.MEDUSA_MCP_SHIM_PATH;
+  const override = process.env[SHIM_PATH_ENV];
   if (override) return path.resolve(override);
 
   const sibling = path.join(here, "medusa-mcp-shim.js");
@@ -86,6 +107,23 @@ export function buildMedusaMcpDescriptor(
   };
   if (opts.toolsets && opts.toolsets.length > 0) {
     env[MCP_ENV.toolsets] = opts.toolsets.join(",");
+  }
+
+  // Resolution order for how an engine reaches the shim:
+  //   1. MEDUSA_MCP_SHIM_BIN -- desktop/src-tauri/src/main.rs sets this to
+  //      the bundled `medusa-mcp-shim` sidecar binary's absolute path. Run it
+  //      directly; it needs no `node` and no script argument.
+  //   2. An explicit `command`/`shimPath` override (tests, non-desktop
+  //      deployments) or MEDUSA_MCP_SHIM_PATH -- `node <path>`.
+  //   3. The default `resolveShimPath()` resolution -- `node <path>`.
+  const shimBin = process.env[SHIM_BIN_ENV];
+  if (shimBin) {
+    return {
+      serverName: MEDUSA_MCP_SERVER_NAME,
+      command: path.resolve(shimBin),
+      args: [],
+      env,
+    };
   }
 
   return {

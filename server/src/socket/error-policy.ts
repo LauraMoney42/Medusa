@@ -49,16 +49,32 @@ export class ConsecutiveErrorDeduper {
 }
 
 /**
- * Builds the single summary line shown once every model tier has failed,
- * pointing the user at the exact login command for the config dir Medusa's
- * claude engine actually uses.
+ * Builds the single summary line shown once every model tier has failed.
+ *
+ * The `claude /login` hint only makes sense for an auth error -- no model
+ * tier and no MCP server can fix "not logged in", but the reverse also
+ * holds: telling someone to log back in when the real problem is an MCP
+ * connection failure sends them chasing the wrong fix. So the login
+ * command is appended only when `isAuthError()` recognizes the error;
+ * otherwise the message ends with the error text, plus one extra hint when
+ * the error mentions MCP (the subagent shim failing to start, which fails
+ * the engine's whole turn -- see server/src/mcp/config.ts
+ * descriptorForSession) pointing at the Activity Log instead.
  */
 export function buildAllTiersFailedMessage(
   lastError: string,
   configDir?: string
 ): string {
-  const loginCmd = configDir
-    ? `CLAUDE_CONFIG_DIR=${configDir} claude /login`
-    : "claude /login";
-  return `All models failed: ${lastError}. Run \`${loginCmd}\` in the config dir Medusa uses.`;
+  if (isAuthError(lastError)) {
+    const loginCmd = configDir
+      ? `CLAUDE_CONFIG_DIR=${configDir} claude /login`
+      : "claude /login";
+    return `All models failed: ${lastError}. Run \`${loginCmd}\` in the config dir Medusa uses.`;
+  }
+
+  if (lastError.toLowerCase().includes("mcp")) {
+    return `All models failed: ${lastError}. Subagent tools failed to start; see the Activity Log.`;
+  }
+
+  return `All models failed: ${lastError}.`;
 }

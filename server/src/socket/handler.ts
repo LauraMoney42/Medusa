@@ -491,9 +491,20 @@ export function setupSocketHandler(
     });
 
     // S1 2d: hand this chat's Medusa MCP server to every engine spawn. Returns
-    // null when no AUTH_TOKEN is configured, which correctly disables the MCP
-    // server rather than exposing an unauthenticated one.
-    const mcpConfig = descriptorForSession(sessionId) ?? undefined;
+    // null when no AUTH_TOKEN is configured (an unauthenticated shim would let
+    // any local process drive subagents) or when the shim itself can't
+    // actually be launched (e.g. a desktop sidecar build with no bundled
+    // shim binary) -- the latter case also surfaces one "warning" Activity
+    // Log line explaining why subagents are off for this session.
+    const mcpConfig =
+      descriptorForSession(sessionId, {}, (message) => {
+        io.to(sessionId).emit("activity:event", {
+          sessionId,
+          ts: new Date().toISOString(),
+          kind: "warning",
+          summary: message,
+        });
+      }) ?? undefined;
 
     try {
       // S2: per-session engine/provider resolution belongs here; see

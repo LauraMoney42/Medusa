@@ -71,4 +71,31 @@ describe("buildAllTiersFailedMessage", () => {
     const msg = buildAllTiersFailedMessage("Not logged in", "/Users/me/.claude-account2");
     expect(msg).toContain("CLAUDE_CONFIG_DIR=/Users/me/.claude-account2 claude /login");
   });
+
+  it("does not append the login command for a non-auth error", () => {
+    const msg = buildAllTiersFailedMessage("Prompt is too long");
+    expect(msg).toBe("All models failed: Prompt is too long.");
+    expect(msg).not.toContain("claude /login");
+    expect(msg).not.toContain("CLAUDE_CONFIG_DIR=");
+  });
+
+  it("does not append the login command for a non-auth error even with a config dir", () => {
+    const msg = buildAllTiersFailedMessage("exceeded model token limit", "/Users/me/.claude-account2");
+    expect(msg).not.toContain("claude /login");
+  });
+
+  it("points at the Activity Log when the error mentions MCP", () => {
+    const msg = buildAllTiersFailedMessage(
+      "Failed to connect MCP servers: {'medusa': McpError('Connection closed')}"
+    );
+    expect(msg).toBe(
+      "All models failed: Failed to connect MCP servers: {'medusa': McpError('Connection closed')}. Subagent tools failed to start; see the Activity Log."
+    );
+    expect(msg).not.toContain("claude /login");
+  });
+
+  it("is case-insensitive when detecting MCP in the error", () => {
+    const msg = buildAllTiersFailedMessage("mcp server crashed");
+    expect(msg).toContain("Subagent tools failed to start; see the Activity Log.");
+  });
 });

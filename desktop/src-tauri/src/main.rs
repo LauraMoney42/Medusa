@@ -35,6 +35,37 @@ fn resolve_public_dir(app: &AppHandle) -> Option<std::path::PathBuf> {
         .filter(|p| p.exists())
 }
 
+/// Resolves the bundled `medusa-mcp-shim` sidecar binary's absolute path, the
+/// same way Tauri itself resolves the `medusa-server` sidecar it spawns
+/// below (relative to the current executable's directory -- Contents/MacOS
+/// on macOS -- with the target-triple suffix stripped for a packaged
+/// bundle). Passed to the server sidecar as MEDUSA_MCP_SHIM_BIN.
+///
+/// Why this can't just be `resolve_public_dir`'s BaseDirectory::Resource
+/// trick: sidecar binaries live in bundle.externalBin, not bundle.resources,
+/// and Tauri's `Shell::sidecar()` is the one place that already knows how to
+/// turn "medusa-mcp-shim" into that real path (see
+/// desktop/scripts/build-sidecar.sh for how the triple-suffixed binary gets
+/// there). `Command::new_sidecar` only resolves a path -- it does not touch
+/// the process -- so `.into::<std::process::Command>()` reads that resolved
+/// program back out without ever spawning it, and needs no `shell:allow-*`
+/// capability grant (those gate the frontend's `invoke` commands, not
+/// backend Rust calls into the plugin's Rust API).
+fn resolve_mcp_shim_path(app: &AppHandle) -> Option<std::path::PathBuf> {
+    let command = app.shell().sidecar("medusa-mcp-shim").ok()?;
+    let std_command: std::process::Command = command.into();
+    let path = std::path::PathBuf::from(std_command.get_program());
+    if path.exists() {
+        Some(path)
+    } else {
+        eprintln!(
+            "[medusa-desktop] medusa-mcp-shim sidecar not found at {}; subagent tools will be unavailable",
+            path.display()
+        );
+        None
+    }
+}
+
 /// Resolves a real, writable, per-user directory for the server's runtime
 /// data (uploads/, default-bots.json, and the auto-generated .env), passed
 /// as MEDUSA_DATA_DIR / MEDUSA_ENV_FILE. Falls back to a fixed path under
@@ -169,6 +200,19 @@ fn start_sidecar_and_navigate(app: &AppHandle, port: u16, auth_token: String) {
     // build`/`tauri dev` resource copy step having run yet), the server
     // falls back to its own default (server/dist/public, next to the
     // compiled sidecar) -- see server/src/config.ts.
+
+    // MEDUSA_MCP_SHIM_BIN tells server/src/mcp/descriptor.ts to hand engines
+    // this bundled binary directly instead of `node <shim path>` -- inside
+    // the compiled server sidecar that script path resolves inside its own
+    // virtual filesystem, so `node` can never find it and every engine's MCP
+    // connection (and with it, the whole turn) fails. If the shim binary is
+    // missing (e.g. a `cargo run` dev build with no sidecar build step),
+    // this is left unset and server/src/mcp/config.ts's descriptorForSession
+    // degrades gracefully: it logs a warning and spawns engines without
+    // --mcp-config rather than failing chat entirely.
+    if let Some(shim_path) = resolve_mcp_shim_path(app) {
+        command = command.env("MEDUSA_MCP_SHIM_BIN", shim_path.to_string_lossy().to_string());
+    }
 
     let data_dir = resolve_data_dir(app);
     command = command

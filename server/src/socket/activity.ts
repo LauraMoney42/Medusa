@@ -24,7 +24,8 @@ export type ActivityKind =
   | "subagent_text"
   | "subagent_tool"
   | "subagent_tool_result"
-  | "subagent_end";
+  | "subagent_end"
+  | "warning";
 
 /**
  * Details longer than this are clipped before they hit the wire. The Activity

@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
-# build-sidecar.sh -- Build server/ and compile it into a single Tauri
-# sidecar binary at desktop/src-tauri/binaries/medusa-server-<target-triple>.
+# build-sidecar.sh -- Build server/ and compile it into two Tauri sidecar
+# binaries: desktop/src-tauri/binaries/medusa-server-<target-triple> and
+# medusa-mcp-shim-<target-triple>.
 #
 # Tauri requires externalBin binaries to be named with the host's Rust
 # target triple suffix (see desktop/src-tauri/tauri.conf.json ->
 # bundle.externalBin). This script figures out the triple, builds the
 # Node/TS server, and compiles server/dist into one binary:
 #   - bun build --compile (bun is required; pkg cannot run this ESM server).
+# It then does the same for server/dist/mcp/medusa-mcp-shim.js, so the MCP
+# shim engines spawn to reach Medusa's subagent tools also has a real,
+# standalone binary rather than a `node <script>` pair whose script path
+# would otherwise resolve inside the server binary's own virtual filesystem.
 #
 # Usage:
 #   bash desktop/scripts/build-sidecar.sh
@@ -110,8 +115,41 @@ if [ ! -f "$OUT_BIN" ]; then
 fi
 
 chmod +x "$OUT_BIN"
+
+# --- 5. Compile the MCP shim into its own sidecar binary --------------------
+# server/src/mcp/descriptor.ts's resolveShimPath() resolves the shim script's
+# path relative to import.meta.url. Inside THIS compiled binary that resolves
+# inside the bun binary's own virtual filesystem (there is no real
+# server/dist/mcp/medusa-mcp-shim.js on disk), so `node <that path>` fails and
+# the shim never starts -- every engine's MCP connection then fails outright
+# and Kimi/Claude fail their whole turn ("Failed to connect MCP servers").
+# The fix is the same one step 4 above already applies to the server itself:
+# compile the shim too, as its own standalone binary that needs no `node` and
+# no on-disk script file. desktop/src-tauri/src/main.rs resolves this
+# binary's bundled path and passes it to the server sidecar as
+# MEDUSA_MCP_SHIM_BIN; server/src/mcp/descriptor.ts then runs it directly
+# instead of `node <shim path>` (see its MEDUSA_MCP_SHIM_BIN handling).
+SHIM_ENTRY="$SERVER_DIR/dist/mcp/medusa-mcp-shim.js"
+SHIM_OUT_BIN="$BIN_DIR/medusa-mcp-shim-$TARGET_TRIPLE"
+
+if [ ! -f "$SHIM_ENTRY" ]; then
+  echo "error: $SHIM_ENTRY not found after server build." >&2
+  exit 1
+fi
+
+echo "compiling MCP shim sidecar with $BUN..."
+"$BUN" build --compile --target=bun "$SHIM_ENTRY" --outfile "$SHIM_OUT_BIN"
+
+if [ ! -f "$SHIM_OUT_BIN" ]; then
+  echo "error: MCP shim sidecar was not produced at $SHIM_OUT_BIN" >&2
+  exit 1
+fi
+
+chmod +x "$SHIM_OUT_BIN"
+
 echo ""
 echo "Sidecar built: $OUT_BIN"
+echo "MCP shim sidecar built: $SHIM_OUT_BIN"
 echo "Public assets staged at: $RESOURCES_DIR/public"
-echo "Registered in desktop/src-tauri/tauri.conf.json as bundle.externalBin: [\"binaries/medusa-server\"]"
+echo "Registered in desktop/src-tauri/tauri.conf.json as bundle.externalBin: [\"binaries/medusa-server\", \"binaries/medusa-mcp-shim\"]"
 echo "                                                and bundle.resources: [\"resources/public\"]"
