@@ -70,6 +70,28 @@ function fakeSocket() {
   return { socket: socket as unknown as Socket, fire, joined, listeners };
 }
 
+/**
+ * Only the handful of ProcessManager methods the voice layer touches.
+ * `setWarmMode`/`isWarmMode` are the S16 warm-engine hooks: voice:start asks
+ * for warm mode, voice:stop gives it back.
+ */
+function fakeProcessManager(
+  over: Partial<{
+    isSessionBusy: (id: string) => boolean;
+    abort: (id: string) => void;
+    setWarmMode: (id: string, warm: boolean) => string | null;
+    isWarmMode: (id: string) => boolean;
+  }> = {}
+): ProcessManager {
+  return {
+    isSessionBusy: () => false,
+    abort: vi.fn(),
+    setWarmMode: vi.fn(() => "kimi-warm"),
+    isWarmMode: () => true,
+    ...over,
+  } as unknown as ProcessManager;
+}
+
 function fakeStore(meta: Partial<SessionMeta> & { id: string }) {
   const session = {
     name: "chat",
@@ -122,7 +144,7 @@ describe("registerVoiceHandlers", () => {
     const { store } = fakeStore({ id: "s1" });
     registerVoiceHandlers(io, socket, {
       store,
-      processManager: {} as unknown as ProcessManager,
+      processManager: fakeProcessManager(),
       sendMessage: async () => undefined,
     });
 
@@ -141,7 +163,7 @@ describe("registerVoiceHandlers", () => {
     const { store } = fakeStore({ id: "s1" });
     registerVoiceHandlers(io, socket, {
       store,
-      processManager: {} as unknown as ProcessManager,
+      processManager: fakeProcessManager(),
       sendMessage: async () => undefined,
     });
     fire("voice:start", { sessionId: "nope" });
@@ -167,10 +189,7 @@ describe("registerVoiceHandlers", () => {
 
     registerVoiceHandlers(io, socket, {
       store,
-      processManager: {
-        isSessionBusy: () => false,
-        abort: vi.fn(),
-      } as unknown as ProcessManager,
+      processManager: fakeProcessManager({ isSessionBusy: () => false }),
       sendMessage,
     });
 
@@ -210,10 +229,7 @@ describe("registerVoiceHandlers", () => {
     });
     registerVoiceHandlers(io, socket, {
       store,
-      processManager: {
-        isSessionBusy: () => false,
-        abort: vi.fn(),
-      } as unknown as ProcessManager,
+      processManager: fakeProcessManager({ isSessionBusy: () => false }),
       sendMessage,
     });
 
@@ -235,7 +251,7 @@ describe("registerVoiceHandlers", () => {
     const abort = vi.fn();
     registerVoiceHandlers(io, socket, {
       store,
-      processManager: { isSessionBusy: () => true, abort } as unknown as ProcessManager,
+      processManager: fakeProcessManager({ isSessionBusy: () => true, abort }),
       sendMessage: async () => undefined,
     });
 
@@ -260,7 +276,7 @@ describe("registerVoiceHandlers", () => {
     const { store } = fakeStore({ id: "s1" });
     registerVoiceHandlers(io, socket, {
       store,
-      processManager: {} as unknown as ProcessManager,
+      processManager: fakeProcessManager(),
       sendMessage: async () => undefined,
     });
     fire("voice:start", { sessionId: "s1" });

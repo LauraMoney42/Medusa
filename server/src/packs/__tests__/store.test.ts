@@ -164,6 +164,12 @@ describe("export and import round trip", () => {
       vadSensitivity: 0.5,
       silenceTimeoutMs: 600,
       interruptBehavior: "abort",
+      warmEngine: true,
+      partials: "local",
+      speculativeStart: true,
+      firstClauseAudio: true,
+      liveMode: false,
+      liveProvider: "openai-realtime",
     });
     writeToolbox({
       servers: [{ id: "git", label: "Git", detail: "", enabled: true, scope: "read" }],

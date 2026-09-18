@@ -227,6 +227,44 @@ export interface AcpEngineOptions {
    * config file so the agent's first-run wizard never blocks on stdin.
    */
   prepare?: () => void;
+  /**
+   * Warm mode (S16). Keep one agent process alive per Medusa session and reuse
+   * it for every turn, instead of spawning and tearing one down per prompt.
+   * That is what removes the interpreter start-up and the ACP handshake from
+   * the user-visible latency of a spoken turn: measured against kimi-cli
+   * 1.47, a cold `kimi --print` turn takes about 3 to 5 s before its first
+   * output byte while a warm `kimi acp` turn streams its first token in about
+   * 2 s. Off by default, so every existing engine behaves exactly as before.
+   */
+  persistent?: boolean;
+}
+
+/**
+ * The two per-turn callbacks, held behind one mutable object so a single
+ * long-lived `AcpConnection` can serve many turns: each turn swaps in its own
+ * closures and the connection itself never has to be rebuilt.
+ */
+interface AcpTurnRouter {
+  update: (params: Record<string, unknown>) => void;
+  request: (method: string, params: Record<string, unknown>) => Promise<unknown>;
+}
+
+/** One warm agent process, reused across turns of a single Medusa session. */
+interface WarmAcpSession {
+  child: ChildProcess;
+  conn: AcpConnection;
+  router: AcpTurnRouter;
+  exited: Promise<number | null>;
+  acpSessionId: string | null;
+  cwd: string;
+  /** Cleared as soon as the child exits, so the next turn respawns. */
+  alive: boolean;
+  /** True from an abort() until the turn it cancelled has unwound. */
+  cancelled: boolean;
+  canImage: boolean;
+  agentName: string;
+  /** True once initialize + session/new have been answered. */
+  ready: boolean;
 }
 
 const TERMINAL_TOOL_STATUSES = new Set(["completed", "failed"]);
@@ -261,6 +299,37 @@ export class AcpEngine implements Engine {
     { conn: AcpConnection; acpSessionId: string | null }
   >();
 
+  /** Warm agent processes, keyed by Medusa session id. Empty unless `persistent`. */
+  private readonly warm = new Map<string, WarmAcpSession>();
+
+  /** True when this session currently holds a live warm process. */
+  isWarm(sessionId: string): boolean {
+    return this.warm.get(sessionId)?.alive === true;
+  }
+
+  /** Drop one warm process (session ended, folder changed, or it died). */
+  closeWarm(sessionId: string): void {
+    const entry = this.warm.get(sessionId);
+    if (!entry) return;
+    this.warm.delete(sessionId);
+    entry.alive = false;
+    try {
+      entry.conn.close("warm session closed");
+    } catch {
+      // Already closed.
+    }
+    try {
+      entry.child.kill("SIGTERM");
+    } catch {
+      // Already gone.
+    }
+  }
+
+  /** Every warm process this engine holds (server shutdown). */
+  closeAllWarm(): void {
+    for (const id of [...this.warm.keys()]) this.closeWarm(id);
+  }
+
   constructor(options: AcpEngineOptions) {
     this.options = options;
     this.id = options.id;
@@ -285,6 +354,21 @@ export class AcpEngine implements Engine {
       } catch {
         // Best effort; the SIGTERM below is the real guarantee.
       }
+    }
+    // In warm mode `session/cancel` IS the abort: killing the process would
+    // throw away the very thing warm mode exists to keep, and barge-in aborts
+    // a spoken turn constantly. The turn's own `session/prompt` resolves with
+    // a cancelled stop reason and the process stays ready for the next one.
+    //
+    // The flag matters for an abort that lands DURING the handshake, which is
+    // exactly what a speculative start that gets corrected produces: there is
+    // no ACP session to cancel yet, so the turn checks this before it sends
+    // its prompt.
+    const warm = this.warm.get(sessionId);
+    if (warm?.alive) {
+      warm.cancelled = true;
+      state.process = null;
+      return;
     }
     abortChildProcess(state, sessionId);
   }
@@ -349,24 +433,112 @@ export class AcpEngine implements Engine {
       console.warn(`${logPrefix} prepare() failed:`, err);
     }
 
-    const child = spawn(this.resolveBinary(), this.options.args ?? [], {
-      cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, ...this.options.env },
-    });
+    // Warm mode (S16): reuse this session's agent process when it is still
+    // alive and pointed at the same folder. A `forceNew` turn (the retry
+    // paths) deliberately starts over.
+    let warm = this.options.persistent ? this.warm.get(sessionId) : undefined;
+    if (warm && (!warm.alive || warm.cwd !== cwd || forceNew)) {
+      this.closeWarm(sessionId);
+      warm = undefined;
+    }
+    const reusing = Boolean(warm);
+
+    // Each turn writes its own closures into this object; the connection's
+    // handlers only ever see the router, so they survive across turns.
+    const router: AcpTurnRouter = warm?.router ?? {
+      update: () => {},
+      request: async () => {
+        throw new AcpRpcError(RPC_METHOD_NOT_FOUND, "no active turn");
+      },
+    };
+
+    let child: ChildProcess;
+    let conn: AcpConnection;
+    let exited: Promise<number | null>;
+    let stderrText = "";
+
+    if (warm) {
+      child = warm.child;
+      conn = warm.conn;
+      exited = warm.exited;
+    } else {
+      child = spawn(this.resolveBinary(), this.options.args ?? [], {
+        cwd,
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, ...this.options.env },
+      });
+
+      // ACP agents log to stderr on purpose ("stdout is sacred"), so stderr is
+      // diagnostic noise, not an error channel. Only surface it if the run fails.
+      child.stderr?.on("data", (chunk: Buffer) => {
+        const s = chunk.toString("utf-8");
+        stderrText += s;
+        console.log(`${logPrefix} stderr: ${s.trimEnd()}`);
+      });
+
+      conn = new AcpConnection(
+        child,
+        {
+          onNotification: (method, params) => {
+            if (method === "session/update") router.update(params);
+          },
+          onRequest: (method, params) => router.request(method, params),
+        },
+        logPrefix
+      );
+
+      // Resolves with the child's exit code once it is gone.
+      exited = new Promise<number | null>((resolve) => {
+        child.on("close", (code) => {
+          state.process = null;
+          const entry = this.warm.get(sessionId);
+          if (entry?.child === child) {
+            entry.alive = false;
+            this.warm.delete(sessionId);
+          }
+          conn.close(
+            `${this.displayName} exited (code ${code})` +
+              (stderrText.trim() ? `: ${stderrText.trim().slice(-500)}` : "")
+          );
+          resolve(code);
+        });
+        child.on("error", (err) => {
+          state.process = null;
+          const entry = this.warm.get(sessionId);
+          if (entry?.child === child) {
+            entry.alive = false;
+            this.warm.delete(sessionId);
+          }
+          conn.close(`${this.displayName} failed to start: ${err.message}`);
+          resolve(null);
+        });
+      });
+
+      // Registered before the handshake, not after it: an abort that arrives
+      // while the agent is still starting up must find this entry, or the
+      // shared teardown below would kill the process warm mode just started.
+      if (this.options.persistent) {
+        warm = {
+          child,
+          conn,
+          router,
+          exited,
+          acpSessionId: null,
+          cwd,
+          alive: true,
+          cancelled: false,
+          canImage: false,
+          agentName: this.id,
+          ready: false,
+        };
+        this.warm.set(sessionId, warm);
+      }
+    }
+    if (warm) warm.cancelled = false;
     state.process = child;
 
-    // ACP agents log to stderr on purpose ("stdout is sacred"), so stderr is
-    // diagnostic noise, not an error channel. Only surface it if the run fails.
-    let stderrText = "";
-    child.stderr?.on("data", (chunk: Buffer) => {
-      const s = chunk.toString("utf-8");
-      stderrText += s;
-      console.log(`${logPrefix} stderr: ${s.trimEnd()}`);
-    });
-
     // --- per-turn translation state -------------------------------------
-    let acpSessionId: string | null = null;
+    let acpSessionId: string | null = warm?.acpSessionId ?? null;
     /**
      * session/load replays the whole conversation history back as
      * session/update notifications. Suppress them so old turns aren't
@@ -587,34 +759,10 @@ export class AcpEngine implements Engine {
       }
     };
 
-    const conn = new AcpConnection(
-      child,
-      {
-        onNotification: (method, params) => {
-          if (method === "session/update") handleSessionUpdate(params);
-        },
-        onRequest: handleRequest,
-      },
-      logPrefix
-    );
-    this.live.set(sessionId, { conn, acpSessionId: null });
-
-    // Resolves with the child's exit code once it is gone.
-    const exited = new Promise<number | null>((resolve) => {
-      child.on("close", (code) => {
-        state.process = null;
-        conn.close(
-          `${this.displayName} exited (code ${code})` +
-            (stderrText.trim() ? `: ${stderrText.trim().slice(-500)}` : "")
-        );
-        resolve(code);
-      });
-      child.on("error", (err) => {
-        state.process = null;
-        conn.close(`${this.displayName} failed to start: ${err.message}`);
-        resolve(null);
-      });
-    });
+    // Hand this turn's closures to the (possibly long-lived) connection.
+    router.update = handleSessionUpdate;
+    router.request = handleRequest;
+    this.live.set(sessionId, { conn, acpSessionId });
 
     let resultEmitted = false;
     const emitResult = (success: boolean, error?: string) => {
@@ -624,25 +772,37 @@ export class AcpEngine implements Engine {
     };
 
     try {
-      // 1. initialize
-      const init = await this.race<AcpInitializeResult>(
-        conn.request<AcpInitializeResult>("initialize", {
-          protocolVersion: 1,
-          clientCapabilities: {
-            fs: { readTextFile: true, writeTextFile: true },
-            terminal: false,
-          },
-          clientInfo: { name: "medusa", title: "Medusa", version: "1.0.0" },
-        }),
-        exited
-      );
+      // 1. initialize. Skipped on a warm turn: the handshake already happened
+      //    and its answers are cached on the warm entry.
+      let canLoad = false;
+      let canImage = warm?.canImage ?? false;
+      let agentName = warm?.agentName ?? this.id;
 
-      const canLoad = init?.agentCapabilities?.loadSession === true;
-      const canImage = init?.agentCapabilities?.promptCapabilities?.image === true;
+      if (!reusing) {
+        const init = await this.race<AcpInitializeResult>(
+          conn.request<AcpInitializeResult>("initialize", {
+            protocolVersion: 1,
+            clientCapabilities: {
+              fs: { readTextFile: true, writeTextFile: true },
+              terminal: false,
+            },
+            clientInfo: { name: "medusa", title: "Medusa", version: "1.0.0" },
+          }),
+          exited
+        );
+
+        canLoad = init?.agentCapabilities?.loadSession === true;
+        canImage = init?.agentCapabilities?.promptCapabilities?.image === true;
+        agentName = init?.agentInfo?.name ?? this.id;
+      }
 
       // 2. session/new or session/load
-      const previous = forceNew ? undefined : this.acpSessions.get(sessionId);
-      if (previous && canLoad) {
+      const previous = acpSessionId ?? (forceNew ? undefined : this.acpSessions.get(sessionId));
+      if (reusing && previous) {
+        // The warm process still holds this ACP session in memory: no
+        // session/load, no history replay, straight to the prompt.
+        acpSessionId = previous;
+      } else if (previous && canLoad) {
         replaying = true;
         try {
           await this.race(
@@ -683,18 +843,33 @@ export class AcpEngine implements Engine {
       const liveEntry = this.live.get(sessionId);
       if (liveEntry) liveEntry.acpSessionId = acpSessionId;
 
+      if (warm) {
+        warm.acpSessionId = acpSessionId;
+        warm.canImage = canImage;
+        warm.agentName = agentName;
+        warm.ready = true;
+      }
+
       // 3. Synthetic init event so the client's session-header logic works.
       // ACP splits this information across initialize + session/new and never
       // echoes cwd or the model back, so we assemble it ourselves.
       emit({
         kind: "init",
         sessionId: acpSessionId,
-        model: model ?? init?.agentInfo?.name ?? this.id,
+        model: model ?? agentName,
         tools: [],
         cwd,
       });
 
-      // 4. session/prompt
+      // 4. session/prompt. An abort during the handshake (a speculative start
+      // that the real transcript corrected) stops here: the prompt is never
+      // sent, so no answer to a question the user did not ask is generated.
+      if (warm?.cancelled) {
+        console.log(`${logPrefix} turn cancelled before its prompt was sent`);
+        emitResult(false, "cancelled");
+        return 0;
+      }
+
       const promptBlocks = this.buildPromptBlocks({
         text,
         images,
@@ -713,6 +888,11 @@ export class AcpEngine implements Engine {
       );
 
       const stopReason = promptResult?.stopReason ?? "end_turn";
+      if (this.options.persistent) {
+        console.log(
+          `${logPrefix} warm turn finished (reused=${reusing}, stop=${stopReason})`
+        );
+      }
       const success = stopReason === "end_turn" || stopReason === "max_turn_requests";
       emitResult(
         success,
@@ -722,16 +902,26 @@ export class AcpEngine implements Engine {
     } catch (err) {
       // Covers a dead child mid-prompt, a protocol error, or a timeout.
       const message = err instanceof Error ? err.message : String(err);
+      console.warn(`${logPrefix} turn failed: ${message}`);
       emit({ kind: "error", message });
       emitResult(false, message);
     } finally {
       this.live.delete(sessionId);
-      // One process per turn: shut the agent down now that the turn is over.
-      if (state.process) {
+      if (this.options.persistent) {
+        // Warm mode: the process lives on for the next turn. Detaching it from
+        // the session state is what makes the session look idle again, so
+        // ProcessManager will accept the next message.
+        state.process = null;
+        // Between turns nothing should reach a stale closure.
+        router.update = () => {};
+      } else if (state.process) {
+        // One process per turn: shut the agent down now that the turn is over.
         abortChildProcess(state, sessionId);
       }
     }
 
+    // A warm turn is over when the prompt resolves, not when the process dies.
+    if (this.options.persistent && this.warm.get(sessionId)?.alive) return 0;
     return exited;
   }
 

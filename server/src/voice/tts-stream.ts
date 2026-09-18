@@ -11,7 +11,12 @@
  * synthesis result is discarded instead of emitted.
  */
 
-import { SentenceChunker, speakableText } from "./sentence-chunker.js";
+import {
+  FIRST_CLAUSE_CHARS,
+  MAX_SENTENCE_CHARS,
+  SentenceChunker,
+  speakableText,
+} from "./sentence-chunker.js";
 
 export interface AudioChunk {
   /** Monotonic per-turn index. The client plays chunks in this order. */
@@ -28,6 +33,13 @@ export interface TtsStreamOptions {
   voice?: string;
   /** Sentences allowed to render ahead of the one being emitted. */
   lookahead?: number;
+  /**
+   * S16: cut the FIRST chunk of the reply at a clause boundary (comma,
+   * semicolon, colon) or this many characters, instead of waiting for a whole
+   * sentence. Sentence boundaries are used for everything after it. Pass 0 to
+   * get the S14 behavior back.
+   */
+  firstClauseChars?: number;
   onChunk(chunk: AudioChunk): void;
   /** Fired once, just before the first chunk of a turn. */
   onStart?: () => void;
@@ -43,7 +55,7 @@ interface InFlight {
 }
 
 export class TtsStream {
-  private readonly chunker = new SentenceChunker();
+  private readonly chunker: SentenceChunker;
   private readonly queue: string[] = [];
   private readonly inflight: InFlight[] = [];
   private readonly lookahead: number;
@@ -65,6 +77,9 @@ export class TtsStream {
 
   constructor(private readonly opts: TtsStreamOptions) {
     this.lookahead = Math.max(0, opts.lookahead ?? 1);
+    this.chunker = new SentenceChunker(MAX_SENTENCE_CHARS, {
+      firstClauseChars: opts.firstClauseChars ?? FIRST_CLAUSE_CHARS,
+    });
   }
 
   /** True while sentences are queued or rendering. */

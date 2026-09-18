@@ -20,6 +20,13 @@ export interface VoiceLatency {
   firstTokenMs?: number;
   firstAudioMs?: number;
   totalMs?: number;
+  /**
+   * S16: how the turn was run. `warm` means the engine process was already
+   * alive; `speculative` means the turn started on a stable partial rather
+   * than on the final transcript. Both are absent on an older server.
+   */
+  warm?: boolean;
+  speculative?: boolean;
 }
 
 function ls(key: string, def: string): string {

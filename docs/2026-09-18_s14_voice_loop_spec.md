@@ -57,6 +57,49 @@ S14-A and S14-B both touch the handler/index wiring: S14-A owns `socket/handler.
 Client -> server: `voice:start {sessionId, mode}`, `voice:audio {sessionId, pcm16: ArrayBuffer}`, `voice:stop {sessionId}`, `voice:interrupt {sessionId}`.
 Server -> client: `voice:state {sessionId, state}`, `voice:partial {sessionId, text}`, `voice:transcript {sessionId, text, messageId}`, `voice:audio-chunk {sessionId, seq, mime, data}`, `voice:stop-audio {sessionId}`, `voice:latency {sessionId, sttMs, firstTokenMs, firstAudioMs, totalMs}`, `followup:queued {sessionId, agentId}`, `followup:delivered {sessionId, agentIds}`.
 
+## 7b. S16 live mode
+
+**Date:** 2026-09-18. Goal: "speech to speech as live as possible". The S14 loop worked but measured 12.7 s from speech end to first spoken word, 10.5 s of which was the Kimi CLI's time to first token, because a CLI was spawned per turn.
+
+### 1. Warm engines
+
+- `server/src/engine/warm-claude-engine.ts`: one `claude` process per chat, in the CLI's own long-lived mode (`-p --input-format stream-json --output-format stream-json --verbose --include-partial-messages`), fed one `{"type":"user",...}` line per turn and settled on that turn's `{"type":"result"}` line. Flags that are fixed at process start (model, system prompt, yolo, MCP config, provider) are hashed into a signature; a change retires the process and a new one takes over. `state.process` is attached only during a turn, so the session looks idle between turns.
+- `server/src/engine/kimi-acp-engine.ts` plus `persistent: true` on `AcpEngine`: Kimi runs as `kimi acp`, and the child, its ACP connection and its ACP session survive between turns. Per-turn callbacks are swapped through one mutable router so a single connection serves every turn. `abort()` in warm mode is `session/cancel`, never a kill, and an abort that lands during the handshake stops the turn before its prompt is sent.
+- Routing: `ProcessManager.setWarmMode(sessionId, boolean)` swaps the harness for the warm variant of the SAME engine (`warmEngineIdFor` in `engine/registry.ts`); the provider env is untouched, and an engine with no warm variant stays cold. `voice:start` turns it on, `voice:stop` turns it off and releases the process; `closeAllWarmProcesses()` runs on shutdown.
+- Cold engines remain registered, remain the default for typed chats, and remain the fallback: a warm `claude` turn that dies mid-flight retries once on the cold path (but never after a user abort).
+
+### 2. Streaming STT with partials
+
+- `StreamingSttProvider` in `server/src/voice/streaming-stt.ts`: `open(handlers)` returns a session with `push`/`end`/`close`, emitting `partial` and `final`.
+- The local Whisper server exposes only `/v1/models` and `/v1/audio/transcriptions` (checked against its own OpenAPI document), so there is nothing to stream to. `RollingWindowSttProvider` re-transcribes the utterance so far every 700 ms instead, bounded by one request in flight, a 300 ms audio floor and a 15 s utterance cap. `Vad.snapshot()` gives it exactly the audio the final transcription will see.
+- `DeepgramStreamingSttProvider` is the optional cloud implementation behind the same interface, keyed from the providers settings (`providers.deepgram.apiKey` or `DEEPGRAM_API_KEY`), off by default.
+- `SttStream` emits `onPartial`, which `VoiceSession` forwards as `voice:partial` per section 7.
+
+### 3. Speculative start and first-clause audio
+
+- `server/src/voice/speculation.ts`: a partial that has stopped changing starts the engine turn early. It must be stable for 400 ms and end in sentence punctuation, or be confirmed by a second identical partial after a 700 ms pause. An ellipsis does not count as punctuation: Whisper writes one for every truncated window.
+- When the final transcript lands, the turn is kept unless the normalized Levenshtein distance exceeds 0.25 or the guess is a strict prefix of what was actually said (the user kept talking). Otherwise the turn is aborted and restarted on the transcript. The abandoned turn's tail is ignored: it can neither be spoken nor report its latency.
+- `sentence-chunker.ts` gained a first-clause mode: the FIRST chunk of a reply may be cut at a comma, semicolon, colon or spaced dash, or at 60 characters, and everything after it uses sentence boundaries as before.
+- `voice:latency` gained `warm` and `speculative`, and the Activity Log line names them.
+
+### 4. Live mode (interface and stub)
+
+- `server/src/voice/realtime.ts` defines `RealtimeVoiceProvider` and implements `OpenAiRealtimeProvider` over a server-side WebSocket, including the tool bridge: every Medusa MCP tool becomes a realtime function definition and every call is executed against Medusa's own HTTP API through `callMedusa`, so `spawn_agent` and friends still run in Medusa.
+- Not wired to the socket layer yet: nothing routes `voice:audio` into a realtime session or posts both transcripts into the chat. `GET /api/voice/status` reports `realtime.implemented: false` and Settings > Voice disables the toggle with that explanation, plus a second explanation when no OpenAI key exists.
+
+### 5. Settings
+
+Settings > Voice gained: **Warm engine (faster replies)** (on), **Live transcript while you talk** (local / Deepgram / off), **Answer before you finish** (on), **Speak the first clause early** (on), and a disabled **Live mode (realtime model)** with a provider select. All persist on the voice pack (`VoiceSchema`) and are read server-side when a voice session is created.
+
+### 6. Measured (this machine, Kimi engine, local Whisper + Kokoro)
+
+| | S14 baseline | cold (this build) | warm |
+|---|---|---|---|
+| time to first token | 10 544 ms | 4 381 / 3 035 / 3 186 ms | 3 144 (first turn, process start included) / 1 969 / 1 936 ms |
+| speech end to first spoken word | 12 730 ms | 4 602 / 3 352 / 3 411 ms | 3 462 / 2 636 / 2 193 ms |
+
+First-clause chunking, on a two-sentence reply, first speakable text to first audio: 1 462 and 1 185 ms with whole sentences, 566 and 499 ms with clauses. First partial appears about 1 200 ms after the audio starts.
+
 ## 8. Acceptance (manual, against the running app)
 
 1. Voice on, always-on. Say "what's in this folder?" Reply starts speaking within about a second; transcript appears as your message; text reply renders while spoken.

@@ -13,6 +13,12 @@
 
 import { randomUUID } from "crypto";
 import type { SttProvider, TtsProvider } from "./providers.js";
+import {
+  SpeculationTracker,
+  shouldAbortSpeculation,
+  type SpeculationOptions,
+} from "./speculation.js";
+import type { StreamingSttProvider } from "./streaming-stt.js";
 import { SttStream } from "./stt-stream.js";
 import { TtsStream, type AudioChunk } from "./tts-stream.js";
 import type { VadOptions } from "./vad.js";
@@ -52,6 +58,23 @@ export interface VoiceSessionDeps {
   voice?: string;
   vad?: VadOptions;
   bargeIn?: BargeInOptions;
+  /**
+   * S16 partial-hypothesis source. Absent (or null) keeps the S14 behavior:
+   * no `voice:partial`, and no speculative start (which reads partials).
+   */
+  partials?: StreamingSttProvider | null;
+  /** S16 speculative start tuning. `enabled: false` switches it off. */
+  speculation?: SpeculationOptions;
+  /**
+   * S16: cut the first chunk of a reply at a clause boundary or this many
+   * characters. 0 restores the S14 behavior of waiting for a whole sentence.
+   */
+  firstClauseChars?: number;
+  /**
+   * True when this session's engine is running warm. Only used to label the
+   * latency line in the Activity Log, so cold and warm turns can be compared.
+   */
+  warm?: () => boolean;
 }
 
 /** One entry in a session's debug ring buffer (`GET /api/voice/status?events=1`). */
@@ -79,10 +102,22 @@ export class VoiceSession {
   private state: VoiceState = "idle";
   private mode: VoiceMode = "off";
 
+  /** Partial-hypothesis watcher for the speculative start (S16). */
+  private readonly speculation: SpeculationTracker;
+  /** The hypothesis a speculative turn was started on, "" when none. */
+  private speculativeText = "";
+  /** Per-turn counters for the Activity Log. */
+  private speculativeStarts = 0;
+  private speculativeAborts = 0;
+  /** True when the current turn's latency was measured on a speculative start. */
+  private turnWasSpeculative = false;
+
   // ---- per-turn timing ----
   private speechEndedAt = 0;
   private sttMs = 0;
   private transcriptAt = 0;
+  /** When the prompt actually went to the engine (speculative or not). */
+  private turnStartedAt = 0;
   private firstTokenMs = 0;
   private firstSentenceAt = 0;
   private firstAudioEmitted = false;
@@ -93,6 +128,25 @@ export class VoiceSession {
   /** Last sentence actually sent to the client; survives the TTS stream's death. */
   private lastSpoken = "";
   private speakingStartEmitted = false;
+  /**
+   * False between starting a turn and seeing that turn's `message:stream:start`.
+   * It is what stops the tail of an abandoned turn (a speculative start the
+   * real transcript corrected) from being spoken, or from reporting its
+   * latency as though it belonged to the turn that replaced it.
+   */
+  private streamStarted = false;
+  /**
+   * Turns we aborted and immediately replaced (a corrected speculative start,
+   * or a barge-in). The abort settles the old turn with its own
+   * `message:stream:end` (what the warm Kimi engine's `session/cancel`
+   * produces) or `message:error`, and the tap carries no turn identity, so
+   * that event is indistinguishable from the end of the turn now running. It
+   * also routinely lands AFTER the new turn's `message:stream:start`, so
+   * `streamStarted` cannot separate them; this counter does. Left unhandled it
+   * closes the live turn's TTS before a word is synthesized and the reply is
+   * never spoken at all.
+   */
+  private abandonedTurns = 0;
   /** Set while a voice-originated send is in flight, so the tap can tag it. */
   private awaitingTurn = false;
 
@@ -107,6 +161,12 @@ export class VoiceSession {
     this.sessionId = deps.sessionId;
     this.deps = deps;
     this.bargeIn = new BargeInDetector(deps.bargeIn);
+    // With no partial provider there is nothing to speculate on, so the
+    // tracker is built disabled rather than silently never firing.
+    this.speculation = new SpeculationTracker({
+      ...(deps.speculation ?? {}),
+      enabled: Boolean(deps.partials) && (deps.speculation?.enabled ?? true),
+    });
   }
 
   /** Debug ring buffer: state changes, onsets, ignored onsets, barge-ins, latencies. */
@@ -132,6 +192,11 @@ export class VoiceSession {
     return this.state !== "idle";
   }
 
+  /** Speculative-start counters, surfaced by `GET /api/voice/status`. */
+  get speculationStats(): { starts: number; aborts: number } {
+    return { starts: this.speculativeStarts, aborts: this.speculativeAborts };
+  }
+
   // ---- lifecycle -------------------------------------------------------
 
   /** Voice mode on. Idempotent: a reconnecting client may call it again. */
@@ -142,7 +207,9 @@ export class VoiceSession {
       this.stt = new SttStream({
         provider: this.deps.stt,
         vad: vad ?? this.deps.vad,
+        partials: this.deps.partials ?? null,
         onSpeechStart: () => this.handleSpeechStart(),
+        onPartial: (text) => this.handlePartial(text),
         onSpeechEnd: (u) => {
           this.speechEndedAt = u.endedAt;
           this.finishBargeInOnset();
@@ -165,6 +232,9 @@ export class VoiceSession {
   pushAudio(chunk: Int16Array | ArrayBuffer | Buffer | Uint8Array): void {
     if (!this.stt || this.state === "idle") return;
     this.stt.pushAudio(chunk);
+    // Audio frames are the clock the speculative start runs on: they arrive
+    // about every 100 ms, so no timer is needed to notice a stable partial.
+    this.checkSpeculation();
   }
 
   /** Voice mode off. Stops audio, drops the VAD buffer, releases the turn. */
@@ -174,6 +244,7 @@ export class VoiceSession {
     this.stt = null;
     this.stopSpeaking();
     this.bargeIn.deactivate();
+    this.abandonedTurns = 0;
     this.mode = "off";
     this.setState("idle");
   }
@@ -187,6 +258,9 @@ export class VoiceSession {
     }
     this.bargingIn = false;
     this.awaitingTurn = false;
+    this.abandonedTurns = 0;
+    this.speculativeText = "";
+    this.speculation.reset();
     this.setState("listening");
   }
 
@@ -196,6 +270,7 @@ export class VoiceSession {
     this.tts?.cancel();
     this.tts = null;
     this.bargeIn.deactivate();
+    this.abandonedTurns = 0;
     this.state = "idle";
   }
 
@@ -241,12 +316,63 @@ export class VoiceSession {
     this.logEvent("ignored-onset", { energy: energyRounded, ms: ignored.ms });
   }
 
+  /**
+   * True while anything the mic hears is presumed to be her own voice coming
+   * back through the speakers: the barge-in detector is armed (thinking,
+   * speaking, or the grace window after) and has not yet confirmed a real
+   * interruption, or the onset that is still open was already written off as
+   * echo. Partials and speculative starts both stand down while this holds,
+   * so S16 never builds a turn out of S14's echo.
+   */
+  private get echoSuspect(): boolean {
+    if (this.bargingIn) return false;
+    return this.bargeIn.isActive || this.ignoredEchoOnset;
+  }
+
+  /** One growing hypothesis for the utterance in progress. */
+  private handlePartial(text: string): void {
+    if (!this.active) return;
+    // Her own reply leaking into the mic produces partials too. Showing them
+    // as the user's live transcript is wrong, and feeding them to the
+    // speculation tracker would start a turn on her own words.
+    if (this.echoSuspect) return;
+    this.deps.emit("voice:partial", { sessionId: this.sessionId, text });
+    this.speculation.onPartial(text, Date.now());
+    this.checkSpeculation();
+  }
+
+  /**
+   * Start the engine turn before the user has finished, when the hypothesis
+   * has stopped moving and reads like a finished thought. Never speculates
+   * over a reply in progress: a barge-in needs the real transcript so the
+   * "you interrupted" prefix quotes the right sentence, and never over an
+   * onset the barge-in detector is still treating as echo.
+   */
+  private checkSpeculation(): void {
+    if (!this.stt || this.bargingIn || this.state === "speaking") return;
+    if (this.echoSuspect) return;
+    if (this.deps.isBusy() || this.awaitingTurn) return;
+    const candidate = this.speculation.check(Date.now());
+    if (!candidate) return;
+
+    this.speculativeText = candidate;
+    this.turnWasSpeculative = true;
+    this.speculativeStarts++;
+    this.deps.activity(`voice: speculative start on "${candidate}"`);
+    this.startTurn(candidate);
+  }
+
   private handleTranscript(text: string, sttMs: number): void {
     // This utterance started during speaking/thinking and never earned a
     // real barge-in: it is her own words coming back through the mic, not
     // something the user said. Drop it before it becomes a chat message.
     if (this.ignoredEchoOnset) {
       this.ignoredEchoOnset = false;
+      // Nothing should have speculated on an echo onset (`echoSuspect` gates
+      // both the partials and `checkSpeculation`), but clear the hypothesis
+      // anyway so a dropped transcript can never leave one standing.
+      this.speculativeText = "";
+      this.speculation.reset();
       this.deps.activity(`voice: dropped echo transcript "${text}"`);
       return;
     }
@@ -259,6 +385,36 @@ export class VoiceSession {
     // A transcript that arrives while she is still talking is a barge-in even
     // if the VAD gate opened before playback started.
     const interrupting = this.bargingIn || this.state === "speaking";
+
+    // A speculative turn is already running on the hypothesis. Keep it when
+    // the real transcript says the same thing; otherwise throw it away and
+    // start over on the truth.
+    if (this.speculativeText && !interrupting) {
+      const spoken = this.speculativeText;
+      this.speculativeText = "";
+      this.speculation.reset();
+      if (!shouldAbortSpeculation(spoken, text)) {
+        this.deps.activity(`voice: speculation held, transcript matched "${text}"`);
+        return;
+      }
+      this.speculativeAborts++;
+      this.turnWasSpeculative = false;
+      this.stopSpeaking();
+      if (this.deps.isBusy()) {
+        this.deps.abortTurn();
+        this.abandonedTurns++;
+      }
+      this.deps.activity(
+        `voice: speculation discarded, restarting on "${text}" (guessed "${spoken}")`
+      );
+      this.startTurn(text);
+      return;
+    }
+
+    this.speculativeText = "";
+    this.speculation.reset();
+    this.turnWasSpeculative = false;
+
     let prompt = text;
 
     if (interrupting) {
@@ -266,19 +422,25 @@ export class VoiceSession {
       this.stopSpeaking();
       if (this.deps.isBusy()) {
         this.deps.abortTurn();
+        this.abandonedTurns++;
         this.deps.activity(`voice: aborted turn for barge-in after "${lastSpoken}"`);
       }
       if (lastSpoken) prompt = `${interruptionPrefix(lastSpoken)}${text}`;
     }
     this.bargingIn = false;
+    this.startTurn(prompt);
+  }
 
-    // New turn: reset the stage clocks before anything can tick.
+  /** Reset the per-turn clocks and hand the prompt to the engine. */
+  private startTurn(prompt: string): void {
     this.firstTokenMs = 0;
     this.firstSentenceAt = 0;
     this.firstAudioEmitted = false;
     this.latencyReported = false;
     this.speakingStartEmitted = false;
     this.awaitingTurn = true;
+    this.streamStarted = false;
+    this.turnStartedAt = Date.now();
 
     this.setState("thinking");
     this.deps.send(prompt);
@@ -290,6 +452,7 @@ export class VoiceSession {
   onStreamStart(): void {
     if (!this.active) return;
     this.awaitingTurn = false;
+    this.streamStarted = true;
     // Barge-in detection is armed from "thinking" onward, not just once
     // audio starts, so a fast interruption during the thinking gap is
     // still caught by the sustained-energy bar rather than the plain VAD.
@@ -299,6 +462,7 @@ export class VoiceSession {
       synthesize: (t, v) => this.deps.tts.synthesize(t, v),
       voice: this.deps.voice,
       lookahead: 1,
+      firstClauseChars: this.deps.firstClauseChars,
       onChunk: (chunk) => this.handleAudioChunk(chunk),
       onStart: () => {
         this.speakingStartEmitted = true;
@@ -315,8 +479,13 @@ export class VoiceSession {
   /** One assistant text delta. */
   onDelta(text: string): void {
     if (!this.active || !text) return;
-    if (this.firstTokenMs === 0 && this.transcriptAt > 0) {
-      this.firstTokenMs = Date.now() - this.transcriptAt;
+    // A delta from a turn that was abandoned mid-flight; the new turn's own
+    // `message:stream:start` has not arrived yet.
+    if (!this.streamStarted) return;
+    // Measured from when the prompt went out, which is the transcript for a
+    // normal turn and the stable partial for a speculative one.
+    if (this.firstTokenMs === 0 && this.turnStartedAt > 0) {
+      this.firstTokenMs = Date.now() - this.turnStartedAt;
     }
     if (!this.tts) this.onStreamStart();
     const before = this.tts?.busy ?? false;
@@ -331,7 +500,22 @@ export class VoiceSession {
   /** The assistant message finished streaming. */
   onStreamEnd(): void {
     if (!this.active) return;
+    // The end of a turn that has already been replaced: it has nothing to say
+    // and no latency of its own to report.
+    if (!this.streamStarted) return;
+    // Same, for the ordering where the replaced turn's end arrives after the
+    // replacement's own stream start. Consuming it here is what keeps the live
+    // turn's TTS open.
+    if (this.abandonedTurns > 0) {
+      this.abandonedTurns--;
+      return;
+    }
     this.awaitingTurn = false;
+    // A short reply ("Mango.") can end without ever completing a sentence
+    // mid-stream, because the chunker waits for the character after the
+    // terminator. The text is complete now, so this is when the "speakable
+    // text exists" clock starts for that turn.
+    if (this.firstSentenceAt === 0) this.firstSentenceAt = Date.now();
     if (!this.tts) {
       this.setState("listening");
       return;
@@ -342,6 +526,13 @@ export class VoiceSession {
   /** The turn failed before producing text. */
   onStreamError(): void {
     if (!this.active) return;
+    // The abort we issued when replacing a turn can also surface as an error
+    // rather than an end. Either way it belongs to the turn that is already
+    // gone, so it must not cancel the live turn's TTS.
+    if (this.abandonedTurns > 0) {
+      this.abandonedTurns--;
+      return;
+    }
     this.awaitingTurn = false;
     this.tts?.cancel();
     this.tts = null;
@@ -400,7 +591,11 @@ export class VoiceSession {
 
   /** One `voice:latency` event plus one Activity Log line, once per turn. */
   private reportLatency(): void {
-    if (this.latencyReported || this.transcriptAt === 0) return;
+    if (this.latencyReported || this.turnStartedAt === 0) return;
+    // A turn that never spoke has no "time to first word" to report. Without
+    // this, an abandoned turn's cancelled TTS stream would fire the event with
+    // empty timings and the real turn's numbers would then be suppressed.
+    if (!this.firstAudioEmitted) return;
     this.latencyReported = true;
     const now = Date.now();
     const latency: VoiceLatency = {
@@ -410,13 +605,22 @@ export class VoiceSession {
         this.firstSentenceAt > 0 && this.firstAudioEmitted ? now - this.firstSentenceAt : 0,
       totalMs: this.speechEndedAt > 0 ? now - this.speechEndedAt : 0,
     };
-    this.deps.emit("voice:latency", { sessionId: this.sessionId, ...latency });
+    const warm = this.deps.warm?.() ?? false;
+    this.deps.emit("voice:latency", {
+      sessionId: this.sessionId,
+      ...latency,
+      warm,
+      speculative: this.turnWasSpeculative,
+    });
+    // The engine label is what makes cold and warm turns comparable at a
+    // glance in the Activity Log, which is the whole point of S16's first item.
     this.deps.activity(
       `voice: ${latency.totalMs} ms to first word ` +
-        `(stt ${latency.sttMs} ms, first token ${latency.firstTokenMs} ms, ` +
+        `(stt ${latency.sttMs} ms, first token ${latency.firstTokenMs} ms ` +
+        `${warm ? "warm" : "cold"}${this.turnWasSpeculative ? ", speculative" : ""}, ` +
         `first audio ${latency.firstAudioMs} ms)`
     );
-    this.logEvent("latency", { ...latency });
+    this.logEvent("latency", { ...latency, warm, speculative: this.turnWasSpeculative });
   }
 
   // ---- state machine ---------------------------------------------------

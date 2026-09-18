@@ -22,6 +22,7 @@ import voiceRouter from "./routes/voice.js";
 import { createSkillsRouter } from "./routes/skills.js";
 import { setupSocketHandler, emitSubagentActivity } from "./socket/handler.js";
 import { ProcessManager } from "./claude/process-manager.js";
+import { closeAllWarmProcesses } from "./engine/registry.js";
 import { SessionStore } from "./sessions/store.js";
 import { SkillCatalog } from "./skills/catalog.js";
 import { ChatStore } from "./chat/store.js";
@@ -344,6 +345,9 @@ async function gracefulShutdown(signal: string) {
   subagentManager.cancelAll();
   // Drop any follow-up timer so a pending delivery cannot fire mid-shutdown.
   followupService?.dispose();
+  // Warm engines (S16) hold a CLI process per voice chat between turns, so
+  // they are not covered by the busy-session check below.
+  closeAllWarmProcesses();
 
   // 1. Stop accepting new connections
   server.close();

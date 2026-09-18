@@ -6,6 +6,9 @@ vi.mock("../../voice/providers.js", () => ({
     { id: "whisper", role: "stt", enabled: true, ready: true },
     { id: "kokoro", role: "tts", enabled: true, ready: true },
   ],
+  // S16 added a live-mode section to the same payload; the route calls this
+  // unconditionally, so the mock has to answer it too.
+  listRealtimeProviders: () => [{ id: "openai-realtime", enabled: false, ready: false }],
 }));
 
 const fakeEvents = [{ ts: 1, type: "barge-in", detail: { energy: 5000, ms: 300 } }];

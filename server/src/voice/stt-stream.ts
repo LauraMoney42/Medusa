@@ -8,11 +8,19 @@
  */
 
 import type { SttProvider } from "./providers.js";
+import type { StreamingSttProvider, StreamingSttSession } from "./streaming-stt.js";
+import { RollingWindowSttSession } from "./streaming-stt.js";
 import { Vad, type VadOptions, type VadUtterance } from "./vad.js";
 
 export interface SttStreamCallbacks {
   /** Gate opened. Used for the fast half of barge-in, before any text exists. */
   onSpeechStart?: () => void;
+  /**
+   * A growing hypothesis for the utterance in progress (S16). Emitted as
+   * `voice:partial`; never a turn on its own, though the speculative start
+   * in `session.ts` reads it.
+   */
+  onPartial?: (text: string) => void;
   /** Silence ended an utterance; transcription has been dispatched. */
   onSpeechEnd?: (utterance: VadUtterance) => void;
   /** Final text for one utterance, with the Whisper round-trip time. */
@@ -23,6 +31,11 @@ export interface SttStreamCallbacks {
 export interface SttStreamOptions extends SttStreamCallbacks {
   provider: SttProvider;
   vad?: VadOptions;
+  /**
+   * Partial-hypothesis source (S16). Omit it and the stream behaves exactly
+   * as it did in S14: silence until the final transcript.
+   */
+  partials?: StreamingSttProvider | null;
 }
 
 export class SttStream {
@@ -30,15 +43,23 @@ export class SttStream {
 
   private readonly provider: SttProvider;
   private readonly cb: SttStreamCallbacks;
+  private readonly partialProvider: StreamingSttProvider | null;
+  private partialSession: StreamingSttSession | null = null;
   /** Tail of the transcription chain; keeps utterances strictly in order. */
   private chain: Promise<void> = Promise.resolve();
   private closed = false;
+  /** Most recent partial for the utterance in progress. */
+  lastPartial = "";
 
   constructor(opts: SttStreamOptions) {
     this.provider = opts.provider;
     this.cb = opts;
+    this.partialProvider = opts.partials ?? null;
     this.vad = new Vad(opts.vad);
-    this.vad.onSpeechStart = () => this.cb.onSpeechStart?.();
+    this.vad.onSpeechStart = () => {
+      this.openPartials();
+      this.cb.onSpeechStart?.();
+    };
   }
 
   /** Feed one socket frame. Accepts PCM16 in any of the shapes socket.io gives. */
@@ -46,7 +67,39 @@ export class SttStream {
     if (this.closed) return;
     const pcm = toPcm16(chunk);
     if (pcm.length === 0) return;
-    for (const utterance of this.vad.push(pcm)) this.dispatch(utterance);
+    const utterances = this.vad.push(pcm);
+    // Partials run off the VAD's own buffer so the window the hypothesis sees
+    // is exactly the audio the final transcription will see.
+    if (this.partialSession && this.vad.speaking) {
+      if (this.partialSession instanceof RollingWindowSttSession) {
+        const snapshot = this.vad.snapshot();
+        if (snapshot) this.partialSession.setBuffer(snapshot);
+      } else {
+        this.partialSession.push(pcm);
+      }
+    }
+    for (const utterance of utterances) this.dispatch(utterance);
+  }
+
+  /** Open a partial session for the utterance that just started. */
+  private openPartials(): void {
+    if (!this.partialProvider || this.partialSession) return;
+    this.lastPartial = "";
+    this.partialSession = this.partialProvider.open({
+      onPartial: (text) => {
+        if (this.closed) return;
+        this.lastPartial = text;
+        this.cb.onPartial?.(text);
+      },
+      onError: (err) => this.cb.onError?.(err),
+    });
+  }
+
+  /** Close the partial session at the end of an utterance. */
+  private closePartials(): void {
+    this.partialSession?.close();
+    this.partialSession = null;
+    this.lastPartial = "";
   }
 
   /** End the open utterance now (push-to-talk release, or session stop). */
@@ -59,10 +112,12 @@ export class SttStream {
   /** Stop accepting audio. In-flight transcriptions still resolve. */
   close(): void {
     this.closed = true;
+    this.closePartials();
     this.vad.reset();
   }
 
   private dispatch(utterance: VadUtterance): void {
+    this.closePartials();
     this.cb.onSpeechEnd?.(utterance);
     this.chain = this.chain.then(async () => {
       const started = Date.now();

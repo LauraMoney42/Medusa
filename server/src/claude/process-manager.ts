@@ -1,6 +1,10 @@
 import type { ParsedEvent } from "./types.js";
 import { getActiveProvider } from "../settings/store.js";
-import { getEngineOrDefault } from "../engine/registry.js";
+import {
+  closeWarmProcesses,
+  getEngineOrDefault,
+  warmEngineIdFor,
+} from "../engine/registry.js";
 import type { EngineSessionState } from "../engine/types.js";
 import type { MedusaMcpDescriptor } from "../mcp/descriptor.js";
 
@@ -13,6 +17,13 @@ interface SessionEntry extends EngineSessionState {
   engineId?: string;
   /** Per-session provider (env selection). Falls back to the global setting. */
   providerId?: string;
+  /**
+   * Warm mode (S16): route this session's turns through the long-lived
+   * variant of its engine when one exists. Voice sessions turn it on; it is
+   * per-session state rather than a spawn argument so nothing in the send path
+   * has to change.
+   */
+  warm?: boolean;
 }
 
 /** Per-session engine/provider overrides carried from SessionMeta into the spawn path. */
@@ -62,6 +73,29 @@ export class ProcessManager {
     entry.providerId = engine.providerId;
   }
 
+  /**
+   * Turn warm mode on or off for one session. Returns the engine id that will
+   * actually spawn next, so the caller can log "warm" vs "cold" honestly:
+   * an engine with no warm variant (code-puppy) silently stays cold.
+   */
+  setWarmMode(id: string, warm: boolean): string | null {
+    const entry = this.sessions.get(id);
+    if (!entry) return null;
+    entry.warm = warm;
+    // Turning warm mode off releases the process now rather than leaving one
+    // idling until the session is deleted.
+    if (!warm) closeWarmProcesses(id);
+    return this.resolveEngine(entry)?.engineId ?? null;
+  }
+
+  /** True when this session's next turn will run on a warm engine. */
+  isWarmMode(id: string): boolean {
+    const entry = this.sessions.get(id);
+    if (!entry?.warm) return false;
+    const resolved = this.resolveEngine(entry);
+    return Boolean(resolved && resolved.engineId !== this.baseEngineId(entry));
+  }
+
   /** Point an existing session at a different folder. */
   updateWorkingDir(id: string, workingDir: string): void {
     const entry = this.sessions.get(id);
@@ -85,20 +119,33 @@ export class ProcessManager {
     entry: SessionEntry,
     override?: SessionEngineOptions
   ): ResolvedEngine | null {
+    const base = this.baseEngineId(entry, override);
+    if (base === null) return null;
+    const explicit = override?.engineId ?? entry.engineId ?? override?.providerId ?? entry.providerId;
+    // With nothing explicit on the session, the global provider is both the
+    // harness and the env, exactly as before warm mode existed.
+    const providerId = explicit
+      ? override?.providerId ?? entry.providerId
+      : getActiveProvider() ?? undefined;
+    // Warm mode is the last step on purpose: it swaps the harness for the
+    // long-lived variant of the SAME engine and leaves the provider env alone.
+    const engineId = (entry.warm ? warmEngineIdFor(base) : null) ?? base;
+    return { engineId, providerId };
+  }
+
+  /** The cold engine this session resolves to, warm mode ignored. */
+  private baseEngineId(
+    entry: SessionEntry,
+    override?: SessionEngineOptions
+  ): string | null {
     const engineId = override?.engineId ?? entry.engineId;
+    if (engineId) return getEngineOrDefault(engineId).id;
     const providerId = override?.providerId ?? entry.providerId;
-
-    if (engineId) {
-      return { engineId: getEngineOrDefault(engineId).id, providerId };
-    }
-    if (providerId) {
-      return { engineId: getEngineOrDefault(providerId).id, providerId };
-    }
-
+    if (providerId) return getEngineOrDefault(providerId).id;
     const active = getActiveProvider();
     if (!active) return null;
     // The global setting is a provider id too, so map it the same way.
-    return { engineId: getEngineOrDefault(active).id, providerId: active };
+    return getEngineOrDefault(active).id;
   }
 
   /** Reset a session to use --session-id on the next message (e.g. after summarization). */
@@ -203,6 +250,7 @@ export class ProcessManager {
   /** Abort any running process and remove the session from the map. */
   deleteSession(sessionId: string): void {
     this.abort(sessionId);
+    closeWarmProcesses(sessionId);
     this.sessions.delete(sessionId);
   }
 }

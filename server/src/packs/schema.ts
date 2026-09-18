@@ -116,6 +116,18 @@ export const VoiceSchema = z.object({
   vadSensitivity: z.number().min(0).max(1).default(0.5),
   silenceTimeoutMs: z.number().min(200).max(2000).default(600),
   interruptBehavior: z.enum(["abort", "queue"]).default("abort"),
+
+  // S16 "live" gains. Warm engines, partials and the speculative start are on
+  // by default because they only ever make a spoken turn start sooner and each
+  // one falls back to the S14 behavior when its backend is unavailable. Live
+  // mode is off by default: it hands the conversation to a third-party
+  // realtime model and needs a key.
+  warmEngine: z.boolean().default(true),
+  partials: z.enum(["off", "local", "deepgram"]).default("local"),
+  speculativeStart: z.boolean().default(true),
+  firstClauseAudio: z.boolean().default(true),
+  liveMode: z.boolean().default(false),
+  liveProvider: z.string().max(60).default("openai-realtime"),
 });
 export type Voice = z.infer<typeof VoiceSchema>;
 

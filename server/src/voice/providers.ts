@@ -10,8 +10,19 @@
  */
 
 import config from "../config.js";
+import { getExternalApiKey } from "../settings/providers.js";
 import { isWhisperReady } from "../stt/whisper-manager.js";
 import { isTtsReady } from "../tts/tts-manager.js";
+import {
+  DeepgramStreamingSttProvider,
+  RollingWindowSttProvider,
+  type StreamingSttProvider,
+} from "./streaming-stt.js";
+import {
+  OpenAiRealtimeProvider,
+  type RealtimeProviderStatus,
+  type RealtimeVoiceProvider,
+} from "./realtime.js";
 
 export interface SttProvider {
   readonly id: string;
@@ -186,6 +197,62 @@ export function setVoiceProviders(next: {
 }): void {
   if (next.stt !== undefined) sttProvider = next.stt;
   if (next.tts !== undefined) ttsProvider = next.tts;
+}
+
+// ---- S16: streaming STT and realtime providers -------------------------
+
+/** Env var names for the optional cloud voice services. */
+export const VOICE_KEY_ENV = {
+  deepgram: "DEEPGRAM_API_KEY",
+  openai: "OPENAI_API_KEY",
+} as const;
+
+/**
+ * The partial-hypothesis source for a voice session.
+ *
+ * `local` re-transcribes a rolling window through whichever `SttProvider` is
+ * configured, which needs no key and no new dependency. `deepgram` is a real
+ * streaming socket and is only returned when a key exists; asking for it
+ * without one falls back to local rather than silently producing no partials.
+ */
+export function getStreamingSttProvider(
+  kind: "off" | "local" | "deepgram" = "local"
+): StreamingSttProvider | null {
+  if (kind === "off") return null;
+  if (kind === "deepgram") {
+    const apiKey = getExternalApiKey("deepgram", VOICE_KEY_ENV.deepgram);
+    if (apiKey) return new DeepgramStreamingSttProvider({ apiKey });
+  }
+  return new RollingWindowSttProvider(getSttProvider());
+}
+
+/** The realtime provider for Live mode, or null when it has no key. */
+export function getRealtimeProvider(
+  id: string = "openai-realtime"
+): RealtimeVoiceProvider | null {
+  if (id !== "openai-realtime") return null;
+  const apiKey = getExternalApiKey("openai", VOICE_KEY_ENV.openai);
+  if (!apiKey) return null;
+  return new OpenAiRealtimeProvider({ apiKey });
+}
+
+/** Live-mode provider inventory for Settings > Voice. */
+export function listRealtimeProviders(): RealtimeProviderStatus[] {
+  const hasOpenAi = Boolean(getExternalApiKey("openai", VOICE_KEY_ENV.openai));
+  return [
+    {
+      id: "openai-realtime",
+      displayName: "OpenAI Realtime",
+      ready: hasOpenAi,
+      ...(hasOpenAi
+        ? {}
+        : {
+            reason:
+              "No OpenAI key. Add one as providers.openai.apiKey in " +
+              "~/.claude-chat/settings.json, or set OPENAI_API_KEY.",
+          }),
+    },
+  ];
 }
 
 export interface ProviderStatus {

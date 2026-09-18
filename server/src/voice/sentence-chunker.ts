@@ -104,11 +104,58 @@ function findHardCut(text: string, cap: number): number {
   return cap;
 }
 
+/**
+ * Default cap for the FIRST chunk of a reply (S16). Kokoro's round trip is
+ * roughly proportional to the text it is given, so the very first thing she
+ * says should be as short as it can be while still sounding like the start of
+ * a sentence: a clause, not a sentence.
+ */
+export const FIRST_CLAUSE_CHARS = 60;
+
+/**
+ * End index (exclusive) of the first clause in `text`, or -1.
+ *
+ * A clause boundary is a comma, semicolon, colon or dash followed by
+ * whitespace. The terminator is kept: Kokoro's prosody uses it, so "Sure,"
+ * is spoken with the right rising intonation rather than as a flat word.
+ */
+export function findClauseEnd(text: string, cap: number = FIRST_CLAUSE_CHARS): number {
+  const limit = Math.min(text.length, cap);
+  for (let i = 0; i < limit; i++) {
+    const ch = text[i] as string;
+    if (ch !== "," && ch !== ";" && ch !== ":" && ch !== "—" && ch !== "-") continue;
+    const next = text[i + 1];
+    if (next === undefined) return -1; // wait for the character after it
+    if (!/\s/.test(next)) continue; // "3,500" and "state-of-the-art" are not clauses
+    // A dash only splits when it is used as punctuation, i.e. spaced.
+    if (ch === "-" && !/\s/.test(text[i - 1] ?? "x")) continue;
+    return i + 1;
+  }
+  return -1;
+}
+
+export interface SentenceChunkerOptions {
+  /**
+   * When set, the first chunk of the turn may be cut at a clause boundary (or
+   * this many characters at a word boundary) instead of waiting for a whole
+   * sentence. Every chunk after the first uses sentence boundaries as before.
+   */
+  firstClauseChars?: number;
+}
+
 /** Streaming sentence splitter. One instance per assistant turn. */
 export class SentenceChunker {
   private buffer = "";
+  private readonly firstClauseChars: number;
+  /** False until the first chunk of this turn has been emitted. */
+  private emittedFirst = false;
 
-  constructor(private readonly maxChars: number = MAX_SENTENCE_CHARS) {}
+  constructor(
+    private readonly maxChars: number = MAX_SENTENCE_CHARS,
+    options: SentenceChunkerOptions = {}
+  ) {
+    this.firstClauseChars = Math.max(0, options.firstClauseChars ?? 0);
+  }
 
   /** Append a delta; returns every sentence that is now complete. */
   push(delta: string): string[] {
@@ -128,20 +175,34 @@ export class SentenceChunker {
   /** Discard buffered text (barge-in). */
   reset(): void {
     this.buffer = "";
+    this.emittedFirst = false;
   }
 
   private drain(atEnd: boolean): string[] {
     const out: string[] = [];
     for (;;) {
+      const cap =
+        !this.emittedFirst && this.firstClauseChars > 0
+          ? this.firstClauseChars
+          : this.maxChars;
       let end = findSentenceEnd(this.buffer, atEnd);
-      if (end < 0 || end > this.maxChars) {
-        const cut = findHardCut(this.buffer, this.maxChars);
+      // First chunk in clause mode: whichever boundary comes first wins, and
+      // a run with no boundary at all is cut at the (much smaller) cap.
+      if (!this.emittedFirst && this.firstClauseChars > 0) {
+        const clause = findClauseEnd(this.buffer, this.firstClauseChars);
+        if (clause > 0 && (end < 0 || clause < end)) end = clause;
+      }
+      if (end < 0 || end > cap) {
+        const cut = findHardCut(this.buffer, cap);
         if (cut < 0) break;
         end = cut;
       }
       const piece = this.buffer.slice(0, end).trim();
       this.buffer = this.buffer.slice(end);
-      if (piece) out.push(piece);
+      if (piece) {
+        out.push(piece);
+        this.emittedFirst = true;
+      }
       if (this.buffer.length === 0) break;
     }
     return out;

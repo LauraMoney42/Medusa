@@ -165,6 +165,25 @@ export class Vad {
     return utterance;
   }
 
+  /**
+   * The utterance in progress, pre-roll included, or null when the gate is
+   * shut. Used by the rolling-window partial transcriber (S16): it needs the
+   * same audio the final transcription will see, minus the ending it does not
+   * have yet. Copies, so the caller can hold it while the VAD keeps filling.
+   */
+  snapshot(): Int16Array | null {
+    if (!this.active || this.current.length === 0) return null;
+    let total = 0;
+    for (const f of this.current) total += f.length;
+    const pcm = new Int16Array(total);
+    let at = 0;
+    for (const f of this.current) {
+      pcm.set(f, at);
+      at += f.length;
+    }
+    return pcm;
+  }
+
   /** Drop all buffered state without emitting anything. */
   reset(): void {
     this.leftover = new Int16Array(0);

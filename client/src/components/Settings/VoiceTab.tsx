@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as api from '../../api';
-import type { MedusaVoice, TtsStatus } from '../../api';
+import type { MedusaVoice, TtsStatus, VoiceLoopStatus } from '../../api';
 import { useTtsStore } from '../../stores/ttsStore';
 import { useVoiceStore } from '../../stores/voiceStore';
 import { useSessionStore } from '../../stores/sessionStore';
@@ -22,6 +22,9 @@ const SAMPLE = 'Here is how I sound when I read a reply back to you.';
 export default function VoiceTab() {
   const [voice, setVoice] = useState<MedusaVoice | null>(null);
   const [tts, setTts] = useState<TtsStatus | null>(null);
+  // S16: Live mode needs a key on the server, so the toggle is disabled with
+  // an explanation until one exists.
+  const [loop, setLoop] = useState<VoiceLoopStatus | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -64,6 +67,7 @@ export default function VoiceTab() {
   useEffect(() => {
     api.fetchVoiceSettings().then(setVoice).catch((e: Error) => setError(e.message));
     api.fetchTtsStatus().then(setTts).catch(() => setTts(null));
+    api.fetchVoiceLoopStatus().then(setLoop).catch(() => setLoop(null));
   }, []);
 
   useEffect(() => () => { audioRef.current?.pause(); }, []);
@@ -123,6 +127,19 @@ export default function VoiceTab() {
   }
 
   const voices = tts?.voices ?? [{ id: voice.voiceId, label: voice.voiceId }];
+
+  // Live mode needs both a key on the server and the socket wiring that routes
+  // audio into the realtime session; the status route reports both.
+  const realtimeProviders = loop?.realtime?.providers ?? [];
+  const selectedRealtime =
+    realtimeProviders.find((p) => p.id === (voice.liveProvider ?? 'openai-realtime')) ?? null;
+  const liveImplemented = loop?.realtime?.implemented ?? false;
+  const liveAvailable = liveImplemented && Boolean(selectedRealtime?.ready);
+  const liveReason = !liveImplemented
+    ? 'Live mode is not switched on yet: the realtime provider and its Medusa '
+      + 'tool bridge are implemented on the server, but the socket wiring that '
+      + 'routes microphone audio into a realtime session is still to come.'
+    : selectedRealtime?.reason ?? null;
 
   return (
     <div style={s.pane}>
@@ -364,6 +381,74 @@ export default function VoiceTab() {
       </div>
 
       <div style={s.card}>
+        {/* S16: everything that makes a spoken turn start sooner. */}
+        <div style={s.spread}>
+          <span style={s.fieldLabel}>Warm engine (faster replies)</span>
+          <Toggle
+            on={voice.warmEngine ?? true}
+            label="Warm engine (faster replies)"
+            onChange={(next) => patch({ warmEngine: next })}
+          />
+        </div>
+        <p style={s.hint}>
+          Keeps one engine process alive for the whole voice chat instead of
+          starting a new one every time you speak, which is where most of the
+          wait before her first word used to go. Falls back to the normal path
+          for engines that cannot run warm.
+        </p>
+
+        <div style={s.field}>
+          <label style={s.fieldLabel} htmlFor="voice-partials">Live transcript while you talk</label>
+          <select
+            id="voice-partials"
+            style={{ ...s.select, width: '100%' }}
+            value={voice.partials ?? 'local'}
+            onChange={(e) => patch({ partials: e.target.value as MedusaVoice['partials'] })}
+          >
+            <option value="local">Local (re-transcribes as you speak)</option>
+            <option value="deepgram">Deepgram streaming (needs a key)</option>
+            <option value="off">Off</option>
+          </select>
+          <p style={s.hint}>
+            The local option re-runs the whole utterance through your own voice
+            server about every {loop?.defaults?.partialIntervalMs ?? 700} ms, so
+            it costs nothing but a little CPU.
+          </p>
+        </div>
+
+        <div style={s.spread}>
+          <span style={s.fieldLabel}>Answer before you finish (speculative start)</span>
+          <Toggle
+            on={voice.speculativeStart ?? true}
+            label="Answer before you finish"
+            onChange={(next) => patch({ speculativeStart: next })}
+          />
+        </div>
+        <p style={s.hint}>
+          When the live transcript has held still for about
+          {' '}{loop?.defaults?.speculationStableMs ?? 400} ms and reads like a
+          finished thought, she starts thinking on it. If what you actually said
+          turns out to be different, that turn is dropped and she starts again.
+        </p>
+
+        <div style={s.spread}>
+          <span style={s.fieldLabel}>Speak the first clause early</span>
+          <Toggle
+            on={voice.firstClauseAudio ?? true}
+            label="Speak the first clause early"
+            onChange={(next) => patch({ firstClauseAudio: next })}
+          />
+        </div>
+        <p style={s.hint}>
+          Sends the opening clause (up to
+          {' '}{loop?.defaults?.firstClauseChars ?? 60} characters) to the voice
+          server as soon as it exists, rather than waiting for a whole sentence.
+        </p>
+
+        <div style={s.row}>
+          <button style={s.btnPrimary} onClick={handleSave}>Save live settings</button>
+        </div>
+
         <div style={s.field}>
           <label style={s.fieldLabel} htmlFor="voice-model-override">
             Voice model override (this chat)
@@ -387,6 +472,51 @@ export default function VoiceTab() {
             Runs a different (for example faster) model for voice turns in this chat only.
           </p>
           {voiceModelStatus && <p style={s.note}>{voiceModelStatus}</p>}
+        </div>
+      </div>
+
+      {/* S16 item 4: Live mode. */}
+      <div style={s.card}>
+        <div style={s.spread}>
+          <span style={s.fieldLabel}>Live mode (realtime model)</span>
+          <Toggle
+            on={(voice.liveMode ?? false) && liveAvailable}
+            label="Live mode (realtime model)"
+            disabled={!liveAvailable}
+            onChange={(next) => patch({ liveMode: next })}
+          />
+        </div>
+
+        <div style={s.field}>
+          <label style={s.fieldLabel} htmlFor="voice-live-provider">Provider</label>
+          <select
+            id="voice-live-provider"
+            style={{ ...s.select, width: '100%' }}
+            value={voice.liveProvider ?? 'openai-realtime'}
+            disabled={!liveAvailable}
+            onChange={(e) => patch({ liveProvider: e.target.value })}
+          >
+            {realtimeProviders.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.displayName}
+                {p.ready ? '' : ' · no key'}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <p style={s.hint}>
+          Live mode hands the spoken conversation to a realtime speech model and
+          gives it Medusa's own tools (spawn_agent, agent_status, agent_result,
+          list_agents, cancel_agent), so subagents still run here and both sides
+          of the conversation land in the chat as normal messages.
+        </p>
+        {liveReason && <p style={s.hint}>{liveReason}</p>}
+
+        <div style={s.row}>
+          <button style={s.btnPrimary} disabled={!liveAvailable} onClick={handleSave}>
+            Save live mode
+          </button>
         </div>
       </div>
     </div>

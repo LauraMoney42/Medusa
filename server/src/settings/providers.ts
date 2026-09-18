@@ -138,6 +138,19 @@ export function getProviderApiKey(id: string): string | undefined {
   return undefined;
 }
 
+/**
+ * Key lookup for a service that is not a chat provider: cloud STT and the
+ * realtime speech models (S16). They live in the same `providers` map in the
+ * settings file so there is one place to put a key, but they are deliberately
+ * NOT registered in PROVIDERS, because they cannot drive a chat and must not
+ * appear in the model picker.
+ */
+export function getExternalApiKey(id: string, envVar: string): string | undefined {
+  const override = getOverride(id);
+  if (override?.apiKey) return override.apiKey;
+  return process.env[envVar] || undefined;
+}
+
 // ---- Live model listing (with cache + static fallback) --------------------
 
 const MODEL_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes

@@ -594,6 +594,50 @@ export interface MedusaVoice {
   silenceTimeoutMs?: number;
   /** What barge-in does to the in-flight assistant turn. */
   interruptBehavior?: 'abort' | 'queue';
+  /**
+   * S16 "live" additions (docs/2026-09-18_s14_voice_loop_spec.md, "S16 live
+   * mode"). Optional for the same reason as the block above: an older server
+   * simply drops them.
+   */
+  /** Keep one engine process alive per voice chat instead of one per turn. */
+  warmEngine?: boolean;
+  /** Where interim transcripts come from while you are still talking. */
+  partials?: 'off' | 'local' | 'deepgram';
+  /** Start the engine turn on a stable partial, before the final transcript. */
+  speculativeStart?: boolean;
+  /** Speak the first clause of a reply rather than waiting for a sentence. */
+  firstClauseAudio?: boolean;
+  /** Hand the spoken conversation to a realtime speech model. */
+  liveMode?: boolean;
+  liveProvider?: string;
+}
+
+/** One realtime (Live mode) provider and whether it has a key. */
+export interface RealtimeProviderStatus {
+  id: string;
+  displayName: string;
+  ready: boolean;
+  reason?: string;
+}
+
+/** GET /api/voice/status, the voice loop's own readiness report. */
+export interface VoiceLoopStatus {
+  enabled: boolean;
+  ready: boolean;
+  defaults?: {
+    firstClauseChars?: number;
+    partialIntervalMs?: number;
+    speculationStableMs?: number;
+    speculationDivergence?: number;
+  };
+  realtime?: {
+    implemented: boolean;
+    providers: RealtimeProviderStatus[];
+  };
+}
+
+export function fetchVoiceLoopStatus(): Promise<VoiceLoopStatus> {
+  return request<VoiceLoopStatus>('/api/voice/status');
 }
 
 export type ToolScope = 'read' | 'write' | 'shell';

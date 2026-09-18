@@ -20,7 +20,12 @@ import type { Server as IOServer } from "socket.io";
 import type { Socket } from "socket.io";
 import type { SessionStore } from "../sessions/store.js";
 import type { ProcessManager } from "../claude/process-manager.js";
-import { getSttProvider, getTtsProvider } from "../voice/providers.js";
+import { readVoice } from "../packs/store.js";
+import {
+  getSttProvider,
+  getStreamingSttProvider,
+  getTtsProvider,
+} from "../voice/providers.js";
 import { VoiceSession, type VoiceMode } from "../voice/session.js";
 import type { VadOptions } from "../voice/vad.js";
 import type { BargeInOptions } from "../voice/barge-in.js";
@@ -127,6 +132,17 @@ function handleTappedEvent(session: VoiceSession, event: string, payload: unknow
 
 /** Build the session's `VoiceSession`, wiring it to this server's services. */
 function createSession(io: IOServer, sessionId: string, deps: VoiceHandlerDeps): VoiceSession {
+  // The S16 knobs live on the same account-wide voice pack as the rest of
+  // Settings > Voice. They are read here rather than taken from `voice:start`
+  // so the client's voice bar does not have to know about them at all.
+  let settings: ReturnType<typeof readVoice> | null = null;
+  try {
+    settings = readVoice();
+  } catch (err) {
+    console.warn("[voice] Could not read voice settings, using defaults:", err);
+  }
+  const partials = getStreamingSttProvider(settings?.partials ?? "local");
+
   return new VoiceSession({
     sessionId,
     emit: (event, payload) => io.to(sessionId).emit(event, payload),
@@ -154,6 +170,11 @@ function createSession(io: IOServer, sessionId: string, deps: VoiceHandlerDeps):
     isBusy: () => deps.processManager.isSessionBusy(sessionId),
     stt: getSttProvider(),
     tts: getTtsProvider(),
+    partials,
+    speculation: { enabled: settings?.speculativeStart ?? true },
+    // 0 means "wait for a whole sentence", the S14 behavior.
+    firstClauseChars: (settings?.firstClauseAudio ?? true) ? undefined : 0,
+    warm: () => deps.processManager.isWarmMode(sessionId),
   });
 }
 
@@ -191,6 +212,25 @@ export function registerVoiceHandlers(
         session = createSession(io, sessionId, deps);
         sessions.set(sessionId, session);
       }
+      // Warm engine (S16): a voice session routes its turns through the
+      // long-lived variant of its engine, so the CLI's start-up is paid once
+      // per chat instead of once per sentence. On by default, and a no-op for
+      // an engine with no warm variant.
+      let warmWanted = true;
+      try {
+        warmWanted = readVoice().warmEngine;
+      } catch {
+        // Defaults win when the pack cannot be read.
+      }
+      const engineId = deps.processManager.setWarmMode(sessionId, warmWanted);
+      if (engineId) {
+        io.to(sessionId).emit("activity:event", {
+          sessionId,
+          ts: new Date().toISOString(),
+          kind: "text",
+          summary: `voice: engine ${engineId}${warmWanted ? " (warm)" : " (cold)"}`,
+        });
+      }
       session.start(mode ?? "always-on", vad, bargeIn);
     }
   );
@@ -210,6 +250,9 @@ export function registerVoiceHandlers(
     session.stop();
     session.dispose();
     sessions.delete(sessionId);
+    // Voice off: typed turns go back to the cold path, which is what the rest
+    // of the app expects and what keeps a warm process from idling forever.
+    deps.processManager.setWarmMode(sessionId, false);
   });
 
   socket.on("voice:interrupt", ({ sessionId }: { sessionId: string }) => {
