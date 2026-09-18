@@ -161,6 +161,70 @@ describe("buildOrchestratorPrompt: the ~/.medusa layer", () => {
     expect(buildOrchestratorPrompt({ workingDir: WORKING_DIR })).not.toContain("## Rules");
   });
 
+  it("appends only the rules enabled in ~/.medusa/rules.json", () => {
+    const rulesDir = path.join(home, ".medusa", "rules");
+    fs.mkdirSync(rulesDir, { recursive: true });
+    fs.writeFileSync(path.join(rulesDir, "on.md"), "RULE-ON");
+    fs.writeFileSync(path.join(rulesDir, "off.md"), "RULE-OFF");
+    fs.writeFileSync(
+      path.join(home, ".medusa", "rules.json"),
+      JSON.stringify({ "on.md": true, "off.md": false })
+    );
+
+    expect(loadRuleFiles()).toEqual(["RULE-ON"]);
+    const prompt = buildOrchestratorPrompt({ engineId: "kimi", workingDir: WORKING_DIR });
+    expect(prompt).toContain("RULE-ON");
+    expect(prompt).not.toContain("RULE-OFF");
+  });
+
+  it("treats a rule missing from rules.json as enabled", () => {
+    const rulesDir = path.join(home, ".medusa", "rules");
+    fs.mkdirSync(rulesDir, { recursive: true });
+    fs.writeFileSync(path.join(rulesDir, "listed.md"), "RULE-LISTED");
+    fs.writeFileSync(path.join(rulesDir, "unlisted.md"), "RULE-UNLISTED");
+    fs.writeFileSync(path.join(home, ".medusa", "rules.json"), JSON.stringify({ "listed.md": true }));
+
+    expect(loadRuleFiles()).toEqual(["RULE-LISTED", "RULE-UNLISTED"]);
+  });
+
+  it("omits the Rules heading when every rule is disabled", () => {
+    const rulesDir = path.join(home, ".medusa", "rules");
+    fs.mkdirSync(rulesDir, { recursive: true });
+    fs.writeFileSync(path.join(rulesDir, "off.md"), "RULE-OFF");
+    fs.writeFileSync(path.join(home, ".medusa", "rules.json"), JSON.stringify({ "off.md": false }));
+    expect(buildOrchestratorPrompt({ workingDir: WORKING_DIR })).not.toContain("## Rules");
+  });
+
+  it("applies the same enabled rule set to every engine", () => {
+    const rulesDir = path.join(home, ".medusa", "rules");
+    fs.mkdirSync(rulesDir, { recursive: true });
+    fs.writeFileSync(path.join(rulesDir, "on.md"), "RULE-ON");
+    fs.writeFileSync(path.join(rulesDir, "off.md"), "RULE-OFF");
+    fs.writeFileSync(
+      path.join(home, ".medusa", "rules.json"),
+      JSON.stringify({ "on.md": true, "off.md": false })
+    );
+    const claude = buildOrchestratorPrompt({ engineId: "claude", workingDir: WORKING_DIR }).replace(
+      /mcp__medusa__/g,
+      ""
+    );
+    const kimi = buildOrchestratorPrompt({ engineId: "kimi", workingDir: WORKING_DIR });
+    expect(claude).toBe(kimi);
+    expect(kimi).toContain("RULE-ON");
+  });
+
+  it("strips persona front matter so the name and greeting never reach the prompt", () => {
+    fs.mkdirSync(path.join(home, ".medusa"), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, ".medusa", "MEDUSA.md"),
+      ['---', 'name: "Hydra"', 'greeting: "SECRET-GREETING"', '---', '', 'You are Hydra.'].join("\n")
+    );
+    const prompt = buildOrchestratorPrompt({ engineId: "kimi", workingDir: WORKING_DIR });
+    expect(prompt.startsWith("You are Hydra.")).toBe(true);
+    expect(prompt).not.toContain("SECRET-GREETING");
+    expect(prompt).not.toContain("---");
+  });
+
   it("lets an explicit rules array override the directory", () => {
     const rulesDir = path.join(home, ".medusa", "rules");
     fs.mkdirSync(rulesDir, { recursive: true });

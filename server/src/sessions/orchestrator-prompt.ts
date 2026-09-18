@@ -13,17 +13,18 @@
  *   2. working folder discipline
  *   3. subagent instructions
  *   4. reply style
- *   5. user rules   (~/.medusa/rules/*.md, alphabetical, all on by default)
+ *   5. user rules   (~/.medusa/rules/*.md, alphabetical, enabled ones only)
  *   6. project notes (the session's own systemPrompt)
+ *
+ * The ~/.medusa layer itself is owned by server/src/packs/store.ts: this module
+ * only reads it, so persona front matter and the rules.json on/off state are
+ * interpreted in exactly one place.
  *
  * The session's systemPrompt is APPENDED, never substituted: per-chat notes
  * refine the orchestrator, they do not replace it.
  */
 
-import fs from "fs";
-import path from "path";
-import os from "os";
-import { fileURLToPath } from "url";
+import { loadEnabledRuleTexts, loadPersonaBody } from "../packs/store.js";
 
 /** Tools the Medusa MCP server exposes (server/src/mcp/tools.ts). */
 const SUBAGENT_TOOLS = [
@@ -35,90 +36,21 @@ const SUBAGENT_TOOLS = [
 ] as const;
 
 /**
- * Last-resort persona, used only when medusa-persona.md cannot be found on
- * disk (for instance a `dist/` deploy without the source tree beside it).
- * Keep it short: the .md file is the real source of truth.
+ * `~/.medusa/MEDUSA.md` (front matter stripped) overrides the bundled persona
+ * wholesale when present.
  */
-const FALLBACK_PERSONA =
-  "You are Medusa, a hands-on coding assistant working with one person in one " +
-  "project folder per chat. Write code, fix bugs, ship features, review diffs. " +
-  "Use your Read, Edit, and shell tools to make real changes rather than " +
-  "describing them. You are not a project manager and you do not produce " +
-  "status dashboards.";
-
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-
-/**
- * Candidate locations for the bundled persona. `tsc` does not copy .md files
- * into dist/, so a compiled build falls back to the source tree next to it.
- */
-const BUNDLED_PERSONA_PATHS = [
-  path.join(HERE, "medusa-persona.md"),
-  path.join(HERE, "..", "..", "src", "sessions", "medusa-persona.md"),
-];
-
-/** Cached because the bundled file ships with the server and cannot change at runtime. */
-let bundledPersonaCache: string | null = null;
-
-function loadBundledPersona(): string {
-  if (bundledPersonaCache !== null) return bundledPersonaCache;
-  for (const candidate of BUNDLED_PERSONA_PATHS) {
-    try {
-      const text = fs.readFileSync(candidate, "utf-8").trim();
-      if (text) {
-        bundledPersonaCache = text;
-        return text;
-      }
-    } catch {
-      // try the next candidate
-    }
-  }
-  bundledPersonaCache = FALLBACK_PERSONA;
-  return FALLBACK_PERSONA;
-}
-
-/**
- * The user's Medusa layer directory. Read through process.env.HOME first so a
- * test (or a sandboxed run) can point the whole layer at a temp directory.
- */
-function medusaDir(): string {
-  return path.join(process.env.HOME || os.homedir(), ".medusa");
-}
-
-/** `~/.medusa/MEDUSA.md` overrides the bundled persona wholesale when present. */
 function loadPersona(): string {
-  try {
-    const text = fs.readFileSync(path.join(medusaDir(), "MEDUSA.md"), "utf-8").trim();
-    if (text) return text;
-  } catch {
-    // no user persona: fall through to the bundled one
-  }
-  return loadBundledPersona();
+  return loadPersonaBody();
 }
 
 /**
- * Every `~/.medusa/rules/*.md`, alphabetical by filename. Each rule file is on
- * by default; per-session toggling happens above this function by passing an
- * explicit `rules` array.
+ * The rule bodies for this turn: every `~/.medusa/rules/*.md` that is enabled
+ * in `~/.medusa/rules.json`, alphabetical by filename. A rule with no entry in
+ * rules.json counts as enabled. Per-session toggling happens above this
+ * function by passing an explicit `rules` array.
  */
 export function loadRuleFiles(): string[] {
-  const dir = path.join(medusaDir(), "rules");
-  let names: string[];
-  try {
-    names = fs.readdirSync(dir);
-  } catch {
-    return [];
-  }
-  const out: string[] = [];
-  for (const name of names.filter((n) => n.endsWith(".md")).sort()) {
-    try {
-      const text = fs.readFileSync(path.join(dir, name), "utf-8").trim();
-      if (text) out.push(text);
-    } catch {
-      // unreadable rule file: skip it rather than failing the turn
-    }
-  }
-  return out;
+  return loadEnabledRuleTexts();
 }
 
 export interface OrchestratorPromptInput {

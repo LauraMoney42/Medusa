@@ -488,3 +488,194 @@ export interface TokenUsagePeriod {
 export function fetchTokenUsage(period: 'day' | 'week' | 'month'): Promise<TokenUsagePeriod> {
   return request<TokenUsagePeriod>(`/api/token-usage?period=${period}`);
 }
+
+// ---- The Medusa layer: persona, rules, theme, voice, toolbox, packs ----
+
+export interface Persona {
+  name: string;
+  greeting: string;
+  personality: string;
+  avatar: string | null;
+}
+
+export interface MedusaRule {
+  name: string;
+  content: string;
+  enabled: boolean;
+}
+
+export interface MedusaTheme {
+  mode: 'dark' | 'light';
+  background: string;
+  surface: string;
+  accent: string;
+  text: string;
+  muted: string;
+  danger: string;
+  font: string;
+  density: 'compact' | 'comfortable';
+  avatar: string | null;
+}
+
+export interface MedusaVoice {
+  engine: string;
+  voiceId: string;
+  speed: number;
+  pitch: number;
+  enabled: boolean;
+}
+
+export type ToolScope = 'read' | 'write' | 'shell';
+
+export interface ToolboxEntry {
+  id: string;
+  label: string;
+  detail: string;
+  enabled: boolean;
+  scope: ToolScope;
+}
+
+export interface Toolbox {
+  servers: ToolboxEntry[];
+  skills: ToolboxEntry[];
+}
+
+export interface RegistryCandidate {
+  id: string;
+  kind: 'server' | 'skill';
+  label: string;
+  detail: string;
+  suggestedScope: ToolScope;
+  homepage: string;
+}
+
+export interface PackManifest {
+  name: string;
+  version: string;
+  author: string;
+  description: string;
+  license: string;
+}
+
+export interface MedusaPack {
+  formatVersion: number;
+  manifest: PackManifest;
+  persona: Persona;
+  rules: MedusaRule[];
+  theme: MedusaTheme;
+  voice: MedusaVoice;
+  toolbox: Toolbox;
+}
+
+export interface InstalledPack {
+  id: string;
+  manifest: PackManifest;
+  ruleCount: number;
+}
+
+export function fetchPersona(): Promise<Persona> {
+  return request<Persona>('/api/medusa/persona');
+}
+
+export function savePersona(persona: Persona): Promise<Persona> {
+  return request<Persona>('/api/medusa/persona', {
+    method: 'PUT',
+    body: JSON.stringify(persona),
+  });
+}
+
+export function resetPersona(): Promise<Persona> {
+  return request<Persona>('/api/medusa/persona/reset', { method: 'POST' });
+}
+
+/** The composed system prompt an engine would receive, for the live preview. */
+export function fetchPromptPreview(
+  personality?: string,
+  workingDir?: string,
+): Promise<{ prompt: string }> {
+  const params = new URLSearchParams();
+  if (personality) params.set('persona', personality);
+  if (workingDir) params.set('workingDir', workingDir);
+  const qs = params.toString();
+  return request<{ prompt: string }>(`/api/medusa/preview${qs ? `?${qs}` : ''}`);
+}
+
+export function fetchRules(): Promise<{ rules: MedusaRule[] }> {
+  return request<{ rules: MedusaRule[] }>('/api/medusa/rules');
+}
+
+export function createRule(name: string, content: string): Promise<MedusaRule> {
+  return request<MedusaRule>('/api/medusa/rules', {
+    method: 'POST',
+    body: JSON.stringify({ name, content }),
+  });
+}
+
+export function setRuleEnabled(name: string, enabled: boolean): Promise<MedusaRule> {
+  return request<MedusaRule>(`/api/medusa/rules/${encodeURIComponent(name)}/enabled`, {
+    method: 'PUT',
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+export function deleteRule(name: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/medusa/rules/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+  });
+}
+
+export function fetchTheme(): Promise<MedusaTheme> {
+  return request<MedusaTheme>('/api/medusa/theme');
+}
+
+export function saveTheme(theme: MedusaTheme): Promise<MedusaTheme> {
+  return request<MedusaTheme>('/api/medusa/theme', { method: 'PUT', body: JSON.stringify(theme) });
+}
+
+export function fetchVoiceSettings(): Promise<MedusaVoice> {
+  return request<MedusaVoice>('/api/medusa/voice');
+}
+
+export function saveVoiceSettings(voice: MedusaVoice): Promise<MedusaVoice> {
+  return request<MedusaVoice>('/api/medusa/voice', { method: 'PUT', body: JSON.stringify(voice) });
+}
+
+export function fetchToolbox(): Promise<Toolbox> {
+  return request<Toolbox>('/api/medusa/toolbox');
+}
+
+export function saveToolbox(toolbox: Toolbox): Promise<Toolbox> {
+  return request<Toolbox>('/api/medusa/toolbox', { method: 'PUT', body: JSON.stringify(toolbox) });
+}
+
+/** Registry search proposes candidates only; adding one is a separate click. */
+export function searchRegistry(q: string): Promise<{ candidates: RegistryCandidate[] }> {
+  return request<{ candidates: RegistryCandidate[] }>(
+    `/api/medusa/registry?q=${encodeURIComponent(q)}`,
+  );
+}
+
+export function fetchPacks(): Promise<{ packs: InstalledPack[] }> {
+  return request<{ packs: InstalledPack[] }>('/api/packs');
+}
+
+export function exportPack(manifest: Partial<PackManifest>): Promise<MedusaPack> {
+  return request<MedusaPack>('/api/packs/export', {
+    method: 'POST',
+    body: JSON.stringify(manifest),
+  });
+}
+
+export function importPack(
+  pack: unknown,
+): Promise<{ ok: boolean; manifest: PackManifest; backup: string; packs: InstalledPack[] }> {
+  return request('/api/packs/import', { method: 'POST', body: JSON.stringify(pack) });
+}
+
+export function applyPack(id: string): Promise<{ ok: boolean; manifest: PackManifest }> {
+  return request(`/api/packs/${encodeURIComponent(id)}/apply`, { method: 'POST' });
+}
+
+export function removePack(id: string): Promise<{ ok: boolean; packs: InstalledPack[] }> {
+  return request(`/api/packs/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}

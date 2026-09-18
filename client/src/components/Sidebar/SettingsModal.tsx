@@ -4,6 +4,11 @@ import type { SettingsResponse, OneNoteStatus, OneNoteDeviceCode, HeadroomStatus
 import { useTtsStore } from '../../stores/ttsStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import UsagePane from '../Usage/UsagePane';
+import PersonaTab from '../Settings/PersonaTab';
+import ThemeTab from '../Settings/ThemeTab';
+import VoiceTab from '../Settings/VoiceTab';
+import ToolboxTab from '../Settings/ToolboxTab';
+import PacksTab from '../Settings/PacksTab';
 import { getSocket } from '../../socket';
 
 interface SettingsModalProps {
@@ -14,11 +19,28 @@ interface SettingsModalProps {
  * Usage and Stop All left the left rail (2026-09-17 addendum) but kept their
  * functionality, so they live here as tabs. The per-chat abort on the send
  * button is unaffected.
+ *
+ * Persona, Theme, Voice, Toolbox and Packs are the Medusa layer editors (S13):
+ * everything they change lives in ~/.medusa and reaches every engine through
+ * the one composed system prompt, so none of them is engine specific.
  */
-type SettingsTab = 'general' | 'usage' | 'stop';
+type SettingsTab =
+  | 'general'
+  | 'persona'
+  | 'theme'
+  | 'voice'
+  | 'toolbox'
+  | 'packs'
+  | 'usage'
+  | 'stop';
 
 const TABS: Array<{ id: SettingsTab; label: string }> = [
   { id: 'general', label: 'General' },
+  { id: 'persona', label: 'Persona' },
+  { id: 'theme', label: 'Theme' },
+  { id: 'voice', label: 'Voice' },
+  { id: 'toolbox', label: 'Toolbox' },
+  { id: 'packs', label: 'Packs' },
   { id: 'usage', label: 'Usage' },
   { id: 'stop', label: 'Stop All' },
 ];
@@ -171,6 +193,12 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
             </button>
           ))}
         </div>
+
+        {tab === 'persona' && <div style={styles.tabPane}><PersonaTab /></div>}
+        {tab === 'theme' && <div style={styles.tabPane}><ThemeTab /></div>}
+        {tab === 'voice' && <div style={styles.tabPane}><VoiceTab /></div>}
+        {tab === 'toolbox' && <div style={styles.tabPane}><ToolboxTab /></div>}
+        {tab === 'packs' && <div style={styles.tabPane}><PacksTab /></div>}
 
         {tab === 'usage' && (
           <div style={styles.tabPane}>
@@ -478,6 +506,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   tabBar: {
     display: 'flex',
+    // Eight tabs do not fit one line in a 520px modal, so they wrap.
+    flexWrap: 'wrap',
     gap: 2,
     marginBottom: 16,
     borderBottom: '1px solid rgba(255,255,255,0.08)',
