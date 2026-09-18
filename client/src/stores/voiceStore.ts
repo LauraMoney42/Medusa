@@ -48,6 +48,13 @@ interface VoiceState {
   echoGuardEnabled: boolean;
   /** 0..1 gain applied to the sent mic signal while speaking, when enabled. */
   echoGuardDuckFactor: number;
+  /**
+   * Barge-in thresholds (Settings > Voice > Advanced), sent to the server
+   * on `voice:start`. Only consulted while thinking/speaking; normal
+   * listening still uses the plain VAD sensitivity dial.
+   */
+  bargeInEnergyThreshold: number;
+  bargeInMinSpeechMs: number;
   /** Latest voice:latency reading, for the VoiceBar and a badge in Activity. */
   lastLatency: VoiceLatency | null;
   /** True while the socket has an active voice:start for this session. */
@@ -63,6 +70,8 @@ interface VoiceActions {
   setSpeakerMuted: (muted: boolean) => void;
   setEchoGuardEnabled: (enabled: boolean) => void;
   setEchoGuardDuckFactor: (factor: number) => void;
+  setBargeInEnergyThreshold: (threshold: number) => void;
+  setBargeInMinSpeechMs: (ms: number) => void;
   setLastLatency: (latency: VoiceLatency) => void;
   setActive: (active: boolean) => void;
   setInputLevel: (level: number) => void;
@@ -76,7 +85,13 @@ export const useVoiceStore = create<VoiceState & VoiceActions>((set) => ({
   partialTranscript: '',
   speakerMuted: ls('medusa-voice-speaker-muted', '0') === '1',
   echoGuardEnabled: ls('medusa-voice-echo-guard', '1') === '1',
-  echoGuardDuckFactor: Number(ls('medusa-voice-echo-duck', '0.35')) || 0.35,
+  // 0.15 (not 0.35): laptop-speaker echo easily tripped the old, higher
+  // duck level's leftover mic signal past the VAD gate. The barge-in
+  // detector (server/src/voice/barge-in.ts) is the real fix for that, but a
+  // lower duck factor gives it a quieter signal to work with.
+  echoGuardDuckFactor: Number(ls('medusa-voice-echo-duck', '0.15')) || 0.15,
+  bargeInEnergyThreshold: Number(ls('medusa-voice-bargein-energy', '2000')) || 2000,
+  bargeInMinSpeechMs: Number(ls('medusa-voice-bargein-ms', '300')) || 300,
   lastLatency: null,
   active: false,
   inputLevel: 0,
@@ -98,6 +113,14 @@ export const useVoiceStore = create<VoiceState & VoiceActions>((set) => ({
   setEchoGuardDuckFactor: (echoGuardDuckFactor) => {
     save('medusa-voice-echo-duck', String(echoGuardDuckFactor));
     set({ echoGuardDuckFactor });
+  },
+  setBargeInEnergyThreshold: (bargeInEnergyThreshold) => {
+    save('medusa-voice-bargein-energy', String(bargeInEnergyThreshold));
+    set({ bargeInEnergyThreshold });
+  },
+  setBargeInMinSpeechMs: (bargeInMinSpeechMs) => {
+    save('medusa-voice-bargein-ms', String(bargeInMinSpeechMs));
+    set({ bargeInMinSpeechMs });
   },
   setLastLatency: (lastLatency) => set({ lastLatency }),
   setActive: (active) => set({ active }),

@@ -106,6 +106,18 @@ describe("Vad segmentation", () => {
     expect(starts).toBe(2);
   });
 
+  it("fires onFrame for every processed frame, speech or not, independent of the gate", () => {
+    const vad = new Vad({ frameMs: 20 });
+    const energies: number[] = [];
+    vad.onFrame = (e) => energies.push(e);
+    vad.push(concat(silence(60), tone(60)));
+    // 60 ms silence + 60 ms tone at 20 ms/frame = 6 frames, regardless of
+    // whether the base VAD gate ever opens.
+    expect(energies).toHaveLength(6);
+    expect(energies.slice(0, 3).every((e) => e < 50)).toBe(true);
+    expect(energies.slice(3).every((e) => e > 1000)).toBe(true);
+  });
+
   it("keeps pre-roll audio so the onset is not clipped", () => {
     const withPreRoll = new Vad({ preRollMs: 300 });
     const without = new Vad({ preRollMs: 0 });

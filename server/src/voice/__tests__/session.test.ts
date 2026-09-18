@@ -210,7 +210,7 @@ describe("VoiceSession barge-in", () => {
     expect(h.eventsOf("voice:speaking-end")).toHaveLength(1);
   });
 
-  it("stops playback on speech start, before the transcript exists", async () => {
+  it("stops playback once the onset sustains past the barge-in bar, before the transcript exists", async () => {
     const h = harness({ synthDelayMs: 5 });
     h.session.start();
     h.session.onStreamStart();
@@ -218,9 +218,28 @@ describe("VoiceSession barge-in", () => {
     await wait(30);
     expect(h.eventsOf("voice:stop-audio")).toHaveLength(0);
 
-    // Only the speech onset: no silence yet, so no transcript can exist.
-    h.session.pushAudio(concat(silence(60), tone(200)));
+    // A loud, sustained onset (well past the 300 ms bar): no silence yet, so
+    // no transcript can exist, but playback should already have stopped.
+    h.session.pushAudio(concat(silence(60), tone(320)));
     expect(h.eventsOf("voice:stop-audio")).toHaveLength(1);
+    expect(h.abort).not.toHaveBeenCalled();
+  });
+
+  it("does NOT stop playback for a short or weak onset (her own echo)", async () => {
+    const h = harness({ synthDelayMs: 5 });
+    h.session.start();
+    h.session.onStreamStart();
+    h.session.onDelta("A long answer that keeps going. ");
+    await wait(30);
+
+    // A brief loud click, well under the 300 ms sustain bar.
+    h.session.pushAudio(concat(silence(60), tone(60)));
+    expect(h.eventsOf("voice:stop-audio")).toHaveLength(0);
+
+    // A quiet, sustained onset (below the 2000 default bar): typical
+    // playback leaking back through laptop speakers.
+    h.session.pushAudio(concat(silence(600), tone(400, 1200)));
+    expect(h.eventsOf("voice:stop-audio")).toHaveLength(0);
     expect(h.abort).not.toHaveBeenCalled();
   });
 
@@ -242,6 +261,34 @@ describe("VoiceSession barge-in", () => {
     h.session.start();
     h.session.interrupt();
     expect(h.abort).not.toHaveBeenCalled();
+  });
+
+  it("logs and drops a transcript produced by a weak/short echo onset instead of posting it", async () => {
+    const h = harness({ transcript: "her own words coming back" });
+    h.session.start();
+    h.session.onStreamStart();
+    h.session.onDelta("A long answer that keeps going. ");
+    await wait(30);
+
+    // Quiet, sustained playback leakage: never crosses the barge-in bar.
+    h.session.pushAudio(concat(silence(60), tone(400, 1200), silence(800)));
+    await wait(20);
+
+    expect(h.eventsOf("voice:stop-audio")).toHaveLength(0);
+    expect(h.sent).toHaveLength(0);
+    expect(h.activity.some((a) => a.includes("ignored echo onset"))).toBe(true);
+    expect(h.activity.some((a) => a.includes("dropped echo transcript"))).toBe(true);
+  });
+
+  it("logs a barge-in confirmation once the sustained window passes", async () => {
+    const h = harness();
+    h.session.start();
+    h.session.onStreamStart();
+    h.session.onDelta("Talking for a while now. ");
+    await wait(20);
+    h.session.pushAudio(concat(silence(60), tone(320)));
+    expect(h.activity.some((a) => a.includes("barge-in confirmed"))).toBe(true);
+    expect(h.session.getEvents().some((e) => e.type === "barge-in")).toBe(true);
   });
 
   it("sends the bare transcript when nothing had been spoken yet", async () => {

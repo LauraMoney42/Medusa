@@ -57,6 +57,8 @@ export default function VoiceMicButton({ sessionId, inputEmpty = true }: VoiceMi
   const speakerMuted = useVoiceStore((s) => s.speakerMuted);
   const echoGuardEnabled = useVoiceStore((s) => s.echoGuardEnabled);
   const echoGuardDuckFactor = useVoiceStore((s) => s.echoGuardDuckFactor);
+  const bargeInEnergyThreshold = useVoiceStore((s) => s.bargeInEnergyThreshold);
+  const bargeInMinSpeechMs = useVoiceStore((s) => s.bargeInMinSpeechMs);
   const active = useVoiceStore((s) => s.active);
   const setActive = useVoiceStore((s) => s.setActive);
   const reset = useVoiceStore((s) => s.reset);
@@ -79,6 +81,13 @@ export default function VoiceMicButton({ sessionId, inputEmpty = true }: VoiceMi
   const vadOptionsRef = useRef<{ silenceMs?: number; energyThreshold?: number } | undefined>(
     undefined,
   );
+  // Settings > Voice > Advanced's barge-in thresholds, mirrored into a ref
+  // so the voice:start call sites below (some in effects with narrow dep
+  // arrays) always send the current value without needing to re-run.
+  const bargeInOptionsRef = useRef({ bargeInEnergyThreshold, bargeInMinSpeechMs });
+  useEffect(() => {
+    bargeInOptionsRef.current = { bargeInEnergyThreshold, bargeInMinSpeechMs };
+  }, [bargeInEnergyThreshold, bargeInMinSpeechMs]);
 
   const ensurePlaybackContext = useCallback(() => {
     if (!playbackCtxRef.current) {
@@ -150,10 +159,38 @@ export default function VoiceMicButton({ sessionId, inputEmpty = true }: VoiceMi
     schedulerRef.current?.setMuted(speakerMuted);
   }, [speakerMuted]);
 
-  // Echo guard: duck the sent mic level while the assistant is speaking.
+  // Echo guard: duck the sent mic level from speaking-start until 400 ms
+  // after speaking-end, not just while `loopState === 'speaking'`. Her
+  // echo lingers in the room (and in the speaker's own decay) for a beat
+  // after playback stops, so releasing the duck the instant the state
+  // flips back to "listening" left a short window where a full-gain mic
+  // could still trip the barge-in detector on nothing but room echo.
+  const duckReleaseTimerRef = useRef<number | null>(null);
   useEffect(() => {
-    const factor = loopState === 'speaking' && echoGuardEnabled ? echoGuardDuckFactor : 1;
-    micRef.current?.setSentGain(factor);
+    if (duckReleaseTimerRef.current != null) {
+      window.clearTimeout(duckReleaseTimerRef.current);
+      duckReleaseTimerRef.current = null;
+    }
+    if (loopState === 'speaking') {
+      micRef.current?.setSentGain(echoGuardEnabled ? echoGuardDuckFactor : 1);
+      return;
+    }
+    if (!echoGuardEnabled) {
+      micRef.current?.setSentGain(1);
+      return;
+    }
+    // Just left "speaking": hold the duck for the same 400 ms grace window
+    // the server's barge-in detector stays armed for.
+    duckReleaseTimerRef.current = window.setTimeout(() => {
+      micRef.current?.setSentGain(1);
+      duckReleaseTimerRef.current = null;
+    }, 400);
+    return () => {
+      if (duckReleaseTimerRef.current != null) {
+        window.clearTimeout(duckReleaseTimerRef.current);
+        duckReleaseTimerRef.current = null;
+      }
+    };
   }, [loopState, echoGuardEnabled, echoGuardDuckFactor]);
 
   // Fetch the account's saved VAD gains for voice:start, and (only when this
@@ -196,7 +233,7 @@ export default function VoiceMicButton({ sessionId, inputEmpty = true }: VoiceMi
       ensurePlaybackContext();
       try {
         await startCapture();
-        getSocket().emit('voice:start', { sessionId, mode: 'always-on', vad: vadOptionsRef.current });
+        getSocket().emit('voice:start', { sessionId, mode: 'always-on', vad: vadOptionsRef.current, bargeIn: bargeInOptionsRef.current });
         setActive(true);
         setLoopState('listening');
         setError(null);
@@ -261,7 +298,7 @@ export default function VoiceMicButton({ sessionId, inputEmpty = true }: VoiceMi
     ensurePlaybackContext(); // a user gesture, so safe to unlock the AudioContext here
     try {
       await startCapture();
-      getSocket().emit('voice:start', { sessionId, mode: 'always-on', vad: vadOptionsRef.current });
+      getSocket().emit('voice:start', { sessionId, mode: 'always-on', vad: vadOptionsRef.current, bargeIn: bargeInOptionsRef.current });
       setMode('always-on');
       setActive(true);
       setLoopState('listening');
@@ -326,7 +363,7 @@ export default function VoiceMicButton({ sessionId, inputEmpty = true }: VoiceMi
     ensurePlaybackContext();
     try {
       await startCapture();
-      getSocket().emit('voice:start', { sessionId, mode: 'push-to-talk', vad: vadOptionsRef.current });
+      getSocket().emit('voice:start', { sessionId, mode: 'push-to-talk', vad: vadOptionsRef.current, bargeIn: bargeInOptionsRef.current });
       setActive(true);
       setLoopState('listening');
     } catch (err) {

@@ -16,6 +16,7 @@ import type { SttProvider, TtsProvider } from "./providers.js";
 import { SttStream } from "./stt-stream.js";
 import { TtsStream, type AudioChunk } from "./tts-stream.js";
 import type { VadOptions } from "./vad.js";
+import { BargeInDetector, type BargeInOptions } from "./barge-in.js";
 
 export type VoiceState = "idle" | "listening" | "transcribing" | "thinking" | "speaking";
 
@@ -50,7 +51,18 @@ export interface VoiceSessionDeps {
   /** Kokoro voice id; falls back to the configured default. */
   voice?: string;
   vad?: VadOptions;
+  bargeIn?: BargeInOptions;
 }
+
+/** One entry in a session's debug ring buffer (`GET /api/voice/status?events=1`). */
+export interface VoiceEvent {
+  ts: number;
+  type: "state" | "ignored-onset" | "barge-in" | "latency";
+  detail: Record<string, unknown>;
+}
+
+/** Ring buffer size for `VoiceSession.getEvents()`. */
+const EVENT_LOG_SIZE = 200;
 
 /** Prefix prepended to the re-prompt after the user talks over the reply. */
 export function interruptionPrefix(lastSpoken: string): string {
@@ -84,9 +96,27 @@ export class VoiceSession {
   /** Set while a voice-originated send is in flight, so the tap can tag it. */
   private awaitingTurn = false;
 
+  /** Distinguishes her own echo from a real interruption; armed while thinking/speaking. */
+  private bargeIn: BargeInDetector;
+  /** True when the in-flight utterance was flagged as echo; its transcript gets dropped. */
+  private ignoredEchoOnset = false;
+  /** Last `EVENT_LOG_SIZE` voice events, for the owner to pull via the status endpoint. */
+  private readonly events: VoiceEvent[] = [];
+
   constructor(deps: VoiceSessionDeps) {
     this.sessionId = deps.sessionId;
     this.deps = deps;
+    this.bargeIn = new BargeInDetector(deps.bargeIn);
+  }
+
+  /** Debug ring buffer: state changes, onsets, ignored onsets, barge-ins, latencies. */
+  getEvents(): VoiceEvent[] {
+    return this.events.slice();
+  }
+
+  private logEvent(type: VoiceEvent["type"], detail: Record<string, unknown>): void {
+    this.events.push({ ts: Date.now(), type, detail });
+    if (this.events.length > EVENT_LOG_SIZE) this.events.shift();
   }
 
   get currentState(): VoiceState {
@@ -105,8 +135,9 @@ export class VoiceSession {
   // ---- lifecycle -------------------------------------------------------
 
   /** Voice mode on. Idempotent: a reconnecting client may call it again. */
-  start(mode: VoiceMode = "always-on", vad?: VadOptions): void {
+  start(mode: VoiceMode = "always-on", vad?: VadOptions, bargeIn?: BargeInOptions): void {
     this.mode = mode === "off" ? "always-on" : mode;
+    if (bargeIn) this.bargeIn = new BargeInDetector(bargeIn);
     if (!this.stt) {
       this.stt = new SttStream({
         provider: this.deps.stt,
@@ -114,6 +145,7 @@ export class VoiceSession {
         onSpeechStart: () => this.handleSpeechStart(),
         onSpeechEnd: (u) => {
           this.speechEndedAt = u.endedAt;
+          this.finishBargeInOnset();
           this.setState("transcribing");
         },
         onTranscript: (text, meta) => this.handleTranscript(text, meta.sttMs),
@@ -122,6 +154,9 @@ export class VoiceSession {
           this.setState("listening");
         },
       });
+      // Raw frame energy, independent of the base VAD's own gate, so the
+      // barge-in detector can sample the mic continuously while she talks.
+      this.stt.vad.onFrame = (energy) => this.handleVadFrame(energy);
     }
     this.setState("listening");
   }
@@ -138,6 +173,7 @@ export class VoiceSession {
     this.stt?.close();
     this.stt = null;
     this.stopSpeaking();
+    this.bargeIn.deactivate();
     this.mode = "off";
     this.setState("idle");
   }
@@ -159,25 +195,62 @@ export class VoiceSession {
     this.stt = null;
     this.tts?.cancel();
     this.tts = null;
+    this.bargeIn.deactivate();
     this.state = "idle";
   }
 
   // ---- inbound audio ---------------------------------------------------
 
   /**
-   * The VAD gate opened. Speech while she is talking is the fast half of
-   * barge-in: audio stops now (about 100 ms), and the abort plus re-prompt
-   * follow once the transcript lands.
+   * The VAD gate opened. While she is idle or listening this means nothing
+   * extra; the base VAD's own onset already segments the utterance. While
+   * she is thinking, speaking, or in the short grace window after, this
+   * onset also becomes a barge-in candidate: `handleVadFrame` decides,
+   * frame by frame, whether it is a real interruption (sustained loud
+   * speech) or just her own voice leaking back through the mic.
    */
   private handleSpeechStart(): void {
-    if (this.state === "speaking" || this.tts?.speaking) {
-      this.bargingIn = true;
-      this.stopSpeaking();
-      this.deps.activity("voice: barge-in, stopped playback");
+    if (this.bargeIn.isActive) this.bargeIn.beginOnset();
+  }
+
+  /** Raw mic energy for one frame, from `Vad.onFrame`. Barge-in only. */
+  private handleVadFrame(energy: number): void {
+    const frameMs = this.stt?.vad.options.frameMs ?? 20;
+    const decision = this.bargeIn.pushFrame(energy, frameMs);
+    if (decision.kind !== "barging") return;
+    // Real interruption, confirmed: stop audio now (about 100 ms, the time
+    // the `voice:stop-audio` emit and client playback flush actually take).
+    this.bargingIn = true;
+    this.ignoredEchoOnset = false;
+    this.stopSpeaking();
+    const energyRounded = Math.round(decision.energy);
+    this.deps.activity(`voice: barge-in confirmed (energy ${energyRounded}, ms ${decision.ms})`);
+    this.logEvent("barge-in", { energy: energyRounded, ms: decision.ms });
+  }
+
+  /** The VAD onset that started this utterance just closed. */
+  private finishBargeInOnset(): void {
+    const ignored = this.bargeIn.endOnset();
+    if (!ignored) {
+      this.ignoredEchoOnset = false;
+      return;
     }
+    this.ignoredEchoOnset = true;
+    const energyRounded = Math.round(ignored.energy);
+    this.deps.activity(`voice: ignored echo onset (energy ${energyRounded}, ms ${ignored.ms})`);
+    this.logEvent("ignored-onset", { energy: energyRounded, ms: ignored.ms });
   }
 
   private handleTranscript(text: string, sttMs: number): void {
+    // This utterance started during speaking/thinking and never earned a
+    // real barge-in: it is her own words coming back through the mic, not
+    // something the user said. Drop it before it becomes a chat message.
+    if (this.ignoredEchoOnset) {
+      this.ignoredEchoOnset = false;
+      this.deps.activity(`voice: dropped echo transcript "${text}"`);
+      return;
+    }
+
     this.sttMs = sttMs;
     this.transcriptAt = Date.now();
     const messageId = randomUUID();
@@ -217,6 +290,10 @@ export class VoiceSession {
   onStreamStart(): void {
     if (!this.active) return;
     this.awaitingTurn = false;
+    // Barge-in detection is armed from "thinking" onward, not just once
+    // audio starts, so a fast interruption during the thinking gap is
+    // still caught by the sustained-energy bar rather than the plain VAD.
+    this.bargeIn.activate();
     this.tts?.cancel();
     this.tts = new TtsStream({
       synthesize: (t, v) => this.deps.tts.synthesize(t, v),
@@ -226,6 +303,7 @@ export class VoiceSession {
       onStart: () => {
         this.speakingStartEmitted = true;
         this.setState("speaking");
+        this.bargeIn.beginPlayback();
         this.deps.emit("voice:speaking-start", { sessionId: this.sessionId });
       },
       onEnd: () => this.handleSpeakingEnd(),
@@ -303,6 +381,10 @@ export class VoiceSession {
       this.deps.emit("voice:speaking-end", { sessionId: this.sessionId });
       this.speakingStartEmitted = false;
     }
+    // She is no longer speaking; keep the barge-in bar armed for the grace
+    // window (her echo can linger in the room after playback stops) before
+    // handing back to the plain VAD.
+    this.bargeIn.deactivateAfterGrace();
   }
 
   private handleSpeakingEnd(): void {
@@ -310,6 +392,7 @@ export class VoiceSession {
       this.deps.emit("voice:speaking-end", { sessionId: this.sessionId });
       this.speakingStartEmitted = false;
     }
+    this.bargeIn.deactivateAfterGrace();
     if (!this.latencyReported) this.reportLatency();
     this.tts = null;
     if (this.state !== "idle") this.setState("listening");
@@ -333,6 +416,7 @@ export class VoiceSession {
         `(stt ${latency.sttMs} ms, first token ${latency.firstTokenMs} ms, ` +
         `first audio ${latency.firstAudioMs} ms)`
     );
+    this.logEvent("latency", { ...latency });
   }
 
   // ---- state machine ---------------------------------------------------
@@ -341,5 +425,6 @@ export class VoiceSession {
     if (this.state === next) return;
     this.state = next;
     this.deps.emit("voice:state", { sessionId: this.sessionId, state: next });
+    this.logEvent("state", { state: next });
   }
 }

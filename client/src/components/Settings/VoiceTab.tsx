@@ -49,6 +49,17 @@ export default function VoiceTab() {
   // client-local voiceStore field.
   const speakerMuted = useVoiceStore((st) => st.speakerMuted);
   const setSpeakerMuted = useVoiceStore((st) => st.setSpeakerMuted);
+  // Echo guard + barge-in: client-local (localStorage), not part of the
+  // account's voice.json pack, since they tune this machine's mic/speaker
+  // setup rather than a voice preference that should follow the account.
+  const echoGuardEnabled = useVoiceStore((st) => st.echoGuardEnabled);
+  const setEchoGuardEnabled = useVoiceStore((st) => st.setEchoGuardEnabled);
+  const echoGuardDuckFactor = useVoiceStore((st) => st.echoGuardDuckFactor);
+  const setEchoGuardDuckFactor = useVoiceStore((st) => st.setEchoGuardDuckFactor);
+  const bargeInEnergyThreshold = useVoiceStore((st) => st.bargeInEnergyThreshold);
+  const setBargeInEnergyThreshold = useVoiceStore((st) => st.setBargeInEnergyThreshold);
+  const bargeInMinSpeechMs = useVoiceStore((st) => st.bargeInMinSpeechMs);
+  const setBargeInMinSpeechMs = useVoiceStore((st) => st.setBargeInMinSpeechMs);
 
   useEffect(() => {
     api.fetchVoiceSettings().then(setVoice).catch((e: Error) => setError(e.message));
@@ -271,7 +282,88 @@ export default function VoiceTab() {
         <div style={s.row}>
           <button style={s.btnPrimary} onClick={handleSave}>Save voice loop settings</button>
         </div>
+      </div>
 
+      {/* Echo guard + barge-in: catches her own voice coming back through the
+          mic on laptop speakers so a reply doesn't silently drop to text. */}
+      <div style={s.card}>
+        <div style={s.spread}>
+          <span style={s.fieldLabel}>Echo guard (duck mic while she talks)</span>
+          <Toggle
+            on={echoGuardEnabled}
+            label="Echo guard"
+            onChange={setEchoGuardEnabled}
+          />
+        </div>
+
+        <div style={s.field}>
+          <label style={s.fieldLabel} htmlFor="voice-echo-duck">
+            Echo guard duck level {Math.round(echoGuardDuckFactor * 100)}%
+          </label>
+          <input
+            id="voice-echo-duck"
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            style={s.slider}
+            value={echoGuardDuckFactor}
+            disabled={!echoGuardEnabled}
+            onChange={(e) => setEchoGuardDuckFactor(Number(e.target.value))}
+          />
+          <p style={s.hint}>
+            How much the sent mic level is turned down while she is speaking (and for 400 ms
+            after). Lower is safer against echo but also quieter for a real interruption to cut
+            through; 15% is the default.
+          </p>
+        </div>
+
+        <div style={s.field}>
+          <label style={s.fieldLabel} htmlFor="voice-bargein-energy">
+            Barge-in loudness bar {bargeInEnergyThreshold}
+          </label>
+          <input
+            id="voice-bargein-energy"
+            type="range"
+            min={500}
+            max={8000}
+            step={100}
+            style={s.slider}
+            value={bargeInEnergyThreshold}
+            onChange={(e) => setBargeInEnergyThreshold(Number(e.target.value))}
+          />
+          <p style={s.hint}>
+            How loud, in raw mic energy, a sound has to be while she's thinking or speaking
+            before it can count as you talking over her. The server also raises this
+            automatically above whatever it measures as your own echo level, so loud speaker
+            volume can't defeat it; this is the floor. Default 2000 (4x normal listening
+            sensitivity).
+          </p>
+        </div>
+
+        <div style={s.field}>
+          <label style={s.fieldLabel} htmlFor="voice-bargein-ms">
+            Barge-in hold time {bargeInMinSpeechMs} ms
+          </label>
+          <input
+            id="voice-bargein-ms"
+            type="range"
+            min={100}
+            max={800}
+            step={50}
+            style={s.slider}
+            value={bargeInMinSpeechMs}
+            onChange={(e) => setBargeInMinSpeechMs(Number(e.target.value))}
+          />
+          <p style={s.hint}>
+            How long a loud sound has to keep going, continuously, before it's treated as a real
+            interruption instead of a click or a stray echo. Lower interrupts faster but is more
+            likely to catch a brief noise; default 300 ms.
+          </p>
+        </div>
+      </div>
+
+      <div style={s.card}>
         <div style={s.field}>
           <label style={s.fieldLabel} htmlFor="voice-model-override">
             Voice model override (this chat)

@@ -23,6 +23,7 @@ import type { ProcessManager } from "../claude/process-manager.js";
 import { getSttProvider, getTtsProvider } from "../voice/providers.js";
 import { VoiceSession, type VoiceMode } from "../voice/session.js";
 import type { VadOptions } from "../voice/vad.js";
+import type { BargeInOptions } from "../voice/barge-in.js";
 
 export interface VoiceHandlerDeps {
   store: SessionStore;
@@ -169,7 +170,17 @@ export function registerVoiceHandlers(
 
   socket.on(
     "voice:start",
-    ({ sessionId, mode, vad }: { sessionId: string; mode?: VoiceMode; vad?: VadOptions }) => {
+    ({
+      sessionId,
+      mode,
+      vad,
+      bargeIn,
+    }: {
+      sessionId: string;
+      mode?: VoiceMode;
+      vad?: VadOptions;
+      bargeIn?: BargeInOptions;
+    }) => {
       if (!sessionId || !deps.store.get(sessionId)) {
         socket.emit("error", { message: "Session not found" });
         return;
@@ -180,7 +191,7 @@ export function registerVoiceHandlers(
         session = createSession(io, sessionId, deps);
         sessions.set(sessionId, session);
       }
-      session.start(mode ?? "always-on", vad);
+      session.start(mode ?? "always-on", vad, bargeIn);
     }
   );
 

@@ -102,6 +102,13 @@ export class Vad {
 
   /** Fired the moment speech starts. Barge-in uses this for fast audio stop. */
   onSpeechStart?: () => void;
+  /**
+   * Fired for every processed frame, speech or not, with its raw RMS energy.
+   * The base VAD ignores this; it exists so `BargeInDetector` can sample the
+   * mic continuously (to measure the echo floor and to tell a sustained
+   * interruption from a brief onset) without duplicating frame math.
+   */
+  onFrame?: (energy: number) => void;
 
   constructor(opts?: VadOptions) {
     this.options = resolveVadOptions(opts);
@@ -171,7 +178,9 @@ export class Vad {
   // ---- internals ----
 
   private pushFrame(frame: Int16Array): VadUtterance | null {
-    const isSpeech = frameEnergy(frame) >= this.options.energyThreshold;
+    const energy = frameEnergy(frame);
+    this.onFrame?.(energy);
+    const isSpeech = energy >= this.options.energyThreshold;
 
     if (!this.active) {
       if (!isSpeech) {
