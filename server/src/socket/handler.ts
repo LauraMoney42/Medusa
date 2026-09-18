@@ -5,6 +5,7 @@ import path from "path";
 import { v4 as uuidv4 } from "uuid";
 import config from "../config.js";
 import { compress, assembleSystemPrompt, estimateTokens } from "../compressor/engine.js";
+import { buildOrchestratorPrompt } from "../sessions/orchestrator-prompt.js";
 import { startScreencast, stopScreencast, sendCoworkInput, type CoworkInput } from "../cowork/screencast.js";
 import { startSimulatorStream, stopSimulatorStream, sendSimulatorInput, type SimulatorInput } from "../cowork/simulator-stream.js";
 
@@ -419,16 +420,26 @@ export function setupSocketHandler(
         : "";
     const summary = chatStore.loadSummary(sessionId);
 
-    let finalSystemPrompt = assembleSystemPrompt(
+    let sessionSection = assembleSystemPrompt(
       meta.systemPrompt || "",
       skillsPrompt,
       summary,
       ""
     );
 
-    // TC-4: Compress the assembled system prompt (summary + instructions).
-    // Uses moderate level — balances token savings with semantic preservation.
-    finalSystemPrompt = compress(finalSystemPrompt, "moderate").compressed;
+    // TC-4: Compress the per-session section (instructions + skills + summary).
+    // Uses moderate level: balances token savings with semantic preservation.
+    // The orchestrator prompt itself is never compressed, since its wording is
+    // the contract the engine is held to.
+    sessionSection = compress(sessionSection, "moderate").compressed;
+
+    // S8: the Medusa layer. One prompt for every engine, with the session's own
+    // instructions appended under "## Project notes" rather than substituted.
+    const finalSystemPrompt = buildOrchestratorPrompt({
+      engineId: meta.engineId,
+      sessionSystemPrompt: sessionSection,
+      workingDir: meta.workingDir,
+    });
 
     // S1 2d: hand this chat's Medusa MCP server to every engine spawn. Returns
     // null when no AUTH_TOKEN is configured, which correctly disables the MCP
