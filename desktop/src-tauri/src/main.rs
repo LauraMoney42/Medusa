@@ -11,6 +11,7 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::path::BaseDirectory;
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_shell::process::CommandChild;
 use tauri_plugin_shell::ShellExt;
@@ -341,6 +342,56 @@ fn capture_screen(mode: Option<String>) -> Result<String, String> {
     Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
 }
 
+/// Tauri command backing the New Chat modal's folder picker (see
+/// client/src/components/Sidebar/NewChatModal.tsx: pickFolderViaTauri).
+///
+/// This is the reliable path: `window.__TAURI__.dialog.open` never exists in
+/// this app's webview, because `withGlobalTauri` only injects the core
+/// `invoke`/`event`/`path`/`window` bindings, not per-plugin JS wrappers --
+/// those come from separate `@tauri-apps/plugin-*` npm packages, and this
+/// project never added `@tauri-apps/plugin-dialog`. Rather than pull in that
+/// package, the frontend calls this command by name (also reachable, as a
+/// second path, via `core.invoke('plugin:dialog|open', ...)` directly),
+/// which runs tauri-plugin-dialog's blocking picker on the Rust side, where
+/// the plugin is actually registered (see `.plugin(tauri_plugin_dialog::init())`
+/// below). Returns `None` if the user cancels or the path can't be
+/// represented as a plain filesystem path.
+#[tauri::command]
+fn pick_folder(app: AppHandle, default_path: Option<String>) -> Option<String> {
+    let mut builder = app.dialog().file();
+    if let Some(dir) = default_path.filter(|d| !d.trim().is_empty()) {
+        builder = builder.set_directory(dir);
+    }
+    builder
+        .blocking_pick_folder()
+        .and_then(|fp| fp.into_path().ok())
+        .map(|p| p.to_string_lossy().to_string())
+}
+
+/// Tauri command backing the chat header's folder-chip click (see
+/// client/src/components/Chat/ChatView.tsx: handleFolderChipClick). Same
+/// rationale as `pick_folder` above: `window.__TAURI__.shell.open` never
+/// exists without the `@tauri-apps/plugin-shell` JS package, so this reveals
+/// the path in Finder directly from Rust instead, via the `open` CLI (macOS)
+/// with a `-R` (reveal, don't launch) flag. Falls back to just opening the
+/// path if it isn't macOS-specific `open -R` behavior that's wanted, since
+/// this app only ships for macOS today.
+#[tauri::command]
+fn reveal_in_finder(path: String) -> Result<(), String> {
+    std::process::Command::new("open")
+        .arg("-R")
+        .arg(&path)
+        .status()
+        .map_err(|e| format!("failed to run open -R: {e}"))
+        .and_then(|status| {
+            if status.success() {
+                Ok(())
+            } else {
+                Err(format!("open -R exited with status {status}"))
+            }
+        })
+}
+
 /// Shows and focuses the main window; used by both the tray "Show" item and
 /// the global Cmd+Shift+M hotkey.
 fn show_main_window(app: &AppHandle) {
@@ -364,7 +415,7 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![capture_screen])
+        .invoke_handler(tauri::generate_handler![capture_screen, pick_folder, reveal_in_finder])
         .manage(SidecarState(Mutex::new(None)))
         .manage(QuitRequested(std::sync::atomic::AtomicBool::new(false)))
         .setup(|app| {

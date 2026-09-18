@@ -39,31 +39,72 @@ function basename(dir: string): string {
 }
 
 /**
- * Native folder picker, backed by `tauri-plugin-dialog` (registered in
- * desktop/src-tauri/src/main.rs, capability `dialog:allow-open`). Returns
- * null in a plain browser (which cannot hand back a real filesystem path,
- * and has no `window.__TAURI__`), and the caller falls back to the text
- * field. `defaultPath` opens the picker at the last folder used so repeat
- * chats in the same project do not need re-navigating.
+ * Reads `window.__TAURI__.core.invoke`, the one binding `withGlobalTauri`
+ * always injects regardless of which plugin JS packages are bundled. Plugin
+ * convenience wrappers like `window.__TAURI__.dialog.open` only exist when
+ * the corresponding `@tauri-apps/plugin-*` npm package is imported into the
+ * frontend bundle; this app never added `@tauri-apps/plugin-dialog` or
+ * `@tauri-apps/plugin-shell`, so `window.__TAURI__.dialog` and `.shell` are
+ * always undefined even though the Rust plugins are registered in
+ * desktop/src-tauri/src/main.rs. Calling plugin commands through
+ * `core.invoke('plugin:<name>|<command>', ...)` directly needs no JS
+ * package, only the Rust plugin (registered) and the capability grant
+ * (desktop/src-tauri/capabilities/default.json).
  */
-async function pickFolderViaTauri(defaultPath?: string): Promise<string | null> {
-  const tauri = (
-    window as unknown as {
-      __TAURI__?: { dialog?: { open?: (opts: unknown) => Promise<unknown> } };
-    }
-  ).__TAURI__;
-  const open = tauri?.dialog?.open;
-  if (typeof open !== 'function') return null;
+function getTauriInvoke(): ((cmd: string, args?: unknown) => Promise<unknown>) | null {
+  const tauri = (window as unknown as { __TAURI__?: { core?: { invoke?: unknown } } }).__TAURI__;
+  const invoke = tauri?.core?.invoke;
+  return typeof invoke === 'function' ? (invoke as (cmd: string, args?: unknown) => Promise<unknown>) : null;
+}
+
+type PickResult =
+  | { status: 'picked'; path: string }
+  | { status: 'cancelled' }
+  | { status: 'unavailable' };
+
+/**
+ * Native folder picker. Tries two paths, in order:
+ *
+ * 1. The Rust `pick_folder` command (desktop/src-tauri/src/main.rs), which
+ *    calls tauri-plugin-dialog's blocking API server-side and needs no
+ *    frontend plugin bindings at all -- the most reliable path.
+ * 2. The dialog plugin's own invoke command, `plugin:dialog|open`, called
+ *    directly through `core.invoke` (see getTauriInvoke above) since the
+ *    `@tauri-apps/plugin-dialog` JS wrapper isn't bundled.
+ *
+ * Distinguishes "the user opened the picker and cancelled" (both commands
+ * resolve successfully with a null/undefined path -- not an error worth
+ * surfacing) from "unavailable" (no `window.__TAURI__`, or both invokes
+ * threw -- worth telling the user to type a path instead). The text field
+ * is never disabled while this resolves either way.
+ */
+async function pickFolderViaTauri(defaultPath?: string): Promise<PickResult> {
+  const invoke = getTauriInvoke();
+  if (!invoke) return { status: 'unavailable' };
+
   try {
-    const picked = await open({
-      directory: true,
-      multiple: false,
-      ...(defaultPath ? { defaultPath } : {}),
+    const picked = await invoke('pick_folder', {
+      defaultPath: defaultPath || null,
     });
-    return typeof picked === 'string' && picked.trim() ? picked : null;
+    if (typeof picked === 'string' && picked.trim()) return { status: 'picked', path: picked };
+    if (picked === null || picked === undefined) return { status: 'cancelled' };
   } catch (err) {
-    console.warn('[new-chat] Tauri folder picker failed, using the text field:', err);
-    return null;
+    console.warn('[new-chat] pick_folder command failed, trying the dialog plugin:', err);
+  }
+
+  try {
+    const picked = await invoke('plugin:dialog|open', {
+      options: {
+        directory: true,
+        multiple: false,
+        ...(defaultPath ? { defaultPath } : {}),
+      },
+    });
+    if (typeof picked === 'string' && picked.trim()) return { status: 'picked', path: picked };
+    return { status: 'cancelled' };
+  } catch (err) {
+    console.warn('[new-chat] Tauri dialog plugin failed, using the text field:', err);
+    return { status: 'unavailable' };
   }
 }
 
@@ -90,14 +131,16 @@ export default function NewChatModal({ onClose }: NewChatModalProps) {
   const [model, setModel] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [hasNativePicker, setHasNativePicker] = useState(false);
+  // Whether a Browse button makes sense at all -- i.e. running under Tauri.
+  // Note this only gates whether the button is *shown*; the click handler
+  // still degrades gracefully (see pickFolderViaTauri) if the invoke fails,
+  // so this is never a hard requirement for the picker to work.
+  const [hasTauri, setHasTauri] = useState(false);
+  const [pickerNotice, setPickerNotice] = useState('');
 
   useEffect(() => {
     void fetchProviderList();
-    setHasNativePicker(
-      typeof (window as unknown as { __TAURI__?: { dialog?: { open?: unknown } } })
-        .__TAURI__?.dialog?.open === 'function',
-    );
+    setHasTauri(getTauriInvoke() !== null);
   }, [fetchProviderList]);
 
   useEffect(() => {
@@ -131,8 +174,16 @@ export default function NewChatModal({ onClose }: NewChatModalProps) {
   const models = modelsByProvider[providerId] ?? [];
 
   const handleBrowse = useCallback(async () => {
-    const picked = await pickFolderViaTauri(workingDir.trim() || undefined);
-    if (picked) setWorkingDir(picked);
+    setPickerNotice('');
+    const result = await pickFolderViaTauri(workingDir.trim() || undefined);
+    if (result.status === 'picked') {
+      setWorkingDir(result.path);
+    } else if (result.status === 'unavailable') {
+      // The text field below is always usable regardless, so this is
+      // advisory, not blocking.
+      setPickerNotice('Native picker unavailable, type a path.');
+    }
+    // 'cancelled': the user opened the picker and backed out, nothing to say.
   }, [workingDir]);
 
   const handleSubmit = useCallback(
@@ -180,19 +231,33 @@ export default function NewChatModal({ onClose }: NewChatModalProps) {
 
         <label style={styles.label}>Project folder</label>
         <div style={styles.folderRow}>
+          {/*
+            Always editable and submittable, in every environment (plain
+            browser or Tauri, native picker working or not). This field is
+            never disabled while the picker resolves -- that was the actual
+            bug: withGlobalTauri alone doesn't give `window.__TAURI__.dialog`
+            without the `@tauri-apps/plugin-dialog` JS package, so the old
+            code's `hasNativePicker` gate could leave the modal with neither
+            a working Browse button nor a way to fall back.
+          */}
           <input
             value={workingDir}
-            onChange={(e) => setWorkingDir(e.target.value)}
+            onChange={(e) => {
+              setWorkingDir(e.target.value);
+              setPickerNotice('');
+            }}
             placeholder="~/Documents/GIT/Medusa"
             style={styles.input}
             autoFocus
           />
-          {hasNativePicker && (
+          {hasTauri && (
             <button type="button" onClick={handleBrowse} style={styles.browseBtn}>
               Browse…
             </button>
           )}
         </div>
+
+        {pickerNotice && <p style={styles.pickerNotice}>{pickerNotice}</p>}
 
         {recentDirs.length > 0 && (
           <div style={styles.recentRow}>
@@ -369,6 +434,7 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
   },
   error: { fontSize: 12, color: 'var(--danger)', margin: '10px 0 0' },
+  pickerNotice: { fontSize: 11, color: 'var(--text-secondary)', margin: '6px 0 0' },
   actions: { display: 'flex', gap: 8, marginTop: 18 },
   cancelBtn: {
     flex: 1,
