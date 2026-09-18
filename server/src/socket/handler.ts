@@ -88,6 +88,45 @@ import { isAnthropicCompatibleProvider, getDefaultModel } from "../settings/prov
 import { isAuthError, ConsecutiveErrorDeduper, buildAllTiersFailedMessage } from "./error-policy.js";
 import type { SubagentManager } from "../subagents/manager.js";
 import { descriptorForSession } from "../mcp/config.js";
+import {
+  activityFromParsedEvent,
+  activityFromSubagentEvent,
+  type SubagentActivityPayload,
+} from "./activity.js";
+
+// ---- Activity Log emission ----
+// The Activity Log is the session-wide superset of a message's own tool cards
+// (UI addendum). Both entry points below only translate and broadcast; the
+// mapping itself lives in `activity.ts` and is unit-tested there.
+
+/** Broadcast the Activity Log lines for one parsed stream event. */
+function emitParsedActivity(
+  io: IOServer,
+  sessionId: string,
+  event: ParsedEvent
+): void {
+  const ts = new Date().toISOString();
+  for (const line of activityFromParsedEvent(sessionId, event, ts)) {
+    io.to(sessionId).emit("activity:event", line);
+  }
+}
+
+/**
+ * Broadcast the Activity Log lines for one `subagent:*` emission. Called from
+ * the SubagentManager's emitter in `index.ts`, which is the only place that
+ * sees those events, so a subagent's traffic reaches the log the same way the
+ * parent's does.
+ */
+export function emitSubagentActivity(
+  io: IOServer,
+  eventName: string,
+  payload: SubagentActivityPayload
+): void {
+  const ts = new Date().toISOString();
+  for (const line of activityFromSubagentEvent(eventName, payload, ts)) {
+    io.to(line.sessionId).emit("activity:event", line);
+  }
+}
 
 // ---- Per-session send queue ----
 // A minimal stand-in for the old MentionRouter's queueDirectMessage/onSessionIdle:
@@ -257,6 +296,10 @@ export function setupSocketHandler(
 
     // Stream callback — translate ParsedEvents into client-expected shapes
     const onEvent = (event: ParsedEvent) => {
+      // Activity Log: every parsed event becomes one or more log lines. Done
+      // before the switch so nothing that returns early can skip the log.
+      emitParsedActivity(io, sessionId, event);
+
       switch (event.kind) {
         case "init":
           console.log(

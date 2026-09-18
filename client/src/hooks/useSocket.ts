@@ -3,10 +3,16 @@ import type { Socket } from 'socket.io-client';
 import { getSocket, disconnectSocket } from '../socket';
 import { useChatStore } from '../stores/chatStore';
 import { useSessionStore } from '../stores/sessionStore';
-import { useHubStore } from '../stores/hubStore';
 import { useTaskStore } from '../stores/taskStore';
+import { useSubagentStore } from '../stores/subagentStore';
+import type {
+  SubagentStartPayload,
+  SubagentDeltaPayload,
+  SubagentToolPayload,
+  SubagentEndPayload,
+} from '../stores/subagentStore';
+import { useActivityStore, type ActivityEvent } from '../stores/activityStore';
 import type { ChatMessage, ToolUse } from '../types/message';
-import type { HubMessage } from '../types/hub';
 import type { CompletedTask } from '../types/task';
 
 /**
@@ -32,8 +38,12 @@ export function useSocket() {
   const setSessionSystemPrompt = useSessionStore((s) => s.setSessionSystemPrompt);
   const setSessionSkills = useSessionStore((s) => s.setSessionSkills);
   const setSessionWorkingDir = useSessionStore((s) => s.setSessionWorkingDir);
-  const addHubMessage = useHubStore((s) => s.addMessage);
   const addTask = useTaskStore((s) => s.addTask);
+  const subagentStart = useSubagentStore((s) => s.start);
+  const subagentDelta = useSubagentStore((s) => s.appendDelta);
+  const subagentTool = useSubagentStore((s) => s.addToolEvent);
+  const subagentEnd = useSubagentStore((s) => s.end);
+  const pushActivity = useActivityStore((s) => s.push);
   const setServerShuttingDown = useSessionStore((s) => s.setServerShuttingDown);
   // Subscribe to sessions so we can join rooms after fetchSessions() resolves
   const sessions = useSessionStore((s) => s.sessions);
@@ -162,9 +172,26 @@ export function useSocket() {
       setSessionWorkingDir(data.sessionId, data.workingDir);
     };
 
-    const handleHubMessage = (msg: HubMessage) => {
-      console.log('[hub] received hub:message', msg);
-      addHubMessage(msg);
+    // ---- Subagents (spec A.6) ----
+    const handleSubagentStart = (data: SubagentStartPayload) => {
+      subagentStart(data);
+    };
+
+    const handleSubagentDelta = (data: SubagentDeltaPayload) => {
+      subagentDelta(data);
+    };
+
+    const handleSubagentTool = (data: SubagentToolPayload) => {
+      subagentTool(data);
+    };
+
+    const handleSubagentEnd = (data: SubagentEndPayload) => {
+      subagentEnd(data);
+    };
+
+    // ---- Activity Log ----
+    const handleActivityEvent = (data: ActivityEvent) => {
+      pushActivity(data);
     };
 
     const handleTaskDone = (task: CompletedTask) => {
@@ -240,7 +267,11 @@ export function useSocket() {
     socket.on('session:system-prompt-changed', handleSystemPromptChanged);
     socket.on('session:skills-changed', handleSkillsChanged);
     socket.on('session:working-dir-changed', handleWorkingDirChanged);
-    socket.on('hub:message', handleHubMessage);
+    socket.on('subagent:start', handleSubagentStart);
+    socket.on('subagent:delta', handleSubagentDelta);
+    socket.on('subagent:tool', handleSubagentTool);
+    socket.on('subagent:end', handleSubagentEnd);
+    socket.on('activity:event', handleActivityEvent);
     socket.on('task:done', handleTaskDone);
     socket.on('tasks:acknowledged', handleTasksAcknowledged);
     socket.on('session:pending-task', handlePendingTask);
@@ -267,7 +298,11 @@ export function useSocket() {
       socket.off('session:system-prompt-changed', handleSystemPromptChanged);
       socket.off('session:skills-changed', handleSkillsChanged);
       socket.off('session:working-dir-changed', handleWorkingDirChanged);
-      socket.off('hub:message', handleHubMessage);
+      socket.off('subagent:start', handleSubagentStart);
+      socket.off('subagent:delta', handleSubagentDelta);
+      socket.off('subagent:tool', handleSubagentTool);
+      socket.off('subagent:end', handleSubagentEnd);
+      socket.off('activity:event', handleActivityEvent);
       socket.off('task:done', handleTaskDone);
       socket.off('tasks:acknowledged', handleTasksAcknowledged);
       socket.off('session:pending-task', handlePendingTask);
