@@ -6,9 +6,7 @@ import { getSocket } from '../../socket';
 import MessageBubble from './MessageBubble';
 import ChatHeaderControls from './ChatHeaderControls';
 import ScreenshotButton from '../Input/ScreenshotButton';
-import MicButton from '../Input/MicButton';
-import VoiceBar from '../Voice/VoiceBar';
-import { useDictationInsert } from '../../hooks/useDictationInsert';
+import VoiceMicButton from '../Voice/VoiceMicButton';
 import TokenRing from '../Usage/TokenRing';
 import { useProviderStore } from '../../stores/providerStore';
 import { useVoiceStore } from '../../stores/voiceStore';
@@ -66,6 +64,9 @@ export default function ChatView({ onMenuToggle, onNewChat }: ChatViewProps) {
   const speed = useTtsStore((s) => s.speed);
   const [ttsAvailable, setTtsAvailable] = useState(false);
   const voiceMode = useVoiceStore((s) => s.mode);
+  const voiceLoopState = useVoiceStore((s) => s.state);
+  const voicePartialTranscript = useVoiceStore((s) => s.partialTranscript);
+  const setVoiceSpeakerMuted = useVoiceStore((s) => s.setSpeakerMuted);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const prevStreamingRef = useRef<string | null>(null);
 
@@ -137,14 +138,18 @@ export default function ChatView({ onMenuToggle, onNewChat }: ChatViewProps) {
     if (msg && msg.role !== 'user' && msg.text?.trim()) void playTTS(msg.text);
   }, [streamingId, speak, activeSession, messages, playTTS]);
 
+  // The header's speaker icon now doubles as the voice loop's mute control
+  // (spec: mute-speaker moves to Settings > Voice and this existing header
+  // icon, rather than a separate button inside a voice strip).
   const toggleSpeak = useCallback(() => {
     const next = !speak;
     setSpeak(next);
+    setVoiceSpeakerMuted(!next);
     if (!next && audioRef.current) {
       audioRef.current.pause();
       audioRef.current = null;
     }
-  }, [speak, setSpeak]);
+  }, [speak, setSpeak, setVoiceSpeakerMuted]);
 
   /** Send `body`, uploading any attached images first. */
   const send = useCallback(
@@ -252,8 +257,6 @@ export default function ChatView({ onMenuToggle, onNewChat }: ChatViewProps) {
   const handleScreenshot = useCallback((file: File, preview: string) => {
     setImages((prev) => [...(prev ?? []), { file, preview }]);
   }, []);
-
-  const handleTranscript = useDictationInsert(setText);
 
   const handleRemoveImage = useCallback((idx: number) => {
     setImages((prev) => {
@@ -467,8 +470,6 @@ export default function ChatView({ onMenuToggle, onNewChat }: ChatViewProps) {
 
       {/* Input area */}
       <div style={styles.inputContainer}>
-        <VoiceBar sessionId={activeSession.id} inputEmpty={text.trim().length === 0} />
-
         {images && images.length > 0 && (
           <div style={styles.imageRow}>
             {images.map((img, idx) => (
@@ -495,13 +496,15 @@ export default function ChatView({ onMenuToggle, onNewChat }: ChatViewProps) {
                 void handleSendMessage();
               }
             }}
-            placeholder="Ask Medusa..."
+            placeholder={
+              voiceMode !== 'off' && voiceLoopState === 'listening'
+                ? voicePartialTranscript || 'Listening...'
+                : 'Ask Medusa...'
+            }
             style={styles.textarea}
           />
 
-          {voiceMode === 'off' && (
-            <MicButton onTranscript={handleTranscript} disabled={false} compact />
-          )}
+          <VoiceMicButton sessionId={activeSession.id} inputEmpty={text.trim().length === 0} />
 
           {isBusy ? (
             <button onClick={handleAbort} style={styles.abortBtn} title="Stop">

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import * as api from '../../api';
 import type { MedusaVoice, TtsStatus } from '../../api';
 import { useTtsStore } from '../../stores/ttsStore';
+import { useVoiceStore } from '../../stores/voiceStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useProviderStore } from '../../stores/providerStore';
 import { s } from './settingsStyles';
@@ -43,6 +44,11 @@ export default function VoiceTab() {
   const providerId = activeSession?.providerId ?? globalProviderId;
   const modelOptions = useProviderStore((st) => st.modelsFor(providerId));
   const [voiceModelStatus, setVoiceModelStatus] = useState<string | null>(null);
+  // Mute-speaker: moved out of the old VoiceBar strip. Lives here and as the
+  // existing speaker icon in the chat header, both reading/writing the same
+  // client-local voiceStore field.
+  const speakerMuted = useVoiceStore((st) => st.speakerMuted);
+  const setSpeakerMuted = useVoiceStore((st) => st.setSpeakerMuted);
 
   useEffect(() => {
     api.fetchVoiceSettings().then(setVoice).catch((e: Error) => setError(e.message));
@@ -193,6 +199,13 @@ export default function VoiceTab() {
             <option value="push-to-talk">Push to talk</option>
             <option value="always-on">Always on</option>
           </select>
+          <p style={s.hint}>
+            The mic icon in the input bar is a plain on/off toggle for always-on voice.
+            Choosing "Push to talk" here is the only way to get hold-Space behavior instead:
+            hold Space to talk (only while the text box is empty), release to stop. While voice
+            is on, clicking the mic once interrupts a reply that is currently speaking; a
+            long-press (or Esc) always stops the loop.
+          </p>
         </div>
 
         <div style={s.field}>
@@ -244,6 +257,15 @@ export default function VoiceTab() {
             <option value="abort">Stop and answer the new question</option>
             <option value="queue">Finish speaking, then answer</option>
           </select>
+        </div>
+
+        <div style={s.spread}>
+          <span style={s.fieldLabel}>Mute assistant's speaker during voice</span>
+          <Toggle
+            on={speakerMuted}
+            label="Mute assistant's speaker during voice"
+            onChange={setSpeakerMuted}
+          />
         </div>
 
         <div style={s.row}>

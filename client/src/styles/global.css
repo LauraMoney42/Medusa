@@ -283,6 +283,28 @@ textarea {
   animation: medusaTurnSweep 1.4s ease-in-out infinite;
 }
 
+/* Voice mic toggle in the input bar (S16): a soft pulse ring while
+   listening, and three little bars while the assistant's reply is playing. */
+@keyframes micPulseRing {
+  0% { box-shadow: 0 0 0 0 rgba(74, 186, 106, 0.45); }
+  100% { box-shadow: 0 0 0 9px rgba(74, 186, 106, 0); }
+}
+
+.medusa-mic-listening {
+  animation: micPulseRing 1.6s ease-out infinite;
+}
+
+@keyframes micBarBounce {
+  0%, 100% { transform: scaleY(0.35); }
+  50% { transform: scaleY(1); }
+}
+
+.medusa-mic-bars span {
+  animation: micBarBounce 0.9s ease-in-out infinite;
+}
+.medusa-mic-bars span:nth-child(2) { animation-delay: 0.15s; }
+.medusa-mic-bars span:nth-child(3) { animation-delay: 0.3s; }
+
 /* Session edit button: show on hover */
 .sidebar div[style*="cursor: default"]:hover .session-edit-btn,
 .sidebar div[style*="cursor: grab"]:hover .session-edit-btn,
