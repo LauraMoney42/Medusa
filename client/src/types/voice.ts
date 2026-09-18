@@ -8,6 +8,8 @@
 export interface VoiceStartPayload {
   sessionId: string;
   mode: 'push-to-talk' | 'always-on';
+  /** Settings > Voice's loop gains, applied to this session's VAD. */
+  vad?: { silenceMs?: number; energyThreshold?: number };
 }
 
 export interface VoiceAudioPayload {

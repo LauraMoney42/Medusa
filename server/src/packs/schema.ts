@@ -92,13 +92,30 @@ export const ThemeSchema = z.object({
 });
 export type Theme = z.infer<typeof ThemeSchema>;
 
-/** Voice-out defaults. `engine` is free-form so a cloud provider can be named. */
+/**
+ * Voice-out defaults. `engine` is free-form so a cloud provider can be named.
+ *
+ * The last four fields are the S14 speech-to-speech loop gains (spec
+ * section 4): account-wide defaults for the voice loop itself, as opposed to
+ * `voiceModel` on `SessionMeta`, which is per-chat and travels through
+ * PATCH /api/sessions instead. They were previously typed on the client only
+ * (client/src/api.ts `MedusaVoice`) with nowhere on the server to land: a zod
+ * object schema drops unknown keys by default, so a PUT that set them was
+ * silently discarding them before they ever reached voice.json, and a
+ * reload always came back with the settings-page defaults. Declared here so
+ * they persist, and read by `voice:start` (see VoiceBar.tsx) so a saved
+ * value actually reaches the running `VoiceSession`'s VAD options.
+ */
 export const VoiceSchema = z.object({
   engine: z.string().min(1).max(40).default("kokoro"),
   voiceId: z.string().min(1).max(80).default("af_heart"),
   speed: z.number().min(0.5).max(2).default(1),
   pitch: z.number().min(0.5).max(2).default(1),
   enabled: z.boolean().default(false),
+  voiceMode: z.enum(["off", "push-to-talk", "always-on"]).default("off"),
+  vadSensitivity: z.number().min(0).max(1).default(0.5),
+  silenceTimeoutMs: z.number().min(200).max(2000).default(600),
+  interruptBehavior: z.enum(["abort", "queue"]).default("abort"),
 });
 export type Voice = z.infer<typeof VoiceSchema>;
 

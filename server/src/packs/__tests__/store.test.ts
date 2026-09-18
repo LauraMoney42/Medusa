@@ -154,7 +154,17 @@ describe("export and import round trip", () => {
       density: "compact",
       avatar: "data:image/png;base64,iVBORw0KGgo=",
     });
-    writeVoice({ engine: "kokoro", voiceId: "bm_george", speed: 1.25, pitch: 0.9, enabled: true });
+    writeVoice({
+      engine: "kokoro",
+      voiceId: "bm_george",
+      speed: 1.25,
+      pitch: 0.9,
+      enabled: true,
+      voiceMode: "off",
+      vadSensitivity: 0.5,
+      silenceTimeoutMs: 600,
+      interruptBehavior: "abort",
+    });
     writeToolbox({
       servers: [{ id: "git", label: "Git", detail: "", enabled: true, scope: "read" }],
       skills: [{ id: "code-review", label: "Code review", detail: "", enabled: false, scope: "read" }],

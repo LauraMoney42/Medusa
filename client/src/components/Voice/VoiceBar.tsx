@@ -5,6 +5,19 @@ import { MicCapture } from '../../lib/voice/micCapture';
 import { GaplessAudioQueue } from '../../lib/voice/audioScheduler';
 import { onAudioChunk, onStopAudio } from '../../lib/voice/voiceBus';
 import type { VoiceAudioChunkPayload } from '../../types/voice';
+import { fetchVoiceSettings } from '../../api';
+
+/**
+ * Settings > Voice's "VAD sensitivity" is a 0..1 dial (spec section 4); the
+ * server's `Vad` wants an RMS energy threshold in int16 units, where a LOWER
+ * number is MORE sensitive (VAD_DEFAULTS is 500). Map the dial linearly over
+ * a band a laptop mic can actually resolve: 1500 (least sensitive) at 0 down
+ * to 100 (most sensitive) at 1.
+ */
+function sensitivityToEnergyThreshold(sensitivity: number): number {
+  const clamped = Math.min(1, Math.max(0, sensitivity));
+  return Math.round(1500 - clamped * 1400);
+}
 
 interface VoiceBarProps {
   sessionId: string;
@@ -62,6 +75,29 @@ export default function VoiceBar({ sessionId, inputEmpty = true }: VoiceBarProps
   const [held, setHeld] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rafRef = useRef<number | null>(null);
+  // Settings > Voice's loop gains (silence timeout, VAD sensitivity), fetched
+  // once and sent on every `voice:start` so a saved change actually reaches
+  // the running VoiceSession instead of only living in voice.json.
+  const vadOptionsRef = useRef<{ silenceMs?: number; energyThreshold?: number } | undefined>(
+    undefined,
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchVoiceSettings()
+      .then((v) => {
+        if (cancelled) return;
+        vadOptionsRef.current = {
+          silenceMs: v.silenceTimeoutMs,
+          energyThreshold:
+            v.vadSensitivity != null ? sensitivityToEnergyThreshold(v.vadSensitivity) : undefined,
+        };
+      })
+      .catch((err) => console.error('[voice] failed to load voice settings:', err));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const ensurePlaybackContext = useCallback(() => {
     if (!playbackCtxRef.current) {
@@ -197,7 +233,11 @@ export default function VoiceBar({ sessionId, inputEmpty = true }: VoiceBarProps
       if (next === 'always-on') {
         try {
           await startCapture();
-          getSocket().emit('voice:start', { sessionId, mode: 'always-on' });
+          getSocket().emit('voice:start', {
+            sessionId,
+            mode: 'always-on',
+            vad: vadOptionsRef.current,
+          });
           setActive(true);
           setLoopState('listening');
         } catch (err) {
@@ -217,7 +257,11 @@ export default function VoiceBar({ sessionId, inputEmpty = true }: VoiceBarProps
     ensurePlaybackContext();
     try {
       await startCapture();
-      getSocket().emit('voice:start', { sessionId, mode: 'push-to-talk' });
+      getSocket().emit('voice:start', {
+        sessionId,
+        mode: 'push-to-talk',
+        vad: vadOptionsRef.current,
+      });
       setActive(true);
       setLoopState('listening');
     } catch (err) {
