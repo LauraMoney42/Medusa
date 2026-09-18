@@ -70,6 +70,13 @@ export interface OrchestratorPromptInput {
    * read badly out loud.
    */
   voiceMode?: boolean;
+  /**
+   * True when the prompt is the system instruction of a realtime speech model
+   * (Live mode). That model has ONLY the declared subagent functions: no file,
+   * shell, or code tools of its own. Saying otherwise makes it try a tool that
+   * does not exist, and Gemini Live closes the socket (1008) when that happens.
+   */
+  liveTools?: boolean;
 }
 
 /** The claude CLI namespaces MCP tools; every other engine sees the bare name. */
@@ -85,13 +92,37 @@ export function buildOrchestratorPrompt(input: OrchestratorPromptInput): string 
     personaText,
     rules,
     voiceMode,
+    liveTools,
   } = input;
 
   const t = (tool: (typeof SUBAGENT_TOOLS)[number]) => toolName(engineId, tool);
-  const persona = (personaText ?? loadPersona()).trim();
+  let persona = (personaText ?? loadPersona()).trim();
+  if (liveTools) {
+    persona = persona.replace(
+      /Use your Read, Edit, and shell tools to make real changes rather than\s*describing them\./,
+      "Get real work done by delegating it to subagents rather than describing it."
+    );
+  }
   const ruleTexts = (rules ?? loadRuleFiles()).map((r) => r.trim()).filter(Boolean);
 
   const sections: string[] = [persona];
+
+  if (liveTools) {
+    sections.push(
+      [
+        "## Your tools",
+        "",
+        `The only tools you have are the declared functions: \`${t("spawn_agent")}\`,`,
+        `\`${t("agent_status")}\`, \`${t("agent_result")}\`, \`${t("list_agents")}\`, and`,
+        `\`${t("cancel_agent")}\`. You have no file, shell, search, or code tools of`,
+        "your own, and you cannot run commands. To look at files, list a folder,",
+        "run anything, or change code, call the spawn agent function with a clear,",
+        "complete task and report what it returns. Never attempt any tool that is",
+        "not declared; there is no `ls`, no `read`, no `bash`. If a request needs",
+        "no tool, just answer.",
+      ].join("\n")
+    );
+  }
 
   sections.push(
     [
@@ -136,8 +167,9 @@ export function buildOrchestratorPrompt(input: OrchestratorPromptInput): string 
       "another. Fan out only for genuinely independent tasks, so two subagents",
       "never edit the same file. Do the work yourself when it is small, when it",
       "needs this conversation's context, or when a spawn would cost more than",
-      "just doing it. Never spawn for trivial work such as reading a single file",
-      "or running one command.",
+      ...(liveTools
+        ? ["just doing it. Reading a file or running one command still needs a", "subagent here, because you have no such tools yourself; keep those tasks tiny."]
+        : ["just doing it. Never spawn for trivial work such as reading a single file", "or running one command."]),
       "",
       "After a fan-out, wait for every result, integrate them yourself, and give",
       "the user one coherent answer. Do not paste raw subagent output and call it",

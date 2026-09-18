@@ -293,3 +293,17 @@ describe("buildOrchestratorPrompt: voiceMode", () => {
     }
   });
 });
+
+describe("buildOrchestratorPrompt: live tools contract", () => {
+  it("tells a realtime model it has only the declared functions", () => {
+    const prompt = build({ engineId: undefined, liveTools: true, voiceMode: true });
+    expect(prompt).toContain("## Your tools");
+    expect(prompt).toContain("no `ls`, no `read`, no `bash`");
+    expect(prompt).not.toMatch(/Use your Read, Edit, and shell tools/);
+  });
+
+  it("keeps the Read, Edit, and shell wording for engines that have them", () => {
+    const prompt = build({ engineId: "claude" });
+    expect(prompt).not.toContain("## Your tools");
+  });
+});

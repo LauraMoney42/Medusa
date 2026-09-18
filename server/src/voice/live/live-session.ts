@@ -232,6 +232,7 @@ export class LiveVoiceSession {
       workingDir: this.deps.session.workingDir,
       sessionSystemPrompt: this.deps.session.systemPrompt,
       voiceMode: true,
+      liveTools: true,
     });
   }
 
@@ -426,8 +427,26 @@ export class LiveVoiceSession {
     this.userTurnEndedAt = null;
   }
 
+  /** Mid-session closes from the service (a model error, a hiccup) get one retry before the chat drops to the pipeline. */
+  private reconnects = 0;
+  private static readonly MAX_RECONNECTS = 1;
+
   private handleError(err: Error): void {
     if (this.fatal || this.disposed) return;
+    const closedByService = /closed \((10\d\d)/.test(err.message);
+    if (closedByService && this.reconnects < LiveVoiceSession.MAX_RECONNECTS) {
+      this.reconnects += 1;
+      this.deps.activity("voice: live session dropped, reconnecting", err.message);
+      this.flushAudio();
+      this.realtime = null;
+      this.state = "connecting";
+      try {
+        this.start();
+        return;
+      } catch (openErr) {
+        err = openErr instanceof Error ? openErr : new Error(String(openErr));
+      }
+    }
     this.fatal = true;
     this.deps.activity("voice: live mode failed", err.message);
     this.deps.onFatal(err);
