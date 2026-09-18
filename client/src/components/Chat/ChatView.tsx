@@ -213,6 +213,39 @@ export default function ChatView({ onMenuToggle, onNewChat }: ChatViewProps) {
     );
   }, []);
 
+  /** True when running inside the Tauri desktop shell's shell-open bridge. */
+  const getTauriShellOpen = (): ((path: string) => Promise<unknown>) | null => {
+    const tauri = (
+      window as unknown as { __TAURI__?: { shell?: { open?: (path: string) => Promise<unknown> } } }
+    ).__TAURI__;
+    const open = tauri?.shell?.open;
+    return typeof open === 'function' ? open : null;
+  };
+
+  /**
+   * Folder chip click: under Tauri, reveal the chat's working directory in
+   * Finder via the `shell:allow-open` capability (desktop/src-tauri/
+   * capabilities/default.json) so the user can drop into the actual files.
+   * In a plain browser there is no filesystem to open, so copy the path
+   * instead and reuse the copiedId toast used by message Copy buttons.
+   */
+  const handleFolderChipClick = useCallback(() => {
+    if (!activeSession) return;
+    const dir = activeSession.workingDir;
+    const openInFinder = getTauriShellOpen();
+    if (openInFinder) {
+      void openInFinder(dir).catch((err) => console.warn('[folder-chip] Finder open failed:', err));
+      return;
+    }
+    void navigator.clipboard.writeText(dir).then(
+      () => {
+        setCopiedId('folder-chip');
+        window.setTimeout(() => setCopiedId((id) => (id === 'folder-chip' ? null : id)), 1200);
+      },
+      (err) => console.error('Copy failed:', err),
+    );
+  }, [activeSession]);
+
   const handleScreenshot = useCallback((file: File, preview: string) => {
     setImages((prev) => [...(prev ?? []), { file, preview }]);
   }, []);
@@ -311,12 +344,21 @@ export default function ChatView({ onMenuToggle, onNewChat }: ChatViewProps) {
 
         <span style={styles.chatTitle}>{activeSession.name}</span>
 
-        <span style={styles.folderChip} title={activeSession.workingDir}>
+        <button
+          type="button"
+          onClick={handleFolderChipClick}
+          style={styles.folderChip}
+          title={
+            copiedId === 'folder-chip'
+              ? 'Copied'
+              : `${activeSession.workingDir} (click to ${getTauriShellOpen() ? 'open in Finder' : 'copy path'})`
+          }
+        >
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
           </svg>
-          {basename(activeSession.workingDir)}
-        </span>
+          {copiedId === 'folder-chip' ? 'Copied' : basename(activeSession.workingDir)}
+        </button>
 
         <div style={styles.headerRight}>
           {ttsAvailable && (
@@ -554,8 +596,10 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'rgba(26, 122, 60, 0.10)',
     color: '#4aba6a',
     fontSize: 11,
+    fontFamily: 'inherit',
     whiteSpace: 'nowrap',
     flexShrink: 0,
+    cursor: 'pointer',
   },
   headerRight: {
     marginLeft: 'auto',

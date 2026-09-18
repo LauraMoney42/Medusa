@@ -26,9 +26,11 @@
     },
     "shell:allow-kill",
     "shell:allow-stdin-write",
+    "shell:allow-open",
     "notification:default",
     "global-shortcut:allow-register",
     "global-shortcut:allow-unregister",
-    "updater:default"
+    "updater:default",
+    "dialog:allow-open"
   ]
 }

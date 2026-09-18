@@ -204,6 +204,27 @@ Info.plist usage-description strings plus a TCC prompt at runtime, so
 time) carries `NSScreenCaptureUsageDescription` and
 `NSMicrophoneUsageDescription`.
 
+## Native folder picker (S9)
+
+- [x] **`tauri-plugin-dialog`** registered in `src-tauri/Cargo.toml` /
+      `src-tauri/src/main.rs` (`.plugin(tauri_plugin_dialog::init())`), with
+      `dialog:allow-open` granted in `src-tauri/capabilities/default.json`.
+      The client's New chat modal (`client/src/components/Sidebar/
+      NewChatModal.tsx`) calls `window.__TAURI__.dialog.open({ directory:
+      true, multiple: false, defaultPath })` when running under Tauri, and
+      falls back to the plain text field (validated against
+      `GET /api/files/stat`) in the browser build. The last 8 folders used
+      are remembered in `localStorage` and shown as quick-pick chips.
+- [x] **Folder chip in the chat header** (`client/src/components/Chat/
+      ChatView.tsx`) opens the chat's working directory in Finder under
+      Tauri, via `window.__TAURI__.shell.open(path)` (granted by
+      `shell:allow-open`, alongside the existing sidecar `shell:allow-execute`
+      / `shell:allow-spawn` permissions). In the browser it copies the path
+      to the clipboard instead, since there is no filesystem to open.
+- [x] **`MEDUSA_DESKTOP=1`** is passed to the sidecar in `start_sidecar_and_navigate`
+      so `server/src/config.ts` can expose `config.isDesktop` for future
+      desktop-only branching. No behavior change today.
+
 ## Still needs porting from the Swift shell
 
 - [ ] **Auto-restart on server crash (exit code 75)** - `ServerManager.swift`

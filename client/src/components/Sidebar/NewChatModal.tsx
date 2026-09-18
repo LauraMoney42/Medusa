@@ -15,7 +15,7 @@ const ENGINES: Array<{ id: string; label: string }> = [
 
 const LAST_DIR_KEY = 'medusa.lastProjectDir';
 const RECENT_DIRS_KEY = 'medusa.recentProjectDirs';
-const MAX_RECENT = 6;
+const MAX_RECENT = 8;
 
 function readRecentDirs(): string[] {
   try {
@@ -39,11 +39,14 @@ function basename(dir: string): string {
 }
 
 /**
- * Native folder picker, when the Tauri shell exposes the dialog plugin.
- * Returns null in a plain browser (which cannot hand back a real filesystem
- * path), and the caller falls back to the text field. S9 adds the Rust side.
+ * Native folder picker, backed by `tauri-plugin-dialog` (registered in
+ * desktop/src-tauri/src/main.rs, capability `dialog:allow-open`). Returns
+ * null in a plain browser (which cannot hand back a real filesystem path,
+ * and has no `window.__TAURI__`), and the caller falls back to the text
+ * field. `defaultPath` opens the picker at the last folder used so repeat
+ * chats in the same project do not need re-navigating.
  */
-async function pickFolderViaTauri(): Promise<string | null> {
+async function pickFolderViaTauri(defaultPath?: string): Promise<string | null> {
   const tauri = (
     window as unknown as {
       __TAURI__?: { dialog?: { open?: (opts: unknown) => Promise<unknown> } };
@@ -52,7 +55,11 @@ async function pickFolderViaTauri(): Promise<string | null> {
   const open = tauri?.dialog?.open;
   if (typeof open !== 'function') return null;
   try {
-    const picked = await open({ directory: true, multiple: false });
+    const picked = await open({
+      directory: true,
+      multiple: false,
+      ...(defaultPath ? { defaultPath } : {}),
+    });
     return typeof picked === 'string' && picked.trim() ? picked : null;
   } catch (err) {
     console.warn('[new-chat] Tauri folder picker failed, using the text field:', err);
@@ -111,9 +118,9 @@ export default function NewChatModal({ onClose }: NewChatModalProps) {
   const models = modelsByProvider[providerId] ?? [];
 
   const handleBrowse = useCallback(async () => {
-    const picked = await pickFolderViaTauri();
+    const picked = await pickFolderViaTauri(workingDir.trim() || undefined);
     if (picked) setWorkingDir(picked);
-  }, []);
+  }, [workingDir]);
 
   const handleSubmit = useCallback(
     async (e: FormEvent) => {

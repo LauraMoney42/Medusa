@@ -155,7 +155,12 @@ fn start_sidecar_and_navigate(app: &AppHandle, port: u16, auth_token: String) {
         .expect("failed to resolve medusa-server sidecar")
         .env("PORT", port.to_string())
         .env("HOST", "127.0.0.1")
-        .env("AUTH_TOKEN", auth_token.clone());
+        .env("AUTH_TOKEN", auth_token.clone())
+        // Tells the server it is running inside the desktop shell (see
+        // server/src/config.ts: isDesktop) so future desktop-only features
+        // (folder picker, Finder integration) can branch on it. No
+        // behavior change today.
+        .env("MEDUSA_DESKTOP", "1");
 
     if let Some(public_dir) = resolve_public_dir(app) {
         command = command.env("MEDUSA_STATIC_DIR", public_dir.to_string_lossy().to_string());
@@ -301,6 +306,7 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![capture_screen])
         .manage(SidecarState(Mutex::new(None)))
         .manage(QuitRequested(std::sync::atomic::AtomicBool::new(false)))
