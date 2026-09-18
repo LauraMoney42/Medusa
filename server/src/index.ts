@@ -6,6 +6,7 @@ import path from "path";
 import express from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
+import { onlySessionCreate } from "./middleware/session-create-gate.js";
 import { Server as IOServer } from "socket.io";
 
 import config from "./config.js";
@@ -204,6 +205,9 @@ const sessionCreateLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: "Too many session creation requests" },
 });
+// Scoped to POST / only (creating a new chat) — see session-create-gate.ts
+// for why mounting the raw limiter on the whole router is a bug.
+const sessionCreateGate = onlySessionCreate(sessionCreateLimiter);
 
 const uploadLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
@@ -216,7 +220,7 @@ const uploadLimiter = rateLimit({
 // ---- Routes ----
 app.use("/api/auth", createAuthRouter());
 app.use("/api/health", generalLimiter, createHealthRouter(processManager, io, subagentManager));
-app.use("/api/sessions", sessionCreateLimiter, createSessionsRouter(sessionStore, processManager, chatStore));
+app.use("/api/sessions", sessionCreateGate, createSessionsRouter(sessionStore, processManager, chatStore));
 app.use("/api/images", uploadLimiter, imagesRouter);
 app.use("/api/files", uploadLimiter, filesRouter);
 app.use("/api/stt", uploadLimiter, sttRouter);

@@ -82,7 +82,12 @@ const styles: Record<string, React.CSSProperties> = {
   },
   tab: {
     background: 'transparent',
-    border: '1px solid transparent',
+    // Longhand on purpose: tabActive below overrides only borderColor, and
+    // mixing that with a `border` shorthand here trips React's
+    // "Removing borderColor border" style-conflict warning on tab switch.
+    borderWidth: 1,
+    borderStyle: 'solid',
+    borderColor: 'transparent',
     color: 'var(--text-muted)',
     fontSize: 12,
     fontWeight: 600,

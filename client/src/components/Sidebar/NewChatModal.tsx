@@ -78,6 +78,8 @@ export default function NewChatModal({ onClose }: NewChatModalProps) {
   const [name, setName] = useState('');
   const [providerId, setProviderId] = useState(globalProviderId);
   const [engineId, setEngineId] = useState('claude');
+  // Once the user picks an engine by hand, stop overriding their choice.
+  const [engineTouched, setEngineTouched] = useState(false);
   const [model, setModel] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -99,6 +101,17 @@ export default function NewChatModal({ onClose }: NewChatModalProps) {
   useEffect(() => {
     setModel('');
   }, [providerId]);
+
+  // Keep the engine matched to the provider (claude -> Claude CLI, kimi ->
+  // Kimi CLI) so picking "Kimi" doesn't silently spawn the Claude CLI, which
+  // is logged in separately and produces a confusing "Not logged in" reply.
+  // Skipped once the user has picked an engine themselves.
+  useEffect(() => {
+    if (engineTouched) return;
+    if (ENGINES.some((en) => en.id === providerId)) {
+      setEngineId(providerId);
+    }
+  }, [providerId, engineTouched]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -217,7 +230,10 @@ export default function NewChatModal({ onClose }: NewChatModalProps) {
             <label style={styles.label}>Engine</label>
             <select
               value={engineId}
-              onChange={(e) => setEngineId(e.target.value)}
+              onChange={(e) => {
+                setEngineTouched(true);
+                setEngineId(e.target.value);
+              }}
               style={styles.select}
             >
               {ENGINES.map((en) => (

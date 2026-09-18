@@ -283,7 +283,11 @@ const styles: Record<string, React.CSSProperties> = {
     textTransform: 'uppercase',
     letterSpacing: '0.04em',
     padding: '0 4px',
-    border: '1px solid',
+    // Longhand on purpose: every entry overrides only borderColor above, and
+    // mixing that with a `border` shorthand here trips React's
+    // "Removing borderColor border" style-conflict warning per row.
+    borderWidth: 1,
+    borderStyle: 'solid',
     borderRadius: 4,
     flexShrink: 0,
     opacity: 0.85,

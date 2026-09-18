@@ -387,7 +387,12 @@ export function setupSocketHandler(
           // Subagent messages are surfaced only as tool activity, never as the
           // bot's own chat text.
           if (event.parentToolUseId) break;
-          // Only send text if no deltas were streamed (avoids duplicating)
+          // Only send text if no deltas were streamed (avoids duplicating).
+          // A retried/escalated attempt reuses this same onEvent closure, so
+          // once one assistant_complete has contributed text, flip the same
+          // gotDeltas guard the "delta" case uses — otherwise a second
+          // attempt's assistant_complete (e.g. a repeated "Not logged in"
+          // message) gets appended right after the first, with no separator.
           if (!gotDeltas) {
             for (const block of event.content) {
               if (block.type === "text" && block.text) {
@@ -399,6 +404,7 @@ export function setupSocketHandler(
                 });
               }
             }
+            gotDeltas = true;
           }
           break;
 

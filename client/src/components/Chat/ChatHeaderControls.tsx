@@ -110,7 +110,13 @@ const styles: Record<string, React.CSSProperties> = {
     width: 30,
     height: 30,
     borderRadius: 'var(--radius-sm)',
-    border: '1px solid transparent',
+    // Longhand on purpose: the "on" state below overrides only borderColor,
+    // and mixing that with a `border` shorthand on the same element trips
+    // React's "Removing borderColor border" style-conflict warning on every
+    // toggle.
+    borderWidth: 1,
+    borderStyle: 'solid',
+    borderColor: 'transparent',
     cursor: 'pointer',
     transition: 'color 0.15s, background 0.15s',
   },

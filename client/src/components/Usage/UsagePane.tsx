@@ -250,7 +250,11 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '4px 10px',
     fontSize: 12,
     fontWeight: 500,
-    border: '1px solid',
+    // Longhand on purpose: the period buttons above override only
+    // borderColor, and mixing that with a `border` shorthand here trips
+    // React's "Removing borderColor border" style-conflict warning.
+    borderWidth: 1,
+    borderStyle: 'solid',
     borderRadius: 'var(--radius-sm)',
     cursor: 'pointer',
     transition: 'background 0.15s, color 0.15s',
