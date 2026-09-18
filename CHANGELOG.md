@@ -1,3 +1,7 @@
+## 2026-09-18 15:34
+- Fix: desktop sidecar crashed at startup after S16 because voice/realtime.ts imported callMedusa from the MCP shim, pulling @modelcontextprotocol/sdk (zod schemas) into the bun single-file server bundle. Extracted the SDK-free HTTP client to server/src/mcp/client.ts; build-sidecar.sh now fails if the server bundle contains the SDK
+- Files affected: server/src/mcp/client.ts (new), server/src/mcp/medusa-mcp-shim.ts, server/src/voice/realtime.ts, desktop/scripts/build-sidecar.sh
+
 ## 2026-09-18 15:30
 - Rebased the S16 "live voice" branch onto main's echo/self-interruption fix. Both behaviors are kept: the `BargeInDetector` path (ignored echo onsets, adaptive floor, dropped echo transcripts, the 200-event ring buffer) and S16's warm engines, streaming partials, speculative start and first-clause audio
 - `server/src/voice/session.ts`: the two features are wired together rather than merely coexisting. A new `echoSuspect` getter is true whenever the barge-in detector is armed (thinking, speaking, or the grace window) without having confirmed a real interruption, or the open onset was already written off as echo. It now gates BOTH `handlePartial` (no `voice:partial` for her own voice leaking back) and `checkSpeculation`, so a speculative turn can never start from an echo onset; an echo transcript also clears any standing hypothesis

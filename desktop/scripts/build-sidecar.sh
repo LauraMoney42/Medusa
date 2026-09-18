@@ -107,6 +107,15 @@ if [ -z "$BUN" ]; then
   exit 1
 fi
 echo "compiling sidecar with $BUN ($("$BUN" --version))..."
+TMPDIR_GUARD="$(mktemp -d)"
+# Guard: the server bundle must not contain the MCP SDK. Its zod schemas do
+# not initialize inside a bun single-file bundle (crash at startup); only the
+# shim binary may import the SDK.
+if "$BUN" build --target=bun "$ENTRY" --outfile "$TMPDIR_GUARD/server-bundle.js" >/dev/null 2>&1 \
+   && grep -q "@modelcontextprotocol/sdk" "$TMPDIR_GUARD/server-bundle.js"; then
+  echo "error: server bundle imports @modelcontextprotocol/sdk (see server/src/mcp/client.ts note)" >&2
+  exit 1
+fi
 "$BUN" build --compile --target=bun "$ENTRY" --outfile "$OUT_BIN"
 
 if [ ! -f "$OUT_BIN" ]; then

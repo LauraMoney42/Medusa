@@ -21,7 +21,7 @@
  * disabled with that explanation until one is added.
  */
 
-import { callMedusa, type ShimEnv } from "../mcp/medusa-mcp-shim.js";
+import { callMedusa, type ShimEnv } from "../mcp/client.js";
 import { ALL_MCP_TOOLS, type McpToolSpec } from "../mcp/tools.js";
 import type { MinimalWebSocket, WebSocketFactory } from "./streaming-stt.js";
 
