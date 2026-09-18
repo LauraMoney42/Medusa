@@ -91,8 +91,15 @@ export function createSubagentsRouter(manager: SubagentManager): Router {
     }
   });
 
-  // GET / -- list_agents, for this parent only
+  // GET / -- list_agents, for this parent only.
+  // GET /?all=1 -- every chat's subagents (S15 Tasks panel hydration only;
+  // the MCP shim never sets this, so a chat still cannot ask another chat's
+  // question through the normal path).
   router.get("/", (req: Request, res: Response) => {
+    if (req.query.all === "1") {
+      res.json({ agents: manager.listAll() });
+      return;
+    }
     const parentSessionId = requireParent(req, res);
     if (!parentSessionId) return;
     res.json({ agents: manager.listForParent(parentSessionId) });

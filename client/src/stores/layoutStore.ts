@@ -10,7 +10,7 @@ import { create } from 'zustand';
 
 /** Right panel sizes. `full` covers the chat column entirely. */
 export type PanelState = 'hidden' | 'slim' | 'wide' | 'full';
-export type PanelTab = 'browser' | 'simulator';
+export type PanelTab = 'browser' | 'simulator' | 'tasks';
 
 const KEYS = {
   state: 'medusa.panel.state',
@@ -72,7 +72,10 @@ export const useLayoutStore = create<LayoutState & LayoutActions>((set, get) => 
     const stored = localStorage.getItem(KEYS.state);
     return stored === 'slim' || stored === 'wide' || stored === 'full' ? stored : 'hidden';
   })(),
-  panelTab: localStorage.getItem(KEYS.tab) === 'simulator' ? 'simulator' : 'browser',
+  panelTab: (() => {
+    const stored = localStorage.getItem(KEYS.tab);
+    return stored === 'simulator' || stored === 'tasks' ? stored : 'browser';
+  })(),
   slimWidth: readNumber(KEYS.slim, 360, PANEL_MIN_WIDTH, SLIM_WIDE_BOUNDARY),
   wideWidth: readNumber(KEYS.wide, 680, SLIM_WIDE_BOUNDARY, PANEL_MAX_WIDTH),
   activityOpen: localStorage.getItem(KEYS.activityOpen) === '1',

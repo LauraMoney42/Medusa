@@ -4,6 +4,7 @@ import { useSessionStore } from './stores/sessionStore';
 import { useProjectStore } from './stores/projectStore';
 import { useFileDropStore } from './stores/fileDropStore';
 import { useLayoutStore, ACTIVITY_MIN_WIDTH, ACTIVITY_MAX_WIDTH } from './stores/layoutStore';
+import { useTasksStore } from './stores/tasksStore';
 import LoginScreen from './components/Auth/LoginScreen';
 import Sidebar from './components/Sidebar/Sidebar';
 import ProjectPane from './components/Project/ProjectPane';
@@ -105,6 +106,8 @@ function AuthenticatedApp() {
   const activityWidth = useLayoutStore((s) => s.activityWidth);
   const setActivityWidth = useLayoutStore((s) => s.setActivityWidth);
   const toggleActivity = useLayoutStore((s) => s.toggleActivity);
+  const toggleTasksTab = useLayoutStore((s) => s.toggleTab);
+  const hydrateTasks = useTasksStore((s) => s.hydrate);
 
   const isDragging = useFileDropStore((s) => s.isDragging);
   const setDragging = useFileDropStore((s) => s.setDragging);
@@ -140,11 +143,20 @@ function AuthenticatedApp() {
     }
   }, [connected, fetchSessions, fetchProjects]);
 
-  // Cmd+B toggles the Browser/Simulator panel, Cmd+L the Activity Log.
+  // Cmd+B toggles the Browser/Simulator panel, Cmd+L the Activity Log,
+  // Cmd+Shift+T opens the panel on the Tasks tab (plain Cmd+T is the browser's
+  // own "new tab" shortcut, so it is never seen by page JS -- Shift avoids
+  // that collision).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
+      if (!(e.metaKey || e.ctrlKey)) return;
       const key = e.key.toLowerCase();
+      if (e.shiftKey && key === 't') {
+        e.preventDefault();
+        toggleTasksTab('tasks');
+        return;
+      }
+      if (e.shiftKey || e.altKey) return;
       if (key === 'b') {
         e.preventDefault();
         togglePanel();
@@ -155,7 +167,14 @@ function AuthenticatedApp() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [togglePanel, toggleActivity]);
+  }, [togglePanel, toggleActivity, toggleTasksTab]);
+
+  // Hydrate the Tasks panel once on load so a reload still shows what is
+  // running instead of coming up empty until the next socket event.
+  useEffect(() => {
+    void hydrateTasks();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // --- Global drag-and-drop handlers ---
 

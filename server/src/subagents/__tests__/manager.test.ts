@@ -522,6 +522,17 @@ describe("parent scoping", () => {
       },
     ]);
   });
+
+  it("listAll returns every chat's subagents tagged with their parent session", () => {
+    const manager = makeManager();
+    const mine = manager.spawn({ parentSessionId: PARENT, task: "go", name: "Survey" });
+    const theirs = manager.spawn({ parentSessionId: OTHER_PARENT, task: "other" });
+
+    const all = manager.listAll();
+    expect(all).toHaveLength(2);
+    expect(all.find((a) => a.agentId === mine.id)?.parentSessionId).toBe(PARENT);
+    expect(all.find((a) => a.agentId === theirs.id)?.parentSessionId).toBe(OTHER_PARENT);
+  });
 });
 
 describe("tool_use correlation", () => {

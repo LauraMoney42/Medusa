@@ -563,4 +563,19 @@ export class SubagentManager {
     }
     return out;
   }
+
+  /**
+   * Every subagent across every chat, each tagged with its parent session id
+   * so a cross-chat view (the Tasks panel, S15) can hydrate on load without
+   * looping over every known session id. Not part of the MCP tool surface:
+   * only the app's own authenticated client calls this, via `GET
+   * /api/subagents?all=1`.
+   */
+  listAll(): (SubagentStatusView & { parentSessionId: string })[] {
+    const out: (SubagentStatusView & { parentSessionId: string })[] = [];
+    for (const entry of this.entries.values()) {
+      out.push({ ...toStatusView(entry.record), parentSessionId: entry.record.parentSessionId });
+    }
+    return out;
+  }
 }
