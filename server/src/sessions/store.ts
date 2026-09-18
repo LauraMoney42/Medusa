@@ -18,6 +18,11 @@ const SessionMetaSchema = z.object({
   skills: z.array(z.string()).optional(),
   /** Per-session model override: bypasses routing if set (e.g. "fable", "haiku", "opus") */
   model: z.string().optional(),
+  /**
+   * S14: model used for voice turns only. The conversation lane wants a fast
+   * tier even when the chat is on a slower one. Unset means "use `model`".
+   */
+  voiceModel: z.string().optional(),
   /** Which CLI harness runs this chat ("claude" | "kimi" | "code-puppy"). */
   engineId: z.string().optional(),
   /** Which provider env this chat uses ("claude" | "kimi" | "openrouter"). */
@@ -292,6 +297,34 @@ export class SessionStore {
     session.model = model ?? undefined;
     this.persist();
     return session;
+  }
+
+  /** Set the voice-turn model override. Pass null to fall back to `model`. */
+  setVoiceModel(id: string, voiceModel: string | null): SessionMeta | undefined {
+    const session = this.sessions.find((s) => s.id === id);
+    if (!session) return undefined;
+    session.voiceModel = voiceModel ?? undefined;
+    this.persist();
+    return session;
+  }
+
+  /**
+   * Temporarily point `model` at another tier for the duration of one turn,
+   * returning the undo. Used by the voice loop so a `voiceModel` reaches the
+   * engine through the normal send path without being written to disk (the
+   * user's chosen model must survive a restart mid-conversation).
+   */
+  overrideModelForTurn(id: string, model: string): () => void {
+    const session = this.sessions.find((s) => s.id === id);
+    if (!session) return () => undefined;
+    const previous = session.model;
+    session.model = model;
+    let restored = false;
+    return () => {
+      if (restored) return;
+      restored = true;
+      session.model = previous;
+    };
   }
 
   /** Update skills for a session. */
