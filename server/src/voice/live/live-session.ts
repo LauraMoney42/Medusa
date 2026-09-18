@@ -202,7 +202,9 @@ export class LiveVoiceSession {
       instructions,
       tools: this.deps.shim,
       toolSpecs: ALL_MCP_TOOLS,
-      voice: this.deps.voice?.voiceId,
+      // liveVoice names a realtime speaker; voiceId is a local Kokoro voice and
+      // means nothing to a realtime provider (Gemini closes the socket with 1007).
+      voice: this.deps.voice?.liveVoice || undefined,
       onState: (state) => this.handleState(state),
       onUserPartial: (text) =>
         this.deps.emit("voice:partial", { sessionId: this.sessionId, text }),

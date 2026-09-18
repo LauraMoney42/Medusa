@@ -65,6 +65,16 @@ export const GEMINI_OUTPUT_RATE = 24_000;
 /** Prebuilt voice. Chosen to sit near Kokoro's `af_heart` default. */
 export const GEMINI_DEFAULT_VOICE = "Aoede";
 
+/** Voices the Live API accepts; anything else is rejected with close code 1007. */
+export const GEMINI_VOICES = ["Aoede", "Puck", "Charon", "Kore", "Fenrir", "Leda", "Orus", "Zephyr"] as const;
+
+/** Map a requested speaker to a Gemini voice, falling back to the default. */
+export function resolveGeminiVoice(requested: string | undefined): string {
+  if (!requested) return GEMINI_DEFAULT_VOICE;
+  const hit = GEMINI_VOICES.find((v) => v.toLowerCase() === requested.toLowerCase());
+  return hit ?? GEMINI_DEFAULT_VOICE;
+}
+
 // ---- JSON Schema -> Gemini Schema --------------------------------------
 
 /**
@@ -160,7 +170,7 @@ export function buildGeminiSetup(
         responseModalities: ["AUDIO"],
         speechConfig: {
           voiceConfig: {
-            prebuiltVoiceConfig: { voiceName: tuning.voice ?? GEMINI_DEFAULT_VOICE },
+            prebuiltVoiceConfig: { voiceName: resolveGeminiVoice(tuning.voice) },
           },
         },
       },

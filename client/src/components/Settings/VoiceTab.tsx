@@ -542,6 +542,21 @@ export default function VoiceTab() {
           </select>
         </div>
 
+        <div style={s.field}>
+          <label style={s.fieldLabel} htmlFor="voice-live-voice">Speaker</label>
+          <select
+            id="voice-live-voice"
+            style={{ ...s.select, width: '100%' }}
+            value={voice.liveVoice ?? ''}
+            onChange={(e) => patch({ liveVoice: e.target.value })}
+          >
+            <option value="">Default</option>
+            {(selectedRealtime?.voices ?? []).map((v) => (
+              <option key={v} value={v}>{v}</option>
+            ))}
+          </select>
+        </div>
+
         <p style={s.hint}>
           Live voice is true speech to speech: your voice goes straight to a
           realtime model and its voice comes straight back, instead of being

@@ -352,6 +352,8 @@ export interface RealtimeProviderStatus {
   defaultModel?: string;
   /** Known model ids for the Settings select. */
   models?: string[];
+  /** Speaker names the provider accepts, for the Settings select. */
+  voices?: string[];
   /** Where the user gets a key. */
   keyUrl?: string;
   /** True when a free key is enough, which is what the upgrade hint offers. */

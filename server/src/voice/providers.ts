@@ -24,7 +24,7 @@ import {
   type RealtimeProviderStatus,
   type RealtimeVoiceProvider,
 } from "./realtime.js";
-import { GeminiLiveProvider, GEMINI_LIVE_MODEL } from "./live/gemini-live.js";
+import { GeminiLiveProvider, GEMINI_LIVE_MODEL, GEMINI_VOICES } from "./live/gemini-live.js";
 
 export interface SttProvider {
   readonly id: string;
@@ -265,6 +265,7 @@ export function listRealtimeProviders(): RealtimeProviderStatus[] {
       displayName: "Gemini Live (native audio)",
       ready: hasGemini,
       defaultModel: GEMINI_LIVE_MODEL,
+      voices: [...GEMINI_VOICES],
       models: [GEMINI_LIVE_MODEL, "gemini-3.5-transcribe-live"],
       keyUrl: "https://aistudio.google.com/apikey",
       free: true,

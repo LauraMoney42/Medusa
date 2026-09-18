@@ -10,6 +10,14 @@ import {
   resetVoiceSessions,
 } from "../voice-handlers.js";
 
+// These tests exercise the local pipeline. Pin it by hiding every realtime
+// key, so a developer's real ~/.claude-chat/settings.json (which may hold a
+// Gemini key) cannot flip the tier under the assertions.
+vi.mock("../../settings/providers.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../settings/providers.js")>();
+  return { ...actual, getExternalApiKey: () => "" };
+});
+
 const SAMPLE_RATE = 16_000;
 const wait = (ms = 20) => new Promise((r) => setTimeout(r, ms));
 

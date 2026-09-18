@@ -619,6 +619,7 @@ export interface MedusaVoice {
   liveTier?: 'auto' | 'pipeline' | 'live';
   /** Realtime model id. Empty means the provider's own default. */
   liveModel?: string;
+  liveVoice?: string;
 }
 
 /** One realtime (Live mode) provider and whether it has a key. */
@@ -631,6 +632,7 @@ export interface RealtimeProviderStatus {
   defaultModel?: string;
   /** Known model ids for the model select. */
   models?: string[];
+  voices?: string[];
   /** Where the user gets a key. */
   keyUrl?: string;
   /** True when a free key is enough. */

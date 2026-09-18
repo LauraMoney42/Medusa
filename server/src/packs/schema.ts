@@ -140,6 +140,8 @@ export const VoiceSchema = z.object({
   liveTier: z.enum(["auto", "pipeline", "live"]).default("auto"),
   /** Realtime model id. Empty means the provider's own default. */
   liveModel: z.string().max(120).default(""),
+  /** Realtime speaker name (provider-specific, e.g. Gemini "Aoede"). Empty means the provider default. Kept separate from voiceId, which names a local Kokoro voice. */
+  liveVoice: z.string().max(60).default(""),
 });
 export type Voice = z.infer<typeof VoiceSchema>;
 
