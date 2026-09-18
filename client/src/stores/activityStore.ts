@@ -21,7 +21,10 @@ export type ActivityKind =
   | 'subagent_text'
   | 'subagent_tool'
   | 'subagent_tool_result'
-  | 'subagent_end';
+  | 'subagent_end'
+  // S14: voice loop and event-driven follow-up lines (spec section 6/7).
+  | 'voice_latency'
+  | 'followup';
 
 export interface ActivityTokens {
   input?: number;

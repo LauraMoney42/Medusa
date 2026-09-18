@@ -26,6 +26,9 @@ const KIND_COLOR: Record<ActivityKind, string> = {
   subagent_tool: 'var(--accent)',
   subagent_tool_result: 'var(--text-secondary)',
   subagent_end: 'var(--success)',
+  // A distinct hue so a `voice:latency` line reads at a glance in a busy log.
+  voice_latency: '#c084fc',
+  followup: 'var(--accent)',
 };
 
 /** Short badge labels; the full kind is on the title attribute. */
@@ -44,6 +47,8 @@ const KIND_LABEL: Record<ActivityKind, string> = {
   subagent_tool: 'sub tool',
   subagent_tool_result: 'sub res',
   subagent_end: 'sub✓',
+  voice_latency: 'voice',
+  followup: 'follow-up',
 };
 
 function formatTime(ts: string): string {
