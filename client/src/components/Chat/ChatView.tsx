@@ -221,37 +221,57 @@ export default function ChatView({ onMenuToggle, onNewChat }: ChatViewProps) {
     );
   }, []);
 
-  /** True when running inside the Tauri desktop shell's shell-open bridge. */
-  const getTauriShellOpen = (): ((path: string) => Promise<unknown>) | null => {
-    const tauri = (
-      window as unknown as { __TAURI__?: { shell?: { open?: (path: string) => Promise<unknown> } } }
-    ).__TAURI__;
-    const open = tauri?.shell?.open;
-    return typeof open === 'function' ? open : null;
+  /**
+   * True when running inside Tauri at all. Note this does NOT mean
+   * `window.__TAURI__.shell.open` exists -- `withGlobalTauri` only injects
+   * the core `invoke`/`event`/`path`/`window` bindings, not per-plugin JS
+   * wrappers (those need the separate `@tauri-apps/plugin-*` npm package,
+   * which this app never added for shell or dialog). Reveal-in-Finder goes
+   * through `core.invoke` instead, same pattern as NewChatModal's folder
+   * picker.
+   */
+  const getTauriInvoke = (): ((cmd: string, args?: unknown) => Promise<unknown>) | null => {
+    const tauri = (window as unknown as { __TAURI__?: { core?: { invoke?: unknown } } }).__TAURI__;
+    const invoke = tauri?.core?.invoke;
+    return typeof invoke === 'function' ? (invoke as (cmd: string, args?: unknown) => Promise<unknown>) : null;
   };
 
   /**
    * Folder chip click: under Tauri, reveal the chat's working directory in
-   * Finder via the `shell:allow-open` capability (desktop/src-tauri/
-   * capabilities/default.json) so the user can drop into the actual files.
-   * In a plain browser there is no filesystem to open, so copy the path
-   * instead and reuse the copiedId toast used by message Copy buttons.
+   * Finder. Tries the Rust `reveal_in_finder` command first (desktop/
+   * src-tauri/src/main.rs, no capability grant needed for a plain app
+   * command), then the shell plugin's own `plugin:shell|open` invoke command
+   * (granted by `shell:allow-open`) as a second path. In a plain browser, or
+   * if both fail, copies the path to the clipboard instead and reuses the
+   * copiedId toast used by message Copy buttons.
    */
   const handleFolderChipClick = useCallback(() => {
     if (!activeSession) return;
     const dir = activeSession.workingDir;
-    const openInFinder = getTauriShellOpen();
-    if (openInFinder) {
-      void openInFinder(dir).catch((err) => console.warn('[folder-chip] Finder open failed:', err));
+    const invoke = getTauriInvoke();
+
+    const copyPath = () => {
+      void navigator.clipboard.writeText(dir).then(
+        () => {
+          setCopiedId('folder-chip');
+          window.setTimeout(() => setCopiedId((id) => (id === 'folder-chip' ? null : id)), 1200);
+        },
+        (err) => console.error('Copy failed:', err),
+      );
+    };
+
+    if (!invoke) {
+      copyPath();
       return;
     }
-    void navigator.clipboard.writeText(dir).then(
-      () => {
-        setCopiedId('folder-chip');
-        window.setTimeout(() => setCopiedId((id) => (id === 'folder-chip' ? null : id)), 1200);
-      },
-      (err) => console.error('Copy failed:', err),
-    );
+
+    invoke('reveal_in_finder', { path: dir }).catch((err) => {
+      console.warn('[folder-chip] reveal_in_finder failed, trying shell plugin:', err);
+      invoke('plugin:shell|open', { path: dir }).catch((err2) => {
+        console.warn('[folder-chip] shell plugin open also failed, copying path instead:', err2);
+        copyPath();
+      });
+    });
   }, [activeSession]);
 
   const handleScreenshot = useCallback((file: File, preview: string) => {
@@ -357,7 +377,7 @@ export default function ChatView({ onMenuToggle, onNewChat }: ChatViewProps) {
           title={
             copiedId === 'folder-chip'
               ? 'Copied'
-              : `${activeSession.workingDir} (click to ${getTauriShellOpen() ? 'open in Finder' : 'copy path'})`
+              : `${activeSession.workingDir} (click to ${getTauriInvoke() ? 'open in Finder' : 'copy path'})`
           }
         >
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
