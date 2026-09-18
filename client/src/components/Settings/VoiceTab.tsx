@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import * as api from '../../api';
 import type { MedusaVoice, TtsStatus } from '../../api';
 import { useTtsStore } from '../../stores/ttsStore';
+import { useSessionStore } from '../../stores/sessionStore';
+import { useProviderStore } from '../../stores/providerStore';
 import { s } from './settingsStyles';
 import Toggle from './Toggle';
 
@@ -26,6 +28,21 @@ export default function VoiceTab() {
   const setStoreVoice = useTtsStore((st) => st.setVoice);
   const setStoreSpeed = useTtsStore((st) => st.setSpeed);
   const setStoreSpeak = useTtsStore((st) => st.setSpeak);
+
+  // S14-C: voice loop gains (spec section 4). voiceMode/vadSensitivity/
+  // silenceTimeoutMs/interruptBehavior are account-wide defaults that live
+  // on the same pack as the rest of this tab; voiceModel is per-session (it
+  // makes sense to run a cheaper model for one chat's voice turns and not
+  // another), so it's read/written straight through PATCH /api/sessions
+  // rather than through the MedusaVoice pack.
+  const activeSessionId = useSessionStore((st) => st.activeSessionId);
+  const sessions = useSessionStore((st) => st.sessions);
+  const updateSessionInStore = useSessionStore((st) => st.updateSession);
+  const activeSession = sessions.find((sess) => sess.id === activeSessionId) ?? null;
+  const globalProviderId = useProviderStore((st) => st.activeProviderId);
+  const providerId = activeSession?.providerId ?? globalProviderId;
+  const modelOptions = useProviderStore((st) => st.modelsFor(providerId));
+  const [voiceModelStatus, setVoiceModelStatus] = useState<string | null>(null);
 
   useEffect(() => {
     api.fetchVoiceSettings().then(setVoice).catch((e: Error) => setError(e.message));
@@ -68,6 +85,21 @@ export default function VoiceTab() {
       setError(e instanceof Error ? e.message : 'Save failed');
     }
   }, [voice, setStoreVoice, setStoreSpeed, setStoreSpeak]);
+
+  const handleVoiceModelChange = useCallback(
+    async (next: string) => {
+      if (!activeSession) return;
+      setVoiceModelStatus(null);
+      try {
+        await api.updateSession(activeSession.id, { voiceModel: next || null });
+        await updateSessionInStore(activeSession.id, { voiceModel: next || null });
+        setVoiceModelStatus('Voice model saved for this chat.');
+      } catch (e) {
+        setVoiceModelStatus(e instanceof Error ? e.message : 'Save failed');
+      }
+    },
+    [activeSession, updateSessionInStore],
+  );
 
   if (!voice) {
     return <div style={s.pane}><p style={s.hint}>{error ?? 'Loading…'}</p></div>;
@@ -146,6 +178,103 @@ export default function VoiceTab() {
         Engine: {voice.engine}. Pitch is stored for backends that support it; the
         local voice server currently applies speed only.
       </p>
+
+      {/* S14: speech-to-speech loop (spec section 4/6). */}
+      <div style={s.card}>
+        <div style={s.field}>
+          <label style={s.fieldLabel} htmlFor="voice-mode-default">Voice mode default</label>
+          <select
+            id="voice-mode-default"
+            style={{ ...s.select, width: '100%' }}
+            value={voice.voiceMode ?? 'off'}
+            onChange={(e) => patch({ voiceMode: e.target.value as MedusaVoice['voiceMode'] })}
+          >
+            <option value="off">Off</option>
+            <option value="push-to-talk">Push to talk</option>
+            <option value="always-on">Always on</option>
+          </select>
+        </div>
+
+        <div style={s.field}>
+          <label style={s.fieldLabel} htmlFor="voice-vad">
+            VAD sensitivity {(voice.vadSensitivity ?? 0.5).toFixed(2)}
+          </label>
+          <input
+            id="voice-vad"
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            style={s.slider}
+            value={voice.vadSensitivity ?? 0.5}
+            onChange={(e) => patch({ vadSensitivity: Number(e.target.value) })}
+          />
+          <p style={s.hint}>
+            Higher picks up softer speech but is more likely to trigger on background noise.
+          </p>
+        </div>
+
+        <div style={s.field}>
+          <label style={s.fieldLabel} htmlFor="voice-silence">
+            Silence timeout {voice.silenceTimeoutMs ?? 600} ms
+          </label>
+          <input
+            id="voice-silence"
+            type="range"
+            min={200}
+            max={2000}
+            step={50}
+            style={s.slider}
+            value={voice.silenceTimeoutMs ?? 600}
+            onChange={(e) => patch({ silenceTimeoutMs: Number(e.target.value) })}
+          />
+          <p style={s.hint}>How long you can pause mid-sentence before an utterance ends.</p>
+        </div>
+
+        <div style={s.field}>
+          <label style={s.fieldLabel} htmlFor="voice-interrupt">Interrupt behavior</label>
+          <select
+            id="voice-interrupt"
+            style={{ ...s.select, width: '100%' }}
+            value={voice.interruptBehavior ?? 'abort'}
+            onChange={(e) =>
+              patch({ interruptBehavior: e.target.value as MedusaVoice['interruptBehavior'] })
+            }
+          >
+            <option value="abort">Stop and answer the new question</option>
+            <option value="queue">Finish speaking, then answer</option>
+          </select>
+        </div>
+
+        <div style={s.row}>
+          <button style={s.btnPrimary} onClick={handleSave}>Save voice loop settings</button>
+        </div>
+
+        <div style={s.field}>
+          <label style={s.fieldLabel} htmlFor="voice-model-override">
+            Voice model override (this chat)
+          </label>
+          <select
+            id="voice-model-override"
+            style={{ ...s.select, width: '100%' }}
+            value={activeSession?.voiceModel ?? ''}
+            disabled={!activeSession}
+            onChange={(e) => void handleVoiceModelChange(e.target.value)}
+          >
+            <option value="">Use the chat's model</option>
+            {modelOptions.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.displayName}
+                {m.cheap ? ' · cheap' : ''}
+              </option>
+            ))}
+          </select>
+          <p style={s.hint}>
+            Runs a different (for example faster) model for voice turns in this chat only.
+          </p>
+          {voiceModelStatus && <p style={s.note}>{voiceModelStatus}</p>}
+        </div>
+      </div>
     </div>
   );
 }

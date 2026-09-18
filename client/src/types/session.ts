@@ -15,4 +15,10 @@ export interface SessionMeta {
   /** Credential/env set: "claude" | "kimi" | "openrouter". */
   providerId?: string;
   archived?: boolean;
+  /**
+   * S14-A: per-session override of which model handles voice turns (for
+   * example a faster tier than the chat's normal model), defaulting to the
+   * session model when unset. Persisted via PATCH /api/sessions.
+   */
+  voiceModel?: string | null;
 }

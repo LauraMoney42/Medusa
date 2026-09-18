@@ -130,6 +130,8 @@ export function updateSession(
     engineId: string | null;
     providerId: string | null;
     workingDir: string;
+    /** S14-A: per-session voice-turn model override; null clears it. */
+    voiceModel: string | null;
   }>,
 ): Promise<SessionMeta> {
   return request<SessionMeta>(`/api/sessions/${id}`, {
@@ -554,6 +556,21 @@ export interface MedusaVoice {
   speed: number;
   pitch: number;
   enabled: boolean;
+  /**
+   * S14-C additions for the speech-to-speech loop (spec section 4/6). The
+   * server-side pack schema for these is not final until S14-A merges
+   * (see docs/2026-09-18_s14_voice_loop_spec.md section 6), so every field
+   * here is optional and the client tolerates their absence on GET and
+   * simply round-trips whatever the server accepts on PUT.
+   */
+  /** Default voice mode a new chat opens with. */
+  voiceMode?: 'off' | 'push-to-talk' | 'always-on';
+  /** VAD energy threshold sensitivity, 0 (least sensitive) to 1 (most). */
+  vadSensitivity?: number;
+  /** Silence duration (ms) that ends an utterance server-side. */
+  silenceTimeoutMs?: number;
+  /** What barge-in does to the in-flight assistant turn. */
+  interruptBehavior?: 'abort' | 'queue';
 }
 
 export type ToolScope = 'read' | 'write' | 'shell';

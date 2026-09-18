@@ -24,5 +24,9 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  // Plain node:test unit tests (S14-C: no vitest configured in this
+  // package.json), run with `node --test src/lib/voice/__tests__/*.test.ts`
+  // rather than through the app's own tsc -b / vite build.
+  "exclude": ["src/**/__tests__/**"]
 }

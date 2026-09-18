@@ -98,6 +98,7 @@ graph TB
 | Orchestrator system prompt | `server/src/sessions/orchestrator-prompt.ts` | planned, spec Section C - replaces `server/src/sessions/compact-prompts.ts` |
 | Tauri folder picker | `desktop/src-tauri/` | planned, spec Section B.2/S9 - the `desktop/` shell itself already ships; only the native folder-picker dialog is outstanding |
 | Redesigned left rail / right panel (Browser\|Simulator) / Activity Log | `client/src/components/` (new layout) | planned, per `docs/2026-09-17_ui_and_layer_addendum.md` - not built in this checkout |
+| Voice loop client UI (S14-C) | `client/src/components/Voice/VoiceBar.tsx`, `client/src/lib/voice/`, `client/src/stores/voiceStore.ts` | current; built against the `docs/2026-09-18_s14_voice_loop_spec.md` Section 7 socket contract. Server side (S14-A voice pipeline, S14-B follow-ups) still planned |
 
 ## How it works today (pre-migration)
 

@@ -7,10 +7,12 @@ import MessageBubble from './MessageBubble';
 import ChatHeaderControls from './ChatHeaderControls';
 import ScreenshotButton from '../Input/ScreenshotButton';
 import MicButton from '../Input/MicButton';
+import VoiceBar from '../Voice/VoiceBar';
 import { useDictationInsert } from '../../hooks/useDictationInsert';
 import TokenRing from '../Usage/TokenRing';
 import { useProviderStore } from '../../stores/providerStore';
-import type { ChatMessage } from '../../types/message';
+import { useVoiceStore } from '../../stores/voiceStore';
+import { isFollowupMessage, type ChatMessage } from '../../types/message';
 import {
   uploadImage,
   synthesizeSpeech,
@@ -63,6 +65,7 @@ export default function ChatView({ onMenuToggle, onNewChat }: ChatViewProps) {
   const voice = useTtsStore((s) => s.voice);
   const speed = useTtsStore((s) => s.speed);
   const [ttsAvailable, setTtsAvailable] = useState(false);
+  const voiceMode = useVoiceStore((s) => s.mode);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const prevStreamingRef = useRef<string | null>(null);
 
@@ -398,6 +401,18 @@ export default function ChatView({ onMenuToggle, onNewChat }: ChatViewProps) {
           </div>
         ) : (
           chatMessages.map((msg, i) => {
+            // Event-driven subagent follow-ups (S14-B) render as a compact
+            // system chip, not a chat bubble. MessageBubble stays untouched
+            // (S6 owns it), so this branch bypasses it entirely rather than
+            // teaching it a new role.
+            if (isFollowupMessage(msg)) {
+              return (
+                <div key={msg.id} style={styles.followupChip}>
+                  <span style={styles.followupIcon}>↻</span>
+                  <span style={styles.followupText}>{msg.text}</span>
+                </div>
+              );
+            }
             const toolCount = msg.toolUses?.length ?? 0;
             const toolsOpen = openTools[msg.id] ?? false;
             return (
@@ -452,6 +467,8 @@ export default function ChatView({ onMenuToggle, onNewChat }: ChatViewProps) {
 
       {/* Input area */}
       <div style={styles.inputContainer}>
+        <VoiceBar sessionId={activeSession.id} inputEmpty={text.trim().length === 0} />
+
         {images && images.length > 0 && (
           <div style={styles.imageRow}>
             {images.map((img, idx) => (
@@ -482,7 +499,9 @@ export default function ChatView({ onMenuToggle, onNewChat }: ChatViewProps) {
             style={styles.textarea}
           />
 
-          <MicButton onTranscript={handleTranscript} disabled={false} compact />
+          {voiceMode === 'off' && (
+            <MicButton onTranscript={handleTranscript} disabled={false} compact />
+          )}
 
           {isBusy ? (
             <button onClick={handleAbort} style={styles.abortBtn} title="Stop">
@@ -630,6 +649,31 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     gap: 2,
+  },
+  // S14-B follow-up chip: a compact system line, not a bubble, so an
+  // unprompted "the agent finished" reads as ambient status rather than a
+  // second voice in the conversation.
+  followupChip: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'center',
+    margin: '4px 0',
+    padding: '4px 12px',
+    fontSize: 11.5,
+    color: 'var(--text-muted)',
+    background: 'var(--bg-tertiary)',
+    border: '1px solid var(--border)',
+    borderRadius: 999,
+    maxWidth: '80%',
+  },
+  followupIcon: {
+    flexShrink: 0,
+    opacity: 0.7,
+  },
+  followupText: {
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
   },
   footer: {
     display: 'flex',

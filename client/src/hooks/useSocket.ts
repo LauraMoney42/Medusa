@@ -11,7 +11,19 @@ import type {
   SubagentEndPayload,
 } from '../stores/subagentStore';
 import { useActivityStore, type ActivityEvent } from '../stores/activityStore';
+import { useVoiceStore } from '../stores/voiceStore';
+import { emitAudioChunk, emitStopAudio } from '../lib/voice/voiceBus';
 import type { ChatMessage, ToolUse } from '../types/message';
+import type {
+  VoiceStatePayload,
+  VoicePartialPayload,
+  VoiceTranscriptPayload,
+  VoiceAudioChunkPayload,
+  VoiceStopAudioPayload,
+  VoiceLatencyPayload,
+  FollowupQueuedPayload,
+  FollowupDeliveredPayload,
+} from '../types/voice';
 
 /**
  * Manages the Socket.IO lifecycle and dispatches incoming events
@@ -39,6 +51,9 @@ export function useSocket() {
   const subagentEnd = useSubagentStore((s) => s.end);
   const pushActivity = useActivityStore((s) => s.push);
   const setServerShuttingDown = useSessionStore((s) => s.setServerShuttingDown);
+  const setVoiceLoopState = useVoiceStore((s) => s.setState);
+  const setVoicePartial = useVoiceStore((s) => s.setPartialTranscript);
+  const setVoiceLatency = useVoiceStore((s) => s.setLastLatency);
   // Subscribe to sessions so we can join rooms after fetchSessions() resolves
   const sessions = useSessionStore((s) => s.sessions);
 
@@ -204,6 +219,70 @@ export function useSocket() {
       }
     };
 
+    // ---- Voice loop (S14, spec section 7) ----
+    // `voice:state` maps the server's 5-state machine onto the client's
+    // 4-state UI (spec section 3 vs section 4): "transcribing" collapses
+    // into "listening" since the VoiceBar's mic indicator covers both: the
+    // user is still mid-utterance from their point of view.
+    const handleVoiceState = (data: VoiceStatePayload) => {
+      const uiState = data.state === 'transcribing' ? 'listening' : data.state;
+      setVoiceLoopState(uiState);
+    };
+
+    const handleVoicePartial = (data: VoicePartialPayload) => {
+      setVoicePartial(data.text);
+    };
+
+    // Final transcripts arrive as a normal `message:user` event (handled
+    // above) so chat history stays complete; this event just means the
+    // partial is now stale.
+    const handleVoiceTranscript = (_data: VoiceTranscriptPayload) => {
+      setVoicePartial('');
+    };
+
+    const handleVoiceAudioChunk = (data: VoiceAudioChunkPayload) => {
+      emitAudioChunk(data);
+    };
+
+    const handleVoiceStopAudio = (data: VoiceStopAudioPayload) => {
+      emitStopAudio(data);
+    };
+
+    const handleVoiceLatency = (data: VoiceLatencyPayload) => {
+      setVoiceLatency({
+        sttMs: data.sttMs,
+        firstTokenMs: data.firstTokenMs,
+        firstAudioMs: data.firstAudioMs,
+        totalMs: data.totalMs,
+      });
+      pushActivity({
+        sessionId: data.sessionId,
+        ts: new Date().toISOString(),
+        kind: 'voice_latency',
+        summary: `speech->transcript ${data.sttMs}ms · transcript->reply ${data.firstTokenMs}ms · reply->audio ${data.firstAudioMs}ms · total ${data.totalMs}ms`,
+      });
+    };
+
+    // ---- Event-driven subagent follow-ups (S14-B) ----
+    const handleFollowupQueued = (data: FollowupQueuedPayload) => {
+      pushActivity({
+        sessionId: data.sessionId,
+        ts: new Date().toISOString(),
+        kind: 'followup',
+        summary: `Follow-up queued for agent ${data.agentId}`,
+        subagentId: data.agentId,
+      });
+    };
+
+    const handleFollowupDelivered = (data: FollowupDeliveredPayload) => {
+      pushActivity({
+        sessionId: data.sessionId,
+        ts: new Date().toISOString(),
+        kind: 'followup',
+        summary: `Follow-up delivered (${data.agentIds.length} agent${data.agentIds.length === 1 ? '' : 's'})`,
+      });
+    };
+
     // Register all listeners
     socket.on('connect', handleConnect);
     socket.on('disconnect', handleDisconnect);
@@ -230,6 +309,14 @@ export function useSocket() {
     socket.on('subagent:end', handleSubagentEnd);
     socket.on('activity:event', handleActivityEvent);
     socket.on('server:shutting-down', handleServerShuttingDown);
+    socket.on('voice:state', handleVoiceState);
+    socket.on('voice:partial', handleVoicePartial);
+    socket.on('voice:transcript', handleVoiceTranscript);
+    socket.on('voice:audio-chunk', handleVoiceAudioChunk);
+    socket.on('voice:stop-audio', handleVoiceStopAudio);
+    socket.on('voice:latency', handleVoiceLatency);
+    socket.on('followup:queued', handleFollowupQueued);
+    socket.on('followup:delivered', handleFollowupDelivered);
 
     return () => {
       // CRITICAL: Remove all listeners before disconnecting to prevent memory leaks
@@ -254,6 +341,14 @@ export function useSocket() {
       socket.off('subagent:end', handleSubagentEnd);
       socket.off('activity:event', handleActivityEvent);
       socket.off('server:shutting-down', handleServerShuttingDown);
+      socket.off('voice:state', handleVoiceState);
+      socket.off('voice:partial', handleVoicePartial);
+      socket.off('voice:transcript', handleVoiceTranscript);
+      socket.off('voice:audio-chunk', handleVoiceAudioChunk);
+      socket.off('voice:stop-audio', handleVoiceStopAudio);
+      socket.off('voice:latency', handleVoiceLatency);
+      socket.off('followup:queued', handleFollowupQueued);
+      socket.off('followup:delivered', handleFollowupDelivered);
 
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
