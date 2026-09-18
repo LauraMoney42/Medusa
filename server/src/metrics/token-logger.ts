@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { getModelPricing } from "./pricing.js";
 
 /**
  * Single log entry representing one Claude CLI interaction's cost/performance metrics.
@@ -7,18 +8,28 @@ import path from "path";
  */
 export interface TokenUsageEntry {
   timestamp: string;
-  /** Medusa session ID (bot session) */
+  /** Medusa session ID. For a subagent entry this is the PARENT session id,
+   *  so the session's total and the token ring stay correct. */
   sessionId: string;
-  /** Bot display name */
-  botName: string;
+  /**
+   * @deprecated Superseded by `sessionTitle`. Kept optional so pre-S10 JSONL
+   * lines (which only ever had this field) still parse; new entries should
+   * set `sessionTitle` instead.
+   */
+  botName?: string;
+  /** Human title of the session at log time (the chat's display name). */
+  sessionTitle?: string;
   /** Claude CLI session ID */
   claudeSessionId: string;
-  /** Medusa message ID for correlation */
+  /** Medusa message ID for correlation. For a subagent entry, its agent id. */
   messageId: string;
   /** What triggered this interaction */
-  source: "user" | "autonomous" | "poll" | "summarizer" | "mention" | "resume" | "nudge";
-  /** Aggregate cost from Claude CLI */
+  source: "user" | "autonomous" | "poll" | "summarizer" | "mention" | "resume" | "nudge" | "subagent";
+  /** Aggregate cost from Claude CLI (or computed from tokens, see `costEstimated`) */
   costUsd: number;
+  /** True when `costUsd` was computed from token counts and a pricing table
+   *  rather than reported directly by the CLI (OpenRouter models only). */
+  costEstimated?: boolean;
   /** Total wall-clock duration (ms) */
   durationMs: number;
   /** API-only duration (ms) — network + inference time */
@@ -35,15 +46,54 @@ export interface TokenUsageEntry {
   cacheReadTokens?: number;
   /** Whether the CLI call succeeded */
   success: boolean;
-  /** LLM provider id used for this interaction (e.g. "claude", "kimi", "openrouter") */
+  /** LLM provider id used for this interaction (e.g. "claude", "kimi", "openrouter").
+   *  For a subagent entry, the engine id the subagent actually ran on. */
   provider?: string;
   /** Model id used for this interaction (a tier like "sonnet" for native Claude,
    *  or a full model id like "openai/gpt-5.1" when routed through OpenRouter) */
   model?: string;
+  /** Set to "subagent" when this entry represents a spawned agent's completion
+   *  rather than the session's own turn. Absent means a normal session turn. */
+  role?: "subagent";
+  /** Present when role === "subagent": the spawned agent's own id. */
+  agentId?: string;
+  /** Present when role === "subagent": a short summary of the task it was given. */
+  subagentTask?: string;
+  /** Present when role === "subagent": the subagent's display name. */
+  subagentName?: string;
+}
+
+interface BreakdownStats {
+  costUsd: number;
+  messages: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+/** One row of the "Cost by Session" breakdown. */
+export interface SessionBreakdown extends BreakdownStats {
+  /** Session display name, resolved from sessionTitle, legacy botName, or the id itself. */
+  title: string;
+}
+
+/** One row of the "Cost by Subagent" breakdown. */
+export interface SubagentBreakdown extends BreakdownStats {
+  engine: string;
+  model: string | null;
+  parentSessionId: string;
+  /** Short summary of what the subagent was asked to do. */
+  task: string;
+}
+
+export interface ModelBreakdown {
+  costUsd: number;
+  messages: number;
+  /** False when at least one entry in this bucket had unknown per-token pricing. */
+  priceKnown: boolean;
 }
 
 /**
- * Aggregated usage summary for a time period or bot.
+ * Aggregated usage summary for a time period or session.
  */
 export interface UsageSummary {
   totalCostUsd: number;
@@ -57,10 +107,27 @@ export interface UsageSummary {
   totalCacheReadTokens: number;
   avgInputTokens: number;
   avgOutputTokens: number;
-  byBot: Record<string, { costUsd: number; messages: number; inputTokens: number; outputTokens: number }>;
-  bySource: Record<string, { costUsd: number; messages: number; inputTokens: number; outputTokens: number }>;
+  /** Keyed by sessionId. Subagent entries roll into their parent session here too. */
+  bySession: Record<string, SessionBreakdown>;
+  /** Keyed by subagent agentId. Only subagent-role entries appear here. */
+  bySubagent: Record<string, SubagentBreakdown>;
+  bySource: Record<string, BreakdownStats>;
   /** Keyed by "<provider>/<model>" (falls back to just the model, or "unknown"). */
-  byModel: Record<string, { costUsd: number; messages: number }>;
+  byModel: Record<string, ModelBreakdown>;
+}
+
+const EMPTY_STATS = (): BreakdownStats => ({ costUsd: 0, messages: 0, inputTokens: 0, outputTokens: 0 });
+
+/** Resolve the display title for a bySession row from whatever the entry carries. */
+function resolveSessionTitle(e: TokenUsageEntry): string {
+  return e.sessionTitle || e.botName || e.sessionId || "unknown";
+}
+
+/** Trim a subagent task string down to a short summary for the breakdown table. */
+function summarizeTask(task: string | undefined): string {
+  if (!task) return "";
+  const trimmed = task.trim().replace(/\s+/g, " ");
+  return trimmed.length > 140 ? `${trimmed.slice(0, 140)}...` : trimmed;
 }
 
 /**
@@ -159,7 +226,8 @@ export class TokenLogger {
       totalCacheReadTokens: 0,
       avgInputTokens: 0,
       avgOutputTokens: 0,
-      byBot: {},
+      bySession: {},
+      bySubagent: {},
       bySource: {},
       byModel: {},
     };
@@ -167,13 +235,23 @@ export class TokenLogger {
     let entriesWithTokens = 0;
 
     for (const e of entries) {
-      summary.totalCostUsd += e.costUsd;
-      summary.totalDurationMs += e.durationMs;
-
       const inputTokens = e.inputTokens ?? 0;
       const outputTokens = e.outputTokens ?? 0;
       const cacheCreationTokens = e.cacheCreationTokens ?? 0;
       const cacheReadTokens = e.cacheReadTokens ?? 0;
+
+      // Cost: trust the CLI-reported figure unless this is an OpenRouter
+      // model with known per-token pricing, in which case recompute from
+      // tokens (the CLI's own cost accounting assumes Anthropic pricing).
+      const pricing = getModelPricing(e.provider, e.model);
+      let costUsd = e.costUsd;
+      const priceKnown = e.provider === "openrouter" ? pricing.known : true;
+      if (e.provider === "openrouter" && pricing.known) {
+        costUsd = inputTokens * pricing.usdPerInputToken + outputTokens * pricing.usdPerOutputToken;
+      }
+
+      summary.totalCostUsd += costUsd;
+      summary.totalDurationMs += e.durationMs;
 
       if (e.inputTokens !== undefined || e.outputTokens !== undefined) {
         summary.totalInputTokens += inputTokens;
@@ -183,32 +261,59 @@ export class TokenLogger {
         entriesWithTokens++;
       }
 
-      // By bot
-      if (!summary.byBot[e.botName]) {
-        summary.byBot[e.botName] = { costUsd: 0, messages: 0, inputTokens: 0, outputTokens: 0 };
+      // By session: every entry, including subagent entries, whose sessionId
+      // is always the PARENT session, so a subagent's cost rolls into its
+      // parent's total automatically. A blank/missing sessionId (only ever
+      // possible on a malformed legacy line) keys as "unknown".
+      const sid = e.sessionId || "unknown";
+      if (!summary.bySession[sid]) {
+        summary.bySession[sid] = { title: resolveSessionTitle(e), ...EMPTY_STATS() };
       }
-      summary.byBot[e.botName].costUsd += e.costUsd;
-      summary.byBot[e.botName].messages += 1;
-      summary.byBot[e.botName].inputTokens += inputTokens;
-      summary.byBot[e.botName].outputTokens += outputTokens;
+      const sessionRow = summary.bySession[sid];
+      sessionRow.costUsd += costUsd;
+      sessionRow.messages += 1;
+      sessionRow.inputTokens += inputTokens;
+      sessionRow.outputTokens += outputTokens;
+
+      // By subagent: only entries logged for a spawned agent's own completion.
+      if (e.role === "subagent" && e.agentId) {
+        if (!summary.bySubagent[e.agentId]) {
+          summary.bySubagent[e.agentId] = {
+            engine: e.provider || "unknown",
+            model: e.model ?? null,
+            parentSessionId: e.sessionId,
+            task: summarizeTask(e.subagentTask),
+            ...EMPTY_STATS(),
+          };
+        }
+        const subagentRow = summary.bySubagent[e.agentId];
+        subagentRow.costUsd += costUsd;
+        subagentRow.messages += 1;
+        subagentRow.inputTokens += inputTokens;
+        subagentRow.outputTokens += outputTokens;
+      }
 
       // By source
       if (!summary.bySource[e.source]) {
-        summary.bySource[e.source] = { costUsd: 0, messages: 0, inputTokens: 0, outputTokens: 0 };
+        summary.bySource[e.source] = EMPTY_STATS();
       }
-      summary.bySource[e.source].costUsd += e.costUsd;
+      summary.bySource[e.source].costUsd += costUsd;
       summary.bySource[e.source].messages += 1;
       summary.bySource[e.source].inputTokens += inputTokens;
       summary.bySource[e.source].outputTokens += outputTokens;
+
       // By model: "<provider>/<model>" when both are known, else whichever is present.
       const modelKey = e.provider && e.model
         ? `${e.provider}/${e.model}`
         : e.model || e.provider || "unknown";
       if (!summary.byModel[modelKey]) {
-        summary.byModel[modelKey] = { costUsd: 0, messages: 0 };
+        summary.byModel[modelKey] = { costUsd: 0, messages: 0, priceKnown: true };
       }
-      summary.byModel[modelKey].costUsd += e.costUsd;
+      summary.byModel[modelKey].costUsd += costUsd;
       summary.byModel[modelKey].messages += 1;
+      if (!priceKnown) {
+        summary.byModel[modelKey].priceKnown = false;
+      }
     }
 
     if (entries.length > 0) {

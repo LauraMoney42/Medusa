@@ -375,7 +375,7 @@ export function setupSocketHandler(
           tokenLogger?.log({
             timestamp: new Date().toISOString(),
             sessionId,
-            botName: meta.name,
+            sessionTitle: meta.name,
             claudeSessionId: event.sessionId,
             messageId: assistantMsgId,
             source: "user",

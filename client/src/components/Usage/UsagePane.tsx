@@ -47,8 +47,14 @@ export default function UsagePane({ onMenuToggle }: UsagePaneProps) {
     load(period);
   }, [period, load]);
 
-  const byBotEntries = data
-    ? Object.entries(data.byBot).sort((a, b) => b[1].costUsd - a[1].costUsd)
+  const bySessionEntries = data
+    ? Object.entries(data.bySession).sort((a, b) => b[1].costUsd - a[1].costUsd)
+    : [];
+  const bySubagentEntries = data
+    ? Object.entries(data.bySubagent).sort((a, b) => b[1].costUsd - a[1].costUsd)
+    : [];
+  const byModelEntries = data
+    ? Object.entries(data.byModel).sort((a, b) => b[1].costUsd - a[1].costUsd)
     : [];
 
   return (
@@ -108,27 +114,27 @@ export default function UsagePane({ onMenuToggle }: UsagePaneProps) {
               </div>
             </div>
 
-            {/* Per-bot breakdown table */}
+            {/* Cost by Session */}
             <div style={styles.section}>
-              <div style={styles.sectionTitle}>Cost by Bot</div>
-              {byBotEntries.length === 0 ? (
+              <div style={styles.sectionTitle}>Cost by Session</div>
+              {bySessionEntries.length === 0 ? (
                 <p style={styles.hint}>No data for this period.</p>
               ) : (
                 <div style={styles.table}>
                   <div style={styles.tableHeader}>
-                    <span style={{ ...styles.col, flex: 2 }}>Bot</span>
+                    <span style={{ ...styles.col, flex: 2 }}>Session</span>
                     <span style={styles.col}>Messages</span>
                     <span style={styles.col}>Cost</span>
                     <span style={styles.col}>% of Total</span>
                   </div>
-                  {byBotEntries.map(([name, stats]) => {
+                  {bySessionEntries.map(([sessionId, stats]) => {
                     const pct = data.totalCostUsd > 0
                       ? ((stats.costUsd / data.totalCostUsd) * 100).toFixed(1)
                       : '0.0';
                     return (
-                      <div key={name} style={styles.tableRow}>
+                      <div key={sessionId} style={styles.tableRow}>
                         <span style={{ ...styles.col, flex: 2, color: 'var(--text-primary)', fontWeight: 500 }}>
-                          {name}
+                          {stats.title}
                         </span>
                         <span style={styles.col}>{formatMessages(stats.messages)}</span>
                         <span style={{ ...styles.col, color: '#4aba6a' }}>{formatCost(stats.costUsd)}</span>
@@ -136,6 +142,57 @@ export default function UsagePane({ onMenuToggle }: UsagePaneProps) {
                       </div>
                     );
                   })}
+                </div>
+              )}
+            </div>
+
+            {/* Cost by Subagent */}
+            <div style={styles.section}>
+              <div style={styles.sectionTitle}>Cost by Subagent</div>
+              {bySubagentEntries.length === 0 ? (
+                <p style={styles.hint}>No subagents ran in this period.</p>
+              ) : (
+                <div style={styles.table}>
+                  <div style={styles.tableHeader}>
+                    <span style={{ ...styles.col, flex: 2 }}>Task</span>
+                    <span style={styles.col}>Engine</span>
+                    <span style={styles.col}>Cost</span>
+                  </div>
+                  {bySubagentEntries.map(([agentId, stats]) => (
+                    <div key={agentId} style={styles.tableRow}>
+                      <span style={{ ...styles.col, flex: 2, color: 'var(--text-primary)', fontWeight: 500 }}>
+                        {stats.task || agentId}
+                      </span>
+                      <span style={styles.col}>{stats.engine}{stats.model ? `/${stats.model}` : ''}</span>
+                      <span style={{ ...styles.col, color: '#4aba6a' }}>{formatCost(stats.costUsd)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Cost by Model */}
+            <div style={styles.section}>
+              <div style={styles.sectionTitle}>Cost by Model</div>
+              {byModelEntries.length === 0 ? (
+                <p style={styles.hint}>No data for this period.</p>
+              ) : (
+                <div style={styles.table}>
+                  <div style={styles.tableHeader}>
+                    <span style={{ ...styles.col, flex: 2 }}>Model</span>
+                    <span style={styles.col}>Messages</span>
+                    <span style={styles.col}>Cost</span>
+                  </div>
+                  {byModelEntries.map(([modelKey, stats]) => (
+                    <div key={modelKey} style={styles.tableRow}>
+                      <span style={{ ...styles.col, flex: 2, color: 'var(--text-primary)', fontWeight: 500 }}>
+                        {modelKey}
+                        {!stats.priceKnown && <span title="No per-token price available; cost shown as reported by the engine.">{' '}(est. unavailable)</span>}
+                      </span>
+                      <span style={styles.col}>{formatMessages(stats.messages)}</span>
+                      <span style={{ ...styles.col, color: '#4aba6a' }}>{formatCost(stats.costUsd)}</span>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

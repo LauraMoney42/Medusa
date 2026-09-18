@@ -482,6 +482,32 @@ export function sendToOneNote(
 
 // ---- Token Usage Dashboard ----
 
+export interface SessionUsageBreakdown {
+  title: string;
+  costUsd: number;
+  messages: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+export interface SubagentUsageBreakdown {
+  engine: string;
+  model: string | null;
+  parentSessionId: string;
+  task: string;
+  costUsd: number;
+  messages: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+export interface ModelUsageBreakdown {
+  costUsd: number;
+  messages: number;
+  /** False when at least one entry in this bucket had unknown per-token pricing. */
+  priceKnown: boolean;
+}
+
 export interface TokenUsagePeriod {
   period: 'day' | 'week' | 'month';
   from: string;
@@ -489,9 +515,10 @@ export interface TokenUsagePeriod {
   totalCostUsd: number;
   totalMessages: number;
   totalDurationMs: number;
-  byBot: Record<string, { costUsd: number; messages: number }>;
+  bySession: Record<string, SessionUsageBreakdown>;
+  bySubagent: Record<string, SubagentUsageBreakdown>;
   bySource: Record<string, { costUsd: number; messages: number }>;
-  byModel: Record<string, { costUsd: number; messages: number }>;
+  byModel: Record<string, ModelUsageBreakdown>;
 }
 
 export function fetchTokenUsage(period: 'day' | 'week' | 'month'): Promise<TokenUsagePeriod> {
@@ -506,7 +533,7 @@ export interface ComparePeriodSummary {
   to: string;
   totalCostUsd: number;
   totalMessages: number;
-  byBot: Record<string, { costUsd: number; messages: number }>;
+  bySession: Record<string, SessionUsageBreakdown>;
 }
 
 export interface CompareResult {

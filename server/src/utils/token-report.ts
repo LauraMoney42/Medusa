@@ -89,7 +89,8 @@ function printReport(entries: TokenUsageEntry[], since: Date): void {
   let totalCost = 0;
   let totalDuration = 0;
   let successCount = 0;
-  const byBot: Record<string, { cost: number; count: number; duration: number; inputTokens: number; outputTokens: number }> = {};
+  const bySession: Record<string, { title: string; cost: number; count: number; duration: number; inputTokens: number; outputTokens: number }> = {};
+  const bySubagent: Record<string, { engine: string; model: string | null; task: string; cost: number; count: number; inputTokens: number; outputTokens: number }> = {};
   const bySource: Record<string, { cost: number; count: number; inputTokens: number; outputTokens: number }> = {};
 
   let totalInputTokens = 0;
@@ -110,12 +111,32 @@ function printReport(entries: TokenUsageEntry[], since: Date): void {
       entriesWithTokens++;
     }
 
-    if (!byBot[e.botName]) byBot[e.botName] = { cost: 0, count: 0, duration: 0, inputTokens: 0, outputTokens: 0 };
-    byBot[e.botName].cost += e.costUsd;
-    byBot[e.botName].count += 1;
-    byBot[e.botName].duration += e.durationMs;
-    byBot[e.botName].inputTokens += inputTokens;
-    byBot[e.botName].outputTokens += outputTokens;
+    const sid = e.sessionId || "unknown";
+    const title = e.sessionTitle || e.botName || sid;
+    if (!bySession[sid]) bySession[sid] = { title, cost: 0, count: 0, duration: 0, inputTokens: 0, outputTokens: 0 };
+    bySession[sid].cost += e.costUsd;
+    bySession[sid].count += 1;
+    bySession[sid].duration += e.durationMs;
+    bySession[sid].inputTokens += inputTokens;
+    bySession[sid].outputTokens += outputTokens;
+
+    if (e.role === "subagent" && e.agentId) {
+      if (!bySubagent[e.agentId]) {
+        bySubagent[e.agentId] = {
+          engine: e.provider || "unknown",
+          model: e.model ?? null,
+          task: (e.subagentTask ?? "").trim().slice(0, 140),
+          cost: 0,
+          count: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+        };
+      }
+      bySubagent[e.agentId].cost += e.costUsd;
+      bySubagent[e.agentId].count += 1;
+      bySubagent[e.agentId].inputTokens += inputTokens;
+      bySubagent[e.agentId].outputTokens += outputTokens;
+    }
 
     if (!bySource[e.source]) bySource[e.source] = { cost: 0, count: 0, inputTokens: 0, outputTokens: 0 };
     bySource[e.source].cost += e.costUsd;
@@ -151,17 +172,29 @@ function printReport(entries: TokenUsageEntry[], since: Date): void {
   console.log(`Avg time/msg:  ${formatDuration(totalDuration / entries.length)}`);
   console.log(`Msgs/hour:     ${(entries.length / timeSpanHours).toFixed(1)}`);
 
-  // Cost by bot
-  console.log("\n── Cost by Bot ──────────────────────────────");
-  const botEntries = Object.entries(byBot).sort((a, b) => b[1].cost - a[1].cost);
-  for (const [bot, data] of botEntries) {
+  // Cost by session
+  console.log("\n── Cost by Session ──────────────────────────");
+  const sessionEntries = Object.entries(bySession).sort((a, b) => b[1].cost - a[1].cost);
+  for (const [, data] of sessionEntries) {
     const pct = ((data.cost / totalCost) * 100).toFixed(1);
     const tokenInfo = data.inputTokens + data.outputTokens > 0
       ? `  ${(data.inputTokens + data.outputTokens).toLocaleString()} tokens`
       : "";
     console.log(
-      `  ${bot.padEnd(20)} ${formatCost(data.cost).padStart(10)}  (${pct}%)  ${data.count} msgs  avg ${formatDuration(data.duration / data.count)}${tokenInfo}`
+      `  ${data.title.padEnd(20)} ${formatCost(data.cost).padStart(10)}  (${pct}%)  ${data.count} msgs  avg ${formatDuration(data.duration / data.count)}${tokenInfo}`
     );
+  }
+
+  // Cost by subagent
+  if (Object.keys(bySubagent).length > 0) {
+    console.log("\n── Cost by Subagent ─────────────────────────");
+    const subagentEntries = Object.entries(bySubagent).sort((a, b) => b[1].cost - a[1].cost);
+    for (const [agentId, data] of subagentEntries) {
+      const pct = ((data.cost / totalCost) * 100).toFixed(1);
+      console.log(
+        `  ${agentId.padEnd(14)} ${(data.engine + "/" + (data.model ?? "?")).padEnd(20)} ${formatCost(data.cost).padStart(10)}  (${pct}%)  ${data.count} msgs  ${data.task}`
+      );
+    }
   }
 
   // Cost by source

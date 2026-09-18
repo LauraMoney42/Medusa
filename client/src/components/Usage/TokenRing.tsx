@@ -107,12 +107,17 @@ export default function TokenRing({ popoverDirection = 'down' }: TokenRingProps)
   // Center label: dashes when we have no data at all and the last fetch failed.
   const centerLabel = day == null && hasError ? '--' : formatCost(todayCost);
 
-  // Top bots this week, sorted by cost desc, top 5.
-  const topBots = week
-    ? Object.entries(week.byBot)
+  // Top sessions this week, sorted by cost desc, top 5.
+  const topSessions = week
+    ? Object.entries(week.bySession)
         .sort((a, b) => b[1].costUsd - a[1].costUsd)
         .slice(0, 5)
     : [];
+
+  // Subagents line (A.8): count and cost attributed to spawned agents today.
+  const subagentEntries = day ? Object.values(day.bySubagent) : [];
+  const subagentCount = subagentEntries.length;
+  const subagentCostUsd = subagentEntries.reduce((sum, s) => sum + s.costUsd, 0);
 
   // Toggle the popover. Stop propagation so the window click-away listener
   // (registered on the same click) doesn't immediately re-close it.
@@ -185,17 +190,25 @@ export default function TokenRing({ popoverDirection = 'down' }: TokenRingProps)
           {renderPeriodRow('This Month', month)}
 
           <div style={styles.section}>
-            <div style={styles.sectionTitle}>Top bots (this week)</div>
-            {topBots.length > 0 ? (
-              topBots.map(([name, stats]) => (
-                <div key={name} style={styles.botRow}>
-                  <span style={styles.botName}>{name}</span>
+            <div style={styles.sectionTitle}>Top sessions (this week)</div>
+            {topSessions.length > 0 ? (
+              topSessions.map(([sessionId, stats]) => (
+                <div key={sessionId} style={styles.botRow}>
+                  <span style={styles.botName}>{stats.title}</span>
                   <span style={styles.cost}>{formatCost(stats.costUsd)}</span>
                 </div>
               ))
             ) : (
               <div style={styles.empty}>No data</div>
             )}
+          </div>
+
+          <div style={styles.row}>
+            <span style={styles.rowLabel}>Subagents (today)</span>
+            <span style={styles.rowValues}>
+              <span style={styles.cost}>{formatCost(subagentCostUsd)}</span>
+              <span style={styles.msgs}>{subagentCount} agent{subagentCount === 1 ? '' : 's'}</span>
+            </span>
           </div>
 
           <div style={styles.footnote}>Reflects logged API cost.</div>
