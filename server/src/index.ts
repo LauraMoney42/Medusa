@@ -34,6 +34,7 @@ import { createProvidersRouter } from "./routes/providers.js";
 import { createTicTalkRouter } from "./routes/tictalk.js";
 import { paginateDevlogs } from "./utils/devlog-paginator.js";
 import { TokenLogger } from "./metrics/token-logger.js";
+import { refreshOpenRouterPricing } from "./metrics/pricing.js";
 import { createMetricsRouter } from "./routes/metrics.js";
 import { createOneNoteRouter } from "./routes/onenote.js";
 import { startHeadroomProxy, stopHeadroomProxy } from "./headroom/proxy-manager.js";
@@ -58,6 +59,10 @@ const chatStore = new ChatStore(path.dirname(config.sessionsFile));
 const projectStore = new ProjectStore(config.projectsFile);
 const quickTaskStore = new QuickTaskStore(config.quickTasksFile);
 const tokenLogger = new TokenLogger(config.tokenUsageLogFile);
+// Best-effort, non-blocking: populates the OpenRouter per-token pricing cache
+// used to recompute cost for OpenRouter-routed entries (A.8). A failed fetch
+// just leaves those entries flagged priceKnown: false, never blocks startup.
+refreshOpenRouterPricing().catch(() => {});
 
 // Pre-load existing sessions into the process manager so that
 // resumed conversations work after a server restart.
@@ -150,6 +155,32 @@ const subagentManager = new SubagentManager({
     // The Activity Log mirrors subagent traffic alongside the parent's own
     // stream; this is the only place those events are visible server-side.
     emitSubagentActivity(io, event, payload);
+  },
+  // A.8 cost attribution: one TokenUsageEntry per finished subagent, keyed to
+  // the PARENT session so the token ring and bySession totals stay correct,
+  // plus its own row in bySubagent via role/agentId/subagentTask.
+  logUsage: (entry) => {
+    const record = subagentManager.get(entry.agentId);
+    const parentMeta = sessionStore.get(entry.sessionId);
+    tokenLogger.log({
+      timestamp: new Date().toISOString(),
+      sessionId: entry.sessionId,
+      sessionTitle: parentMeta?.name,
+      claudeSessionId: record?.engineSessionId ?? "",
+      messageId: entry.agentId,
+      source: "subagent",
+      costUsd: entry.usage.costUsd,
+      durationMs: entry.durationMs,
+      inputTokens: entry.usage.inputTokens,
+      outputTokens: entry.usage.outputTokens,
+      success: record?.status === "done",
+      provider: entry.engineId,
+      model: entry.model ?? undefined,
+      role: "subagent",
+      agentId: entry.agentId,
+      subagentTask: record?.task,
+      subagentName: record?.name,
+    });
   },
 });
 

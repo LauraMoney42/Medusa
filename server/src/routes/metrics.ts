@@ -49,7 +49,8 @@ export function createTokenUsageHandler(tokenLogger: TokenLogger): RequestHandle
       totalCacheReadTokens: summary.totalCacheReadTokens,
       avgInputTokens: summary.avgInputTokens,
       avgOutputTokens: summary.avgOutputTokens,
-      byBot: summary.byBot,
+      bySession: summary.bySession,
+      bySubagent: summary.bySubagent,
       bySource: summary.bySource,
       byModel: summary.byModel,
     });
@@ -134,7 +135,7 @@ export function createMetricsRouter(tokenLogger: TokenLogger): { metricsRouter: 
    * Supported period names: today, yesterday, this_week, last_week, this_month, last_month
    *
    * Response: { a: PeriodSummary, b: PeriodSummary }
-   * PeriodSummary: { label, from, to, totalCostUsd, totalMessages, byBot }
+   * PeriodSummary: { label, from, to, totalCostUsd, totalMessages, bySession }
    */
   router.get("/compare", (req: Request, res: Response) => {
     const aName = (req.query.a as string) || "today";
@@ -173,7 +174,7 @@ export function createMetricsRouter(tokenLogger: TokenLogger): { metricsRouter: 
         totalMessages: aSummary.totalMessages,
         totalInputTokens: aSummary.totalInputTokens,
         totalOutputTokens: aSummary.totalOutputTokens,
-        byBot: aSummary.byBot,
+        bySession: aSummary.bySession,
       },
       b: {
         label: LABELS[bName] ?? bName,
@@ -183,7 +184,7 @@ export function createMetricsRouter(tokenLogger: TokenLogger): { metricsRouter: 
         totalMessages: bSummary.totalMessages,
         totalInputTokens: bSummary.totalInputTokens,
         totalOutputTokens: bSummary.totalOutputTokens,
-        byBot: bSummary.byBot,
+        bySession: bSummary.bySession,
       },
     });
   });
