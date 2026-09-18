@@ -44,17 +44,48 @@ export function logout(): Promise<{ ok: boolean }> {
 }
 
 /**
+ * Reads a `medusa-auth=<token>` entry out of the URL fragment left by the
+ * desktop shell (see desktop/src-tauri/src/main.rs: the window is navigated
+ * to `http://127.0.0.1:<port>/#medusa-auth=<token>` once the sidecar is
+ * healthy). Fragments are never sent to the server, so this is the primary
+ * handoff path; the shell's initialization_script localStorage write is only
+ * a secondary path kept for engines where it still fires reliably.
+ *
+ * If found, stores it into localStorage under 'auth-token' (the same key
+ * the init script writes) and strips the fragment from the visible URL via
+ * history.replaceState, so the token never lingers in the address bar or
+ * browser history.
+ */
+function consumeAuthTokenFromHash(): void {
+  const hash = window.location.hash;
+  if (!hash || hash.length < 2) return;
+
+  const params = new URLSearchParams(hash.slice(1));
+  const token = params.get('medusa-auth');
+  if (!token) return;
+
+  localStorage.setItem('auth-token', token);
+
+  const url = new URL(window.location.href);
+  url.hash = '';
+  window.history.replaceState(null, '', url.toString());
+}
+
+/**
  * Checks whether the current cookie is valid.
- * If not, attempts auto-login using the token injected into localStorage
- * by the macOS app (WebViewController).
+ * If not, attempts auto-login using the token handed off in the URL
+ * fragment (see consumeAuthTokenFromHash) or, as a fallback, injected into
+ * localStorage directly by the macOS app's initialization_script.
  * Returns true if authenticated, false otherwise.
  */
 export async function checkAuth(): Promise<boolean> {
+  consumeAuthTokenFromHash();
+
   try {
     await request<{ ok: boolean }>('/api/auth/me');
     return true;
   } catch {
-    // Cookie missing or invalid — try the token the macOS app injects
+    // Cookie missing or invalid: try the token the desktop shell handed off
     const injectedToken = localStorage.getItem('auth-token');
     if (injectedToken) {
       try {

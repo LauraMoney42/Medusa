@@ -261,13 +261,26 @@ fn start_sidecar_and_navigate(app: &AppHandle, port: u16, auth_token: String) {
             return;
         }
 
-        let url = format!("http://127.0.0.1:{port}");
+        // The auth token rides in the URL fragment (never a query string):
+        // fragments are not transmitted to the server and never appear in
+        // server access logs or the RateLimit-tracked request path, but
+        // client/src/api.ts can still read them from location.hash on boot.
+        let url = format!("http://127.0.0.1:{port}/#medusa-auth={auth_token}");
         if let Some(window) = app_handle.get_webview_window("main") {
             match url.parse() {
                 Ok(target) => {
                     // The window's initialization_script (see
-                    // create_main_window) reruns on this navigation and sets
-                    // the auth token before client/src/socket.ts runs.
+                    // create_main_window) is a secondary path: it reruns on
+                    // this navigation and sets the auth token before
+                    // client/src/socket.ts runs, but init scripts are not
+                    // guaranteed to fire on a navigate() of an existing
+                    // window in every webview engine. The primary handoff is
+                    // the URL fragment below: client/src/api.ts reads
+                    // location.hash on boot, pulls the token out of it, and
+                    // clears the fragment with history.replaceState. A
+                    // fragment (not a query string) never leaves the
+                    // browser: it is not sent to the server and never shows
+                    // up in server access logs.
                     if let Err(e) = window.navigate(target) {
                         eprintln!("[medusa-desktop] failed to navigate window: {e}");
                     }
