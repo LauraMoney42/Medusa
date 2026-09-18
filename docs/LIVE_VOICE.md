@@ -110,26 +110,49 @@ live-guide and live-tools pages, read 2026-09-18):
   API does no automatic tool handling.
 - Text turn (follow-ups): `{"clientContent": {"turns": [...], "turnComplete": true}}`.
 
+## One speaker at a time
+
+Every spoken turn carries a server-assigned `turnId` on
+`voice:speaking-start`, every `voice:audio-chunk`, `voice:speaking-end` and
+`voice:stop-audio`, exactly as the pipeline tier does, and `seq` restarts at 0
+with it. The client scheduler stops the previous turn the moment a new
+`turnId` arrives and refuses any chunk belonging to a turn that was stopped,
+so a chunk still inside `decodeAudioData` when a barge-in lands can never be
+played on top of the reply that replaced it.
+
+While she is speaking, the mic is gated as well as ducked
+(`client/src/lib/voice/echoGate.ts`): the first 500 ms of each turn measure
+how loud her own echo is on this machine, and after that a frame has to stay
+above `max(floor, 2x measured)` for 300 ms before anything is sent. Without
+it, the leakage through the ducked mic was enough for Gemini's own VAD to
+interrupt her mid-sentence and transcribe her own voice as a user turn, which
+is what "talking over itself" sounded like. The gate opening is also a local
+barge-in: playback stops in about 750 ms instead of waiting the ~2 s the
+service takes to report the same interruption, and audio for the turn that
+was cut off is dropped until the service catches up.
+
 ## Limits and known gaps
 
-- **The real call is untested.** There is no Gemini key on the development
-  machine, so the provider has never run against the live service. Everything
-  above is transcribed from the protocol reference and exercised only through
-  an injected fake socket. The first run with a real key is the real test.
+- Verified against the real service on 2026-09-18 from a headless client
+  (spoken WAV in, every `voice:*` event recorded, playback fed back into the
+  mic). Measured: speech end to first audio about 2.2 s, `firstAudioMs`
+  337-368 ms from the transcript, barge-in to playback stop 747-1675 ms.
+  Service latency is variable: turns occasionally took 20-35 s to come back on
+  a free key.
 - Audio out is re-wrapped as WAV in roughly 200 ms chunks, because the client
   scheduler decodes with `AudioContext.decodeAudioData`, which cannot read
   headerless PCM. That adds about one chunk of buffering to the first spoken
   word.
-- No measured latency figures yet, for the same reason.
 - A subagent follow-up still also runs its normal engine turn, so in Live mode
   it is both spoken by the realtime model and written into the chat by the
   engine. Suppressing the second one means changing the follow-up runner, which
   this workstream deliberately did not touch.
 - `voice:latency` in Live mode reports `firstAudioMs` and `totalMs` only; there
   is no separate STT or first-token stage to measure.
-- The explicit interrupt button stops local playback and lets the next turn
-  supersede. There is no cancel message in the Live API; the model's own VAD is
-  what actually cuts her off when you start talking.
+- There is no cancel message in the Live API. The interrupt button and the
+  echo gate's local barge-in both stop local playback and drop the cut-off
+  turn's remaining audio; the model's own VAD is what ends the turn on its
+  side, a second or two later.
 - Session resumption and context-window compression are not wired, so a very
   long live conversation ends when the provider's session limit is reached.
   That surfaces as an unclean close, which triggers the pipeline fallback.

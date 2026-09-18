@@ -364,9 +364,15 @@ export class GeminiLiveProvider implements RealtimeVoiceProvider {
 
       if (content.interrupted) {
         // The user started talking over her. Whatever is queued is stale.
+        //
+        // Settle the half-spoken reply BEFORE announcing the interrupt: the
+        // listener closes its assistant message on `onInterrupt`, so a
+        // transcript arriving after that had nothing to append to and opened
+        // a SECOND message holding the whole reply again. The owner saw every
+        // interrupted reply twice in the chat.
+        flushAssistantTurn();
         opts.onInterrupt?.();
         opts.onState?.("listening");
-        flushAssistantTurn();
         return;
       }
 
@@ -462,8 +468,16 @@ export class GeminiLiveProvider implements RealtimeVoiceProvider {
       interrupt: () => {
         // There is no cancel message: the documented way to cut her off is to
         // start a new turn, which the model's own VAD does when real audio
-        // arrives. For the explicit interrupt button, stop local playback and
-        // let the next frames supersede.
+        // arrives. For an interrupt raised on our side (the button, or the
+        // client hearing the user talk over her), stop local playback and let
+        // the next frames supersede.
+        //
+        // Settling the half-spoken reply here matters: the service reports
+        // the SAME interruption a second or two later, and a `serverContent
+        // .interrupted` arriving with this turn's transcript still buffered
+        // flushed it into a second assistant message holding the whole reply
+        // again. The owner saw the reply twice.
+        flushAssistantTurn();
         opts.onInterrupt?.();
         opts.onState?.("listening");
       },

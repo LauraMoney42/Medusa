@@ -67,6 +67,14 @@ export class GaplessAudioQueue {
   private muted = false;
   /** The only turn allowed to schedule audio right now; null before the first. */
   private currentTurnId: string | null = null;
+  /**
+   * Turns that were explicitly stopped (`voice:stop-audio`). A chunk of such
+   * a turn can still be in flight, or still inside an unresolved
+   * `decodeAudioData`, when the stop lands; without this it would be
+   * scheduled into the *next* turn's queue and played on top of the new
+   * reply. Bounded: only the last few stops can matter.
+   */
+  private retiredTurnIds: string[] = [];
   /** Called once with the seq of every chunk as it actually starts playing. */
   onChunkStart: ((seq: number) => void) | null = null;
   /** Called when the last scheduled chunk finishes and the queue goes idle. */
@@ -121,6 +129,7 @@ export class GaplessAudioQueue {
    */
   enqueue(seq: number, buffer: MinimalAudioBuffer, turnId?: string): void {
     if (turnId !== undefined) {
+      if (this.retiredTurnIds.includes(turnId)) return; // stopped; its tail is stale
       if (this.currentTurnId === null) this.currentTurnId = turnId;
       else if (turnId !== this.currentTurnId) return; // belongs to a turn we've moved past
     }
@@ -158,8 +167,17 @@ export class GaplessAudioQueue {
     this.nextStartTime = startAt + buffer.duration;
   }
 
-  /** `voice:stop-audio`: stop everything immediately and forget queued chunks. */
-  stopAll(): void {
+  /**
+   * `voice:stop-audio`: stop everything immediately and forget queued chunks.
+   * Pass the stopped turn's id (the server sends one on both tiers) so late
+   * chunks from it are refused rather than adopted by the turn that follows.
+   */
+  stopAll(turnId?: string): void {
+    if (turnId !== undefined) {
+      this.retiredTurnIds.push(turnId);
+      if (this.retiredTurnIds.length > 8) this.retiredTurnIds.shift();
+      if (this.currentTurnId === turnId) this.currentTurnId = null;
+    }
     for (const source of this.activeSources) {
       try {
         source.stop();

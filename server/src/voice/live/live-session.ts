@@ -174,6 +174,26 @@ export class LiveVoiceSession {
   private seq = 0;
   private pending: number[] = [];
   private speakingEmitted = false;
+  /**
+   * One id per spoken turn, exactly as `VoiceSession` assigns for the
+   * pipeline tier. The client scheduler keys single-speaker ownership off
+   * this: `voice:speaking-start` tells it a new turn began (so it hard-stops
+   * whatever was still queued from the last one) and every chunk carries the
+   * turn it belongs to (so a chunk that finishes decoding after its turn was
+   * interrupted is dropped instead of being played on top of the new reply).
+   * Live mode emitted none of these, which left both protections inert and
+   * was what made her talk over herself. Null between turns.
+   */
+  private currentTurnId: string | null = null;
+  /**
+   * True between an interrupt we raised and the service acknowledging it.
+   * Audio that arrives in that window belongs to the turn that was cut off.
+   */
+  private suppressAudio = false;
+  /** Set only for the duration of our own `interrupt()` call, to tell the two paths apart. */
+  private localInterrupt = false;
+  private suppressTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly SUPPRESS_TIMEOUT_MS = 4_000;
   private fatal = false;
   private disposed = false;
 
@@ -247,8 +267,46 @@ export class LiveVoiceSession {
     this.realtime?.commit();
   }
 
+  /**
+   * Cut her off from our side: the interrupt button, or the client hearing
+   * the user talk over her (which it notices about a second before the
+   * service's own VAD does).
+   *
+   * The service does not know yet, so it keeps sending audio for the turn we
+   * just stopped. Those chunks would otherwise open a brand new turn here and
+   * she would carry on talking after being told to stop, so audio is dropped
+   * until the service confirms the interruption, the user's next turn is
+   * transcribed, or the guard times out.
+   */
   interrupt(): void {
-    this.realtime?.interrupt();
+    if (!this.realtime) return;
+    this.localInterrupt = true;
+    this.suppressAudio = true;
+    this.armSuppressionTimeout();
+    try {
+      this.realtime.interrupt();
+    } finally {
+      this.localInterrupt = false;
+    }
+  }
+
+  /** Never let a missing confirmation leave her permanently mute. */
+  private armSuppressionTimeout(): void {
+    if (this.suppressTimer) clearTimeout(this.suppressTimer);
+    this.suppressTimer = setTimeout(() => {
+      this.suppressAudio = false;
+      this.suppressTimer = null;
+    }, LiveVoiceSession.SUPPRESS_TIMEOUT_MS);
+    // A stray timer must not hold the process open.
+    (this.suppressTimer as unknown as { unref?: () => void }).unref?.();
+  }
+
+  private releaseSuppression(): void {
+    this.suppressAudio = false;
+    if (this.suppressTimer) {
+      clearTimeout(this.suppressTimer);
+      this.suppressTimer = null;
+    }
   }
 
   /**
@@ -270,7 +328,12 @@ export class LiveVoiceSession {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    this.flushAudio();
+    this.releaseSuppression();
+    // Voice off (or a demotion to the pipeline) means stop, not "play the
+    // last 200 ms first". Flushing here used to push a final chunk out after
+    // the tier had already changed, which the pipeline session then talked
+    // over.
+    if (this.speakingEmitted || this.pending.length > 0) this.abortSpokenTurn();
     this.finishAssistantMessage();
     this.realtime?.close();
     this.realtime = null;
@@ -281,19 +344,52 @@ export class LiveVoiceSession {
   private handleState(state: RealtimeState): void {
     if (this.state === state) return;
     this.state = state;
-    if (state === "speaking" && !this.speakingEmitted) {
-      this.speakingEmitted = true;
-      this.deps.emit("voice:speaking-start", { sessionId: this.sessionId });
+    if (state === "speaking") {
+      // Audio for a turn the user cut off is still coming; that is not a new
+      // turn and must not put the client back into "speaking" (which would
+      // duck its mic again for a reply nobody will hear). `startSpeaking`
+      // emits the state itself when a turn really does open.
+      if (this.suppressAudio) return;
+      this.startSpeaking();
+      return;
     }
-    if (state !== "speaking" && this.speakingEmitted) {
-      this.flushAudio();
-      this.speakingEmitted = false;
-      this.deps.emit("voice:speaking-end", { sessionId: this.sessionId });
-    }
+    this.endSpeaking();
     this.deps.emit("voice:state", {
       sessionId: this.sessionId,
       state: toLoopState(state),
     });
+  }
+
+  /**
+   * Open a spoken turn: a fresh `turnId`, a `seq` counter that starts at 0
+   * again (the client resets its own expectation on every turn change) and an
+   * empty sample buffer, so nothing from the previous turn can leak into this
+   * one. Idempotent, because audio and the state change race in the provider.
+   */
+  private startSpeaking(): void {
+    if (this.speakingEmitted) return;
+    this.speakingEmitted = true;
+    this.currentTurnId = uuidv4();
+    this.seq = 0;
+    this.pending = [];
+    this.deps.emit("voice:speaking-start", {
+      sessionId: this.sessionId,
+      turnId: this.currentTurnId,
+    });
+    // The client's echo guard keys off `voice:state`, and a turn can open on
+    // the first audio chunk rather than on the provider's state change, so
+    // the state goes out with the turn rather than only from `handleState`.
+    this.deps.emit("voice:state", { sessionId: this.sessionId, state: "speaking" });
+  }
+
+  /** Close a spoken turn, flushing the tail of the buffer under its own id. */
+  private endSpeaking(): void {
+    if (!this.speakingEmitted) return;
+    this.flushAudio();
+    this.speakingEmitted = false;
+    const turnId = this.currentTurnId;
+    this.currentTurnId = null;
+    this.deps.emit("voice:speaking-end", { sessionId: this.sessionId, turnId });
   }
 
   private handleUserTranscript(text: string): void {
@@ -301,6 +397,9 @@ export class LiveVoiceSession {
     const timestamp = new Date().toISOString();
     this.userTurnEndedAt = this.now();
     this.firstAudioAt = null;
+    // A new user turn always ends the suppression window: whatever she says
+    // next is an answer to this, not the tail of the turn that was cut off.
+    this.releaseSuppression();
 
     const msg = {
       id: messageId,
@@ -376,7 +475,14 @@ export class LiveVoiceSession {
   }
 
   private handleAudio(chunk: { seq: number; mime: string; data: string }): void {
+    // Audio for a turn the user already cut off: the service has not caught
+    // up with the interruption yet. Dropping it is what stops her finishing a
+    // sentence nobody is listening to any more.
+    if (this.suppressAudio) return;
     if (this.firstAudioAt === null) this.firstAudioAt = this.now();
+    // Audio can reach us before the provider's state change does; a chunk
+    // must never be emitted without a turn to belong to.
+    this.startSpeaking();
     const pcm = base64ToInt16(chunk.data);
     for (let i = 0; i < pcm.length; i++) this.pending.push(pcm[i] as number);
     while (this.pending.length >= LIVE_CHUNK_SAMPLES) {
@@ -394,24 +500,44 @@ export class LiveVoiceSession {
     this.deps.emit("voice:audio-chunk", {
       sessionId: this.sessionId,
       seq: this.seq++,
+      turnId: this.currentTurnId,
       mime: "audio/wav",
       data: wav.toString("base64"),
     });
   }
 
   private handleInterrupt(): void {
+    // Raised by the service rather than by us: the interruption we were
+    // waiting for, so audio may flow again.
+    if (!this.localInterrupt) this.releaseSuppression();
     // Barge-in: drop what has not been sent and tell the client to stop what
-    // it is already playing. The seq counter restarts so the scheduler, which
-    // ignores anything below its next expected seq, accepts the new turn.
-    this.pending = [];
-    this.seq = 0;
-    this.deps.emit("voice:stop-audio", { sessionId: this.sessionId });
-    if (this.speakingEmitted) {
-      this.speakingEmitted = false;
-      this.deps.emit("voice:speaking-end", { sessionId: this.sessionId });
-    }
+    // it is already playing. `stop-audio` names the turn being cut off, so a
+    // chunk of that turn still decoding on the client is dropped rather than
+    // scheduled on top of the reply that replaces it.
+    this.abortSpokenTurn();
     // An interrupted reply is still what she said up to that point.
     this.finishAssistantMessage();
+  }
+
+  /**
+   * Stop the turn in progress everywhere: nothing buffered here, nothing
+   * queued on the client, and no id left that a late chunk could ride in on.
+   */
+  private abortSpokenTurn(): void {
+    // Idempotent. The client now cuts her off locally the moment it hears the
+    // user, and Gemini's own VAD reports the same interruption a beat later;
+    // a second `stop-audio` with no turn to name would flush whatever turn had
+    // started in between.
+    if (!this.speakingEmitted && !this.currentTurnId && this.pending.length === 0) return;
+    const turnId = this.currentTurnId;
+    this.pending = [];
+    this.seq = 0;
+    this.deps.emit("voice:stop-audio", { sessionId: this.sessionId, turnId });
+    if (this.speakingEmitted) {
+      this.speakingEmitted = false;
+      this.deps.emit("voice:speaking-end", { sessionId: this.sessionId, turnId });
+    }
+    this.currentTurnId = null;
   }
 
   private emitLatency(): void {
@@ -437,7 +563,10 @@ export class LiveVoiceSession {
     if (closedByService && this.reconnects < LiveVoiceSession.MAX_RECONNECTS) {
       this.reconnects += 1;
       this.deps.activity("voice: live session dropped, reconnecting", err.message);
-      this.flushAudio();
+      // The new socket is a new conversation: end the turn that died rather
+      // than flushing its tail, so the client starts the reconnected turn
+      // from a clean queue instead of waiting for a seq that will never come.
+      this.abortSpokenTurn();
       this.realtime = null;
       this.state = "connecting";
       try {

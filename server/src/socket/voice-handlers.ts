@@ -16,6 +16,7 @@
  * `source: "voice"` on its way out.
  */
 
+import { randomUUID } from "node:crypto";
 import type { Server as IOServer } from "socket.io";
 import type { Socket } from "socket.io";
 import config from "../config.js";
@@ -419,14 +420,18 @@ function fallbackToPipeline(
 async function speakLocalLine(io: IOServer, sessionId: string, text: string): Promise<void> {
   try {
     const { audio, mime } = await getTtsProvider().synthesize(text);
-    io.to(sessionId).emit("voice:speaking-start", { sessionId });
+    // A turn of its own, so the client scheduler stops whatever the live
+    // session was still playing instead of queueing this line behind it.
+    const turnId = randomUUID();
+    io.to(sessionId).emit("voice:speaking-start", { sessionId, turnId });
     io.to(sessionId).emit("voice:audio-chunk", {
       sessionId,
       seq: 0,
+      turnId,
       mime,
       data: audio.toString("base64"),
     });
-    io.to(sessionId).emit("voice:speaking-end", { sessionId });
+    io.to(sessionId).emit("voice:speaking-end", { sessionId, turnId });
   } catch (err) {
     console.warn("[voice] could not speak the fallback line:", err);
   }

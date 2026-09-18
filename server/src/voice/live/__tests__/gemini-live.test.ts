@@ -263,6 +263,42 @@ describe("GeminiLiveProvider", () => {
     expect(events.at(-1)).toEqual({ state: "listening" });
   });
 
+  /**
+   * Interrupt ordering (QA, 2026-09-18). The listener closes its assistant
+   * message when it hears about an interruption, so the half-spoken reply has
+   * to be settled BEFORE that: a transcript flushed afterwards had nothing to
+   * append to and opened a second message holding the whole reply again. The
+   * owner saw every interrupted reply twice.
+   */
+  it("settles the half-spoken reply before reporting a service interruption", () => {
+    const { fake, events } = open();
+    fake.open();
+    fake.say({ setupComplete: {} });
+    fake.say({ serverContent: { outputTranscription: { text: "one two three" } } });
+    fake.say({ serverContent: { interrupted: true } });
+
+    const order = events.filter((e) => e.assistant !== undefined || e.interrupt);
+    expect(order[0]).toEqual({ assistant: "one two three" });
+    expect(order[1]).toEqual({ interrupt: true });
+    expect(events.filter((e) => e.assistant !== undefined)).toHaveLength(1);
+  });
+
+  it("does not report the same reply again when the service confirms our own interrupt", () => {
+    const { fake, events, session } = open();
+    fake.open();
+    fake.say({ setupComplete: {} });
+    fake.say({ serverContent: { outputTranscription: { text: "one two three" } } });
+
+    // The client heard the user talk over her and cut her off locally...
+    session.interrupt();
+    // ...and a second later the service reports the same interruption.
+    fake.say({ serverContent: { interrupted: true } });
+
+    expect(events.filter((e) => e.assistant !== undefined)).toEqual([
+      { assistant: "one two three" },
+    ]);
+  });
+
   it("runs a function call against Medusa and answers with a toolResponse", async () => {
     const fetchImpl = vi.fn(async () =>
       new Response(JSON.stringify({ agent_id: "a1" }), { status: 200 })

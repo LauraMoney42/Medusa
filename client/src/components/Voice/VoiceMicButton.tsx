@@ -3,6 +3,7 @@ import { getSocket } from '../../socket';
 import { useVoiceStore } from '../../stores/voiceStore';
 import { MicCapture } from '../../lib/voice/micCapture';
 import { GaplessAudioQueue } from '../../lib/voice/audioScheduler';
+import { EchoGate, floorFor } from '../../lib/voice/echoGate';
 import { onAudioChunk, onStopAudio, onSpeakingStart } from '../../lib/voice/voiceBus';
 import type { VoiceAudioChunkPayload } from '../../types/voice';
 import { fetchVoiceSettings } from '../../api';
@@ -104,9 +105,47 @@ export default function VoiceMicButton({ sessionId, inputEmpty = true }: VoiceMi
     return { ctx: playbackCtxRef.current!, scheduler: schedulerRef.current! };
   }, [setLoopState]);
 
+  // Echo gate: while she speaks, only sustained loud frames leave this
+  // machine. Ducking alone still sent playback leakage to the server, and in
+  // Live mode Gemini's own VAD treats that as the user talking: it cuts her
+  // off and restarts, which is what "talking over itself" sounds like.
+  const echoGateRef = useRef<EchoGate | null>(null);
+  useEffect(() => {
+    echoGateRef.current = echoGuardEnabled
+      ? new EchoGate({
+          floor: floorFor(bargeInEnergyThreshold, echoGuardDuckFactor),
+          minSpeechMs: bargeInMinSpeechMs,
+        })
+      : null;
+  }, [echoGuardEnabled, bargeInEnergyThreshold, bargeInMinSpeechMs, echoGuardDuckFactor]);
+  useEffect(() => {
+    echoGateRef.current?.setSpeaking(loopState === 'speaking');
+  }, [loopState]);
+
   const sendFrame = useCallback(
     (pcm16: ArrayBuffer) => {
-      getSocket().emit('voice:audio', { sessionId, pcm16 });
+      const socket = getSocket();
+      const gate = echoGateRef.current;
+      if (!gate) {
+        socket.emit('voice:audio', { sessionId, pcm16 });
+        return;
+      }
+      const wasOpen = gate.isOpen;
+      const frames = gate.accept(new Int16Array(pcm16));
+      // Local barge-in. The gate opening while she speaks means sustained,
+      // above-the-floor speech from the user, not playback leakage. Stopping
+      // here rather than waiting for the provider to notice is what makes her
+      // shut up instantly: Gemini's own VAD took ~2 s to report the same
+      // interruption, which is long enough to sound like she is talking over
+      // you. The server's `voice:interrupt` is idempotent with the provider's
+      // own interruption that follows.
+      if (!wasOpen && gate.isOpen) {
+        schedulerRef.current?.stopAll(schedulerRef.current.activeTurnId ?? undefined);
+        socket.emit('voice:interrupt', { sessionId });
+      }
+      for (const frame of frames) {
+        socket.emit('voice:audio', { sessionId, pcm16: frame.buffer });
+      }
     },
     [sessionId],
   );
@@ -160,7 +199,10 @@ export default function VoiceMicButton({ sessionId, inputEmpty = true }: VoiceMi
     });
     const offStop = onStopAudio((payload) => {
       if (payload.sessionId !== sessionId) return;
-      schedulerRef.current?.stopAll();
+      // Naming the stopped turn lets the scheduler refuse its tail: a chunk
+      // still inside decodeAudioData when the stop lands would otherwise be
+      // scheduled into the next turn and played over the new reply.
+      schedulerRef.current?.stopAll(payload.turnId);
     });
     return () => {
       offSpeakingStart();
@@ -327,7 +369,7 @@ export default function VoiceMicButton({ sessionId, inputEmpty = true }: VoiceMi
   /** While speaking, a click interrupts and keeps listening rather than stopping. */
   const interrupt = useCallback(() => {
     getSocket().emit('voice:interrupt', { sessionId });
-    schedulerRef.current?.stopAll();
+    schedulerRef.current?.stopAll(schedulerRef.current.activeTurnId ?? undefined);
     useVoiceStore.getState().setPartialTranscript('');
     setLoopState('listening');
   }, [sessionId, setLoopState]);

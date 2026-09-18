@@ -1,0 +1,510 @@
+[
+ {
+  "t": 0,
+  "kind": "speaking-start",
+  "turnId": "turn-1"
+ },
+ {
+  "t": 4,
+  "kind": "chunk",
+  "seq": 0,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 5,
+  "kind": "chunk",
+  "seq": 1,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 6,
+  "kind": "chunk",
+  "seq": 2,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 6,
+  "kind": "chunk",
+  "seq": 3,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 7,
+  "kind": "chunk",
+  "seq": 4,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 41,
+  "kind": "chunk",
+  "seq": 5,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 81,
+  "kind": "chunk",
+  "seq": 6,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 171,
+  "kind": "chunk",
+  "seq": 7,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 200,
+  "kind": "chunk",
+  "seq": 8,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 257,
+  "kind": "chunk",
+  "seq": 9,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 314,
+  "kind": "chunk",
+  "seq": 10,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 360,
+  "kind": "chunk",
+  "seq": 11,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 407,
+  "kind": "chunk",
+  "seq": 12,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 458,
+  "kind": "chunk",
+  "seq": 13,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 521,
+  "kind": "chunk",
+  "seq": 14,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 592,
+  "kind": "chunk",
+  "seq": 15,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 618,
+  "kind": "chunk",
+  "seq": 16,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 679,
+  "kind": "chunk",
+  "seq": 17,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 751,
+  "kind": "chunk",
+  "seq": 18,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 779,
+  "kind": "chunk",
+  "seq": 19,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 845,
+  "kind": "chunk",
+  "seq": 20,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 887,
+  "kind": "chunk",
+  "seq": 21,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 942,
+  "kind": "chunk",
+  "seq": 22,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 1017,
+  "kind": "chunk",
+  "seq": 23,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 1112,
+  "kind": "chunk",
+  "seq": 24,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 1224,
+  "kind": "chunk",
+  "seq": 25,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 1306,
+  "kind": "chunk",
+  "seq": 26,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 1358,
+  "kind": "chunk",
+  "seq": 27,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 1393,
+  "kind": "chunk",
+  "seq": 28,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 1436,
+  "kind": "chunk",
+  "seq": 29,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 1500,
+  "kind": "chunk",
+  "seq": 30,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 1564,
+  "kind": "chunk",
+  "seq": 31,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 1635,
+  "kind": "chunk",
+  "seq": 32,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 1649,
+  "kind": "chunk",
+  "seq": 33,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 1736,
+  "kind": "chunk",
+  "seq": 34,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 1780,
+  "kind": "chunk",
+  "seq": 35,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 1811,
+  "kind": "chunk",
+  "seq": 36,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 1914,
+  "kind": "chunk",
+  "seq": 37,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 1918,
+  "kind": "chunk",
+  "seq": 38,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 1974,
+  "kind": "chunk",
+  "seq": 39,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 2058,
+  "kind": "chunk",
+  "seq": 40,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 2082,
+  "kind": "chunk",
+  "seq": 41,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 2147,
+  "kind": "chunk",
+  "seq": 42,
+  "turnId": "turn-1",
+  "durationMs": 200
+ },
+ {
+  "t": 2636,
+  "kind": "stop-audio",
+  "turnId": "turn-1"
+ },
+ {
+  "t": 2636,
+  "kind": "speaking-end",
+  "turnId": "turn-1"
+ },
+ {
+  "t": 7937,
+  "kind": "speaking-start",
+  "turnId": "turn-2"
+ },
+ {
+  "t": 7940,
+  "kind": "chunk",
+  "seq": 0,
+  "turnId": "turn-2",
+  "durationMs": 200
+ },
+ {
+  "t": 7941,
+  "kind": "chunk",
+  "seq": 1,
+  "turnId": "turn-2",
+  "durationMs": 200
+ },
+ {
+  "t": 7941,
+  "kind": "chunk",
+  "seq": 2,
+  "turnId": "turn-2",
+  "durationMs": 200
+ },
+ {
+  "t": 7942,
+  "kind": "chunk",
+  "seq": 3,
+  "turnId": "turn-2",
+  "durationMs": 200
+ },
+ {
+  "t": 7942,
+  "kind": "chunk",
+  "seq": 4,
+  "turnId": "turn-2",
+  "durationMs": 200
+ },
+ {
+  "t": 7961,
+  "kind": "chunk",
+  "seq": 5,
+  "turnId": "turn-2",
+  "durationMs": 200
+ },
+ {
+  "t": 8014,
+  "kind": "chunk",
+  "seq": 6,
+  "turnId": "turn-2",
+  "durationMs": 200
+ },
+ {
+  "t": 8069,
+  "kind": "chunk",
+  "seq": 7,
+  "turnId": "turn-2",
+  "durationMs": 200
+ },
+ {
+  "t": 8125,
+  "kind": "chunk",
+  "seq": 8,
+  "turnId": "turn-2",
+  "durationMs": 200
+ },
+ {
+  "t": 8179,
+  "kind": "chunk",
+  "seq": 9,
+  "turnId": "turn-2",
+  "durationMs": 200
+ },
+ {
+  "t": 8246,
+  "kind": "chunk",
+  "seq": 10,
+  "turnId": "turn-2",
+  "durationMs": 200
+ },
+ {
+  "t": 8316,
+  "kind": "chunk",
+  "seq": 11,
+  "turnId": "turn-2",
+  "durationMs": 200
+ },
+ {
+  "t": 8342,
+  "kind": "chunk",
+  "seq": 12,
+  "turnId": "turn-2",
+  "durationMs": 200
+ },
+ {
+  "t": 8401,
+  "kind": "chunk",
+  "seq": 13,
+  "turnId": "turn-2",
+  "durationMs": 200
+ },
+ {
+  "t": 8451,
+  "kind": "chunk",
+  "seq": 14,
+  "turnId": "turn-2",
+  "durationMs": 200
+ },
+ {
+  "t": 8506,
+  "kind": "chunk",
+  "seq": 15,
+  "turnId": "turn-2",
+  "durationMs": 200
+ },
+ {
+  "t": 8573,
+  "kind": "chunk",
+  "seq": 16,
+  "turnId": "turn-2",
+  "durationMs": 200
+ },
+ {
+  "t": 8622,
+  "kind": "chunk",
+  "seq": 17,
+  "turnId": "turn-2",
+  "durationMs": 200
+ },
+ {
+  "t": 8669,
+  "kind": "chunk",
+  "seq": 18,
+  "turnId": "turn-2",
+  "durationMs": 200
+ },
+ {
+  "t": 8742,
+  "kind": "chunk",
+  "seq": 19,
+  "turnId": "turn-2",
+  "durationMs": 200
+ },
+ {
+  "t": 8803,
+  "kind": "chunk",
+  "seq": 20,
+  "turnId": "turn-2",
+  "durationMs": 200
+ },
+ {
+  "t": 8835,
+  "kind": "chunk",
+  "seq": 21,
+  "turnId": "turn-2",
+  "durationMs": 200
+ },
+ {
+  "t": 8887,
+  "kind": "chunk",
+  "seq": 22,
+  "turnId": "turn-2",
+  "durationMs": 200
+ },
+ {
+  "t": 8956,
+  "kind": "chunk",
+  "seq": 23,
+  "turnId": "turn-2",
+  "durationMs": 200
+ },
+ {
+  "t": 9032,
+  "kind": "chunk",
+  "seq": 24,
+  "turnId": "turn-2",
+  "durationMs": 200
+ },
+ {
+  "t": 9055,
+  "kind": "chunk",
+  "seq": 25,
+  "turnId": "turn-2",
+  "durationMs": 200
+ },
+ {
+  "t": 13128,
+  "kind": "speaking-end",
+  "turnId": "turn-2"
+ }
+]

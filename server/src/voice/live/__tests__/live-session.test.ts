@@ -321,11 +321,17 @@ describe("LiveVoiceSession", () => {
     expect(h.fatal[0].message).toBe("quota exceeded");
   });
 
-  it("flushes buffered audio and closes the socket on dispose", () => {
+  it("stops playback rather than flushing it, and closes the socket, on dispose", () => {
     const h = harness();
     h.handlers.onAudio?.({ seq: 0, mime: "audio/pcm;rate=24000", data: silence(100) });
     h.live.dispose();
-    expect(h.of("voice:audio-chunk")).toHaveLength(1);
+    // Voice off (or a demotion to the pipeline) means stop. Flushing the tail
+    // used to push a chunk out after the tier had already changed, which the
+    // pipeline session that replaced it then talked over.
+    expect(h.of("voice:audio-chunk")).toHaveLength(0);
+    const stop = h.of("voice:stop-audio");
+    expect(stop).toHaveLength(1);
+    expect(stop[0].turnId).toBe(h.of("voice:speaking-start")[0]?.turnId);
     expect(h.closed.count).toBe(1);
     h.live.dispose();
     expect(h.closed.count).toBe(1);
@@ -339,5 +345,139 @@ describe("base64ToInt16", () => {
     buf.writeInt16LE(-1, 2);
     buf.writeInt16LE(32767, 4);
     expect([...base64ToInt16(buf.toString("base64"))]).toEqual([0, -1, 32767]);
+  });
+});
+
+/**
+ * Single speaker ownership in Live mode (QA, 2026-09-18).
+ *
+ * Live mode emitted no `turnId` at all, so both of the client scheduler's
+ * protections against two turns playing at once were inert: `beginTurn` was
+ * never called and every chunk looked like it belonged to whatever turn was
+ * current. Measured against the real service, an interrupted turn's text also
+ * landed in the chat twice, and audio for a turn the user had cut off kept
+ * arriving and opened a brand new turn.
+ */
+describe("LiveVoiceSession turn identity", () => {
+  it("tags speaking-start, every chunk and speaking-end with one stable turnId", () => {
+    const h = harness();
+    h.handlers.onState?.("speaking");
+    h.handlers.onAudio?.({ seq: 0, mime: "audio/pcm;rate=24000", data: silence(LIVE_CHUNK_SAMPLES) });
+    h.handlers.onAudio?.({ seq: 1, mime: "audio/pcm;rate=24000", data: silence(LIVE_CHUNK_SAMPLES) });
+    h.handlers.onState?.("listening");
+
+    const turnId = h.of("voice:speaking-start")[0].turnId;
+    expect(turnId).toBeTruthy();
+    const chunks = h.of("voice:audio-chunk");
+    expect(chunks).toHaveLength(2);
+    expect(chunks.every((c: any) => c.turnId === turnId)).toBe(true);
+    expect(chunks.map((c: any) => c.seq)).toEqual([0, 1]);
+    expect(h.of("voice:speaking-end")[0].turnId).toBe(turnId);
+  });
+
+  it("gives every turn its own id and restarts seq at 0", () => {
+    const h = harness();
+    h.handlers.onState?.("speaking");
+    h.handlers.onAudio?.({ seq: 0, mime: "audio/pcm;rate=24000", data: silence(LIVE_CHUNK_SAMPLES) });
+    h.handlers.onState?.("listening");
+    h.handlers.onState?.("speaking");
+    h.handlers.onAudio?.({ seq: 9, mime: "audio/pcm;rate=24000", data: silence(LIVE_CHUNK_SAMPLES) });
+
+    const [first, second] = h.of("voice:speaking-start");
+    expect(first.turnId).not.toBe(second.turnId);
+    const chunks = h.of("voice:audio-chunk");
+    expect(chunks[1].turnId).toBe(second.turnId);
+    // The provider's own seq is ignored: the client resets its expectation on
+    // every turn change, so each turn counts from 0.
+    expect(chunks.map((c: any) => c.seq)).toEqual([0, 0]);
+  });
+
+  it("names the interrupted turn in stop-audio and starts the next one clean", () => {
+    const h = harness();
+    h.handlers.onState?.("speaking");
+    h.handlers.onAudio?.({ seq: 0, mime: "audio/pcm;rate=24000", data: silence(LIVE_CHUNK_SAMPLES) });
+    const turnId = h.of("voice:speaking-start")[0].turnId;
+
+    h.handlers.onInterrupt?.();
+    const stop = h.of("voice:stop-audio");
+    expect(stop).toHaveLength(1);
+    expect(stop[0].turnId).toBe(turnId);
+    expect(h.of("voice:speaking-end")[0].turnId).toBe(turnId);
+
+    h.handlers.onState?.("listening");
+    h.handlers.onState?.("speaking");
+    h.handlers.onAudio?.({ seq: 0, mime: "audio/pcm;rate=24000", data: silence(LIVE_CHUNK_SAMPLES) });
+    const next = h.of("voice:speaking-start")[1].turnId;
+    expect(next).not.toBe(turnId);
+    expect(h.of("voice:audio-chunk")[1].turnId).toBe(next);
+  });
+
+  it("drops audio for a turn the user cut off until the service catches up", () => {
+    const h = harness();
+    h.handlers.onState?.("speaking");
+    h.handlers.onAudio?.({ seq: 0, mime: "audio/pcm;rate=24000", data: silence(LIVE_CHUNK_SAMPLES) });
+    expect(h.of("voice:audio-chunk")).toHaveLength(1);
+
+    // The client heard the user talk over her, about a second before the
+    // service's own VAD will notice.
+    h.live.interrupt();
+    h.handlers.onAudio?.({ seq: 1, mime: "audio/pcm;rate=24000", data: silence(LIVE_CHUNK_SAMPLES) });
+    h.handlers.onAudio?.({ seq: 2, mime: "audio/pcm;rate=24000", data: silence(LIVE_CHUNK_SAMPLES) });
+    expect(h.of("voice:audio-chunk")).toHaveLength(1); // she stays quiet
+    expect(h.of("voice:speaking-start")).toHaveLength(1); // and no new turn opens
+
+    // The service confirms the interruption; the next turn speaks normally.
+    h.handlers.onInterrupt?.();
+    h.handlers.onState?.("listening");
+    h.handlers.onState?.("speaking");
+    h.handlers.onAudio?.({ seq: 0, mime: "audio/pcm;rate=24000", data: silence(LIVE_CHUNK_SAMPLES) });
+    expect(h.of("voice:audio-chunk")).toHaveLength(2);
+    expect(h.of("voice:speaking-start")).toHaveLength(2);
+  });
+
+  it("releases the suppression when the user's next turn is transcribed", () => {
+    const h = harness();
+    h.handlers.onState?.("speaking");
+    h.live.interrupt();
+    h.handlers.onUserTranscript?.("tell me a joke instead");
+    h.handlers.onState?.("speaking");
+    h.handlers.onAudio?.({ seq: 0, mime: "audio/pcm;rate=24000", data: silence(LIVE_CHUNK_SAMPLES) });
+    expect(h.of("voice:audio-chunk")).toHaveLength(1);
+  });
+
+  it("writes an interrupted reply into the chat exactly once", () => {
+    const h = harness();
+    h.handlers.onState?.("speaking");
+    h.handlers.onAssistantDelta?.("one two three");
+    // The provider settles the half-spoken reply, then reports the interrupt.
+    h.handlers.onAssistantTranscript?.("one two three");
+    h.handlers.onInterrupt?.();
+    const assistant = h.appended.filter((m: any) => m.role === "assistant");
+    expect(assistant).toHaveLength(1);
+    expect(assistant[0].text).toBe("one two three");
+    expect(h.of("message:stream:start")).toHaveLength(1);
+  });
+});
+
+describe("LiveVoiceSession state while an interruption is settling", () => {
+  it("does not reopen a speaking turn for audio the user already cut off", () => {
+    const h = harness();
+    h.handlers.onState?.("speaking");
+    h.live.interrupt();
+    // The service has not caught up: it keeps streaming the old turn, and its
+    // state flaps back to speaking.
+    h.handlers.onState?.("listening");
+    h.handlers.onState?.("speaking");
+    h.handlers.onAudio?.({ seq: 0, mime: "audio/pcm;rate=24000", data: silence(LIVE_CHUNK_SAMPLES) });
+
+    expect(h.of("voice:speaking-start")).toHaveLength(1);
+    expect(h.of("voice:state").at(-1).state).toBe("listening");
+  });
+
+  it("puts the client back into speaking when a real turn opens on its first chunk", () => {
+    const h = harness();
+    h.handlers.onAudio?.({ seq: 0, mime: "audio/pcm;rate=24000", data: silence(LIVE_CHUNK_SAMPLES) });
+    expect(h.of("voice:speaking-start")).toHaveLength(1);
+    expect(h.of("voice:state").at(-1).state).toBe("speaking");
   });
 });
