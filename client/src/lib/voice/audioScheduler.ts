@@ -43,6 +43,19 @@ interface QueuedChunk {
  * guarantee `voice:audio-chunk` delivery order under concurrent sentence
  * synthesis) and schedules only a contiguous run starting at the next
  * expected seq, back to back with no gap.
+ *
+ * Single speaker ownership: every chunk (and speaking-start/end) now carries
+ * a server-assigned `turnId`. Without it, `seq` alone was not enough to tell
+ * two turns apart: `TtsStream` on the server restarts `seq` at 0 for every
+ * turn, so once a turn finished normally (no `voice:stop-audio`, since
+ * nothing needed stopping) `nextExpectedSeq` stayed wherever the previous
+ * turn left it and silently rejected the next turn's own seq-0 chunk as
+ * "stale" - the owner's "sometimes shows no response" bug. And when a
+ * superseded speculative turn's already-in-flight chunk landed just as the
+ * turn that replaced it started speaking, both turns' seq-0..N chunks looked
+ * equally valid with no way to tell the old one apart - the "heard the same
+ * reply twice ... with overlap" bug. `beginTurn` makes a turn change explicit
+ * and `enqueue` drops anything not tagged with the current turn.
  */
 export class GaplessAudioQueue {
   private ctx: MinimalAudioContext;
@@ -52,6 +65,8 @@ export class GaplessAudioQueue {
   private pending = new Map<number, QueuedChunk>();
   private activeSources: MinimalSourceNode[] = [];
   private muted = false;
+  /** The only turn allowed to schedule audio right now; null before the first. */
+  private currentTurnId: string | null = null;
   /** Called once with the seq of every chunk as it actually starts playing. */
   onChunkStart: ((seq: number) => void) | null = null;
   /** Called when the last scheduled chunk finishes and the queue goes idle. */
@@ -76,8 +91,39 @@ export class GaplessAudioQueue {
     this.pending.clear();
   }
 
-  /** Enqueue a decoded chunk. Schedules it (and any now-contiguous successors). */
-  enqueue(seq: number, buffer: MinimalAudioBuffer): void {
+  /** The turn id currently allowed to schedule audio, or null before the first. */
+  get activeTurnId(): string | null {
+    return this.currentTurnId;
+  }
+
+  /**
+   * Adopt a new turn. A real change (not the first-ever call, and not a
+   * repeat of the same id) hard-stops whatever is still playing or queued
+   * from the previous turn before anything from the new one can be
+   * scheduled, so the two can never audibly overlap.
+   */
+  beginTurn(turnId: string): void {
+    if (this.currentTurnId === turnId) return;
+    const isFirstTurn = this.currentTurnId === null;
+    this.currentTurnId = turnId;
+    if (!isFirstTurn) this.stopAll();
+    else this.resetSequence();
+  }
+
+  /**
+   * Enqueue a decoded chunk. Schedules it (and any now-contiguous
+   * successors). `turnId` is optional so callers/tests that don't track
+   * turns keep working; when given, a chunk for any turn other than the
+   * current one is dropped outright rather than merged into the wrong
+   * utterance. A chunk that arrives before any `beginTurn` call silently
+   * adopts its turn as current (defensive: normal delivery order always has
+   * `voice:speaking-start` first).
+   */
+  enqueue(seq: number, buffer: MinimalAudioBuffer, turnId?: string): void {
+    if (turnId !== undefined) {
+      if (this.currentTurnId === null) this.currentTurnId = turnId;
+      else if (turnId !== this.currentTurnId) return; // belongs to a turn we've moved past
+    }
     if (seq < this.nextExpectedSeq) return; // stale/duplicate, e.g. after a stop
     this.pending.set(seq, { seq, buffer });
     this.drainContiguous();
