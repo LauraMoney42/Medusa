@@ -151,13 +151,19 @@ describe("VoiceSession speculative start", () => {
     await wait(15);
     session.pushAudio(tone(100));
 
-    // The abandoned turn started streaming before it was replaced.
-    session.onStreamStart();
+    // The abandoned turn started streaming (with its own real message id)
+    // before it was replaced.
+    session.onStreamStart("turn-a");
     session.pushAudio(silence(800));
     await wait(20);
-    // Its tail arrives after the restart and must be ignored entirely.
-    session.onDelta("It is about four o'clock. ");
-    session.onStreamEnd();
+    // Its tail arrives after the restart, still tagged with the OLD id, and
+    // must be ignored entirely: the id is recorded as abandoned the instant
+    // the restart aborts it, so this is rejected even though the replacement
+    // turn (started by the restart above) has not reached its own
+    // `message:stream:start` yet and so has no id of its own to compare
+    // against.
+    session.onDelta("It is about four o'clock. ", "turn-a");
+    session.onStreamEnd("turn-a");
     await wait(20);
 
     expect(events.some((e) => e.event === "voice:audio-chunk")).toBe(false);
@@ -178,14 +184,15 @@ describe("VoiceSession speculative start", () => {
     await wait(20);
     expect(sent).toHaveLength(2);
 
-    // The abort settles the abandoned turn. Against the warm Kimi engine that
-    // is a `message:stream:end`, and it lands AFTER the restarted turn's own
-    // stream start, so `streamStarted` cannot tell them apart. Consuming it
-    // must not close the restarted turn's TTS.
-    session.onStreamStart();
-    session.onStreamEnd();
-    session.onDelta("The readme says hello. ");
-    session.onStreamEnd();
+    // The abort settles the abandoned turn (its own real id, "turn-a").
+    // Against the warm Kimi engine that is a `message:stream:end`, and it can
+    // land AFTER the restarted turn's own stream start, so `streamStarted`
+    // alone cannot tell them apart; matching ids (and rejecting a known-
+    // abandoned one) must not close the restarted turn's ("turn-b") TTS.
+    session.onStreamStart("turn-b");
+    session.onStreamEnd("turn-a");
+    session.onDelta("The readme says hello. ", "turn-b");
+    session.onStreamEnd("turn-b");
     await wait(30);
 
     expect(events.some((e) => e.event === "voice:audio-chunk")).toBe(true);

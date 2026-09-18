@@ -39,7 +39,9 @@ interface Harness {
   states(): string[];
 }
 
-function harness(opts: { transcript?: string; synthDelayMs?: number } = {}): Harness {
+function harness(
+  opts: { transcript?: string; synthDelayMs?: number; synthFails?: boolean } = {}
+): Harness {
   const events: Harness["events"] = [];
   const sent: string[] = [];
   const activity: string[] = [];
@@ -57,6 +59,7 @@ function harness(opts: { transcript?: string; synthDelayMs?: number } = {}): Har
     isReady: () => true,
     synthesize: async (text) => {
       if (opts.synthDelayMs) await wait(opts.synthDelayMs);
+      if (opts.synthFails) throw new Error("kokoro unreachable");
       return { audio: Buffer.from(text), mime: "audio/wav" };
     },
   };
@@ -298,5 +301,87 @@ describe("VoiceSession barge-in", () => {
     h.setBusy(true);
     await speak(h);
     expect(h.sent[0]).toBe("second question");
+  });
+});
+
+describe("VoiceSession turn ownership (single speaker)", () => {
+  it("does not swallow the live turn's own end when an abandoned turn's stale end arrives later", async () => {
+    // Reproduces the "sometimes shows no response" bug: the old counter
+    // (`abandonedTurns`) assumed a stale end/error always arrives before the
+    // live turn's own terminal event. When it instead arrived AFTER (plausible
+    // any time the abort takes a beat to settle), the counter swallowed the
+    // live turn's end by mistake and the reply was never spoken. Matching on
+    // the real message id must be correct regardless of arrival order.
+    const h = harness({ transcript: "second question" });
+    h.session.start();
+
+    // Turn A: streaming a reply when the user talks over it.
+    h.session.onStreamStart("turn-a");
+    h.session.onDelta("The old answer was going to be this. ", "turn-a");
+    await wait(20);
+    h.setBusy(true);
+
+    // Barge-in aborts turn A and starts turn B on the new transcript.
+    await speak(h);
+    expect(h.abort).toHaveBeenCalledTimes(1);
+
+    // Turn B streams and finishes FIRST...
+    h.session.onStreamStart("turn-b");
+    h.session.onDelta("The real answer. ", "turn-b");
+    h.session.onStreamEnd("turn-b");
+    await wait(30);
+
+    // ...and only THEN does turn A's own settle event straggle in.
+    h.session.onStreamEnd("turn-a");
+    await wait(20);
+
+    // The fake TTS provider encodes each sentence's own text as its "audio"
+    // (see harness()), so decoding the chunk's base64 payload recovers it.
+    const chunkTexts = h
+      .eventsOf("voice:audio-chunk")
+      .map((c) => Buffer.from(c.data as string, "base64").toString("utf8"));
+    expect(chunkTexts).toContain("The real answer.");
+    expect(h.eventsOf("voice:latency")).toHaveLength(1);
+    expect(h.session.currentState).toBe("listening");
+  });
+
+  it("carries a turnId on speaking-start/audio-chunk/speaking-end, and it changes between turns", async () => {
+    const h = harness();
+    h.session.start();
+    await speak(h);
+    h.session.onStreamStart();
+    h.session.onDelta("First reply. ");
+    h.session.onStreamEnd();
+    await wait(30);
+
+    const firstTurnId = h.eventsOf("voice:speaking-start")[0]?.turnId as string;
+    expect(typeof firstTurnId).toBe("string");
+    expect(firstTurnId.length).toBeGreaterThan(0);
+    expect(h.eventsOf("voice:audio-chunk").every((c) => c.turnId === firstTurnId)).toBe(true);
+    expect(h.eventsOf("voice:speaking-end")[0]?.turnId).toBe(firstTurnId);
+
+    // A second, later turn gets its own token, distinct from the first.
+    await speak(h);
+    h.session.onStreamStart();
+    h.session.onDelta("Second reply. ");
+    h.session.onStreamEnd();
+    await wait(30);
+
+    const secondTurnId = h.eventsOf("voice:speaking-start")[1]?.turnId as string;
+    expect(secondTurnId).not.toBe(firstTurnId);
+  });
+
+  it("logs a warning and stays in listening (never a stuck state) when a reply has text but every synthesis call fails", async () => {
+    const h = harness({ synthFails: true });
+    h.session.start();
+    await speak(h);
+    h.session.onStreamStart();
+    h.session.onDelta("This text will never become audio. ");
+    h.session.onStreamEnd();
+    await wait(30);
+
+    expect(h.eventsOf("voice:audio-chunk")).toHaveLength(0);
+    expect(h.activity.some((a) => a.includes("no audio"))).toBe(true);
+    expect(h.session.currentState).toBe("listening");
   });
 });

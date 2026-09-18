@@ -116,22 +116,34 @@ function handleTappedEvent(session: VoiceSession, event: string, payload: unknow
       if (session.expectsVoiceTag() && body.role === "user") body.source = "voice";
       break;
     case "message:stream:start":
-      session.onStreamStart();
+      // `message:stream:start` names the message with `id`, everything after
+      // it with `messageId`; both identify the same turn. Passing it through
+      // lets the session tell its own live turn apart from a stale one it
+      // already replaced, rather than guessing from event order alone (see
+      // the turn-identity comments on VoiceSession.isLiveTurn).
+      session.onStreamStart(typeof body.id === "string" ? body.id : undefined);
       break;
     case "message:stream:delta":
-      if (typeof body.delta === "string") session.onDelta(body.delta);
+      if (typeof body.delta === "string") {
+        session.onDelta(body.delta, typeof body.messageId === "string" ? body.messageId : undefined);
+      }
       break;
     case "message:stream:end":
-      session.onStreamEnd();
+      session.onStreamEnd(typeof body.messageId === "string" ? body.messageId : undefined);
       break;
     case "message:error":
-      session.onStreamError();
+      session.onStreamError(typeof body.messageId === "string" ? body.messageId : undefined);
       break;
   }
 }
 
 /** Build the session's `VoiceSession`, wiring it to this server's services. */
-function createSession(io: IOServer, sessionId: string, deps: VoiceHandlerDeps): VoiceSession {
+function createSession(
+  io: IOServer,
+  sessionId: string,
+  deps: VoiceHandlerDeps,
+  warmWanted: boolean
+): VoiceSession {
   // The S16 knobs live on the same account-wide voice pack as the rest of
   // Settings > Voice. They are read here rather than taken from `voice:start`
   // so the client's voice bar does not have to know about them at all.
@@ -171,7 +183,12 @@ function createSession(io: IOServer, sessionId: string, deps: VoiceHandlerDeps):
     stt: getSttProvider(),
     tts: getTtsProvider(),
     partials,
-    speculation: { enabled: settings?.speculativeStart ?? true },
+    // The "Answer before you finish" toggle can always turn speculation off;
+    // it only turns it ON when this call also warmed up the engine. Jumping
+    // the gun buys nothing on a cold engine, whose ~10 s time-to-first-token
+    // dwarfs the second or so speculation saves, so it defaults to on only
+    // when warm.
+    speculation: { enabled: (settings?.speculativeStart ?? true) && warmWanted },
     // 0 means "wait for a whole sentence", the S14 behavior.
     firstClauseChars: (settings?.firstClauseAudio ?? true) ? undefined : 0,
     warm: () => deps.processManager.isWarmMode(sessionId),
@@ -207,20 +224,24 @@ export function registerVoiceHandlers(
         return;
       }
       socket.join(sessionId);
-      let session = sessions.get(sessionId);
-      if (!session) {
-        session = createSession(io, sessionId, deps);
-        sessions.set(sessionId, session);
-      }
       // Warm engine (S16): a voice session routes its turns through the
       // long-lived variant of its engine, so the CLI's start-up is paid once
       // per chat instead of once per sentence. On by default, and a no-op for
-      // an engine with no warm variant.
+      // an engine with no warm variant. Computed before `createSession` (not
+      // just before `setWarmMode`) because speculative start's own default
+      // depends on it: jumping the gun on a cold engine's ~10 s time-to-first-
+      // token just moves the wasted turn earlier, so speculation defaults to
+      // on only when this call also asked for a warm engine.
       let warmWanted = true;
       try {
         warmWanted = readVoice().warmEngine;
       } catch {
         // Defaults win when the pack cannot be read.
+      }
+      let session = sessions.get(sessionId);
+      if (!session) {
+        session = createSession(io, sessionId, deps, warmWanted);
+        sessions.set(sessionId, session);
       }
       const engineId = deps.processManager.setWarmMode(sessionId, warmWanted);
       if (engineId) {

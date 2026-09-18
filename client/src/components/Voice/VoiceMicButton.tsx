@@ -3,7 +3,7 @@ import { getSocket } from '../../socket';
 import { useVoiceStore } from '../../stores/voiceStore';
 import { MicCapture } from '../../lib/voice/micCapture';
 import { GaplessAudioQueue } from '../../lib/voice/audioScheduler';
-import { onAudioChunk, onStopAudio } from '../../lib/voice/voiceBus';
+import { onAudioChunk, onStopAudio, onSpeakingStart } from '../../lib/voice/voiceBus';
 import type { VoiceAudioChunkPayload } from '../../types/voice';
 import { fetchVoiceSettings } from '../../api';
 
@@ -131,7 +131,19 @@ export default function VoiceMicButton({ sessionId, inputEmpty = true }: VoiceMi
   // Play/skip incoming TTS chunks. Subscribed for the button's whole
   // lifetime (not gated on mode) so a chunk that arrives right as the user
   // flips modes isn't dropped mid-utterance.
+  //
+  // Single speaker ownership (turnId): `voice:speaking-start` tells the
+  // scheduler a new turn has begun BEFORE that turn's first chunk arrives,
+  // so it can drop late audio from whatever turn it was previously playing
+  // even when nothing triggered an explicit `voice:stop-audio` (the normal,
+  // non-interrupted end of a turn never emits one). Each chunk also carries
+  // its own turnId as a second, per-chunk check.
   useEffect(() => {
+    const offSpeakingStart = onSpeakingStart((payload) => {
+      if (payload.sessionId !== sessionId || !payload.turnId) return;
+      const { scheduler } = ensurePlaybackContext();
+      scheduler.beginTurn(payload.turnId);
+    });
     const offChunk = onAudioChunk((payload: VoiceAudioChunkPayload) => {
       if (payload.sessionId !== sessionId) return;
       const { ctx, scheduler } = ensurePlaybackContext();
@@ -141,7 +153,7 @@ export default function VoiceMicButton({ sessionId, inputEmpty = true }: VoiceMi
       ctx
         .decodeAudioData(buf.slice(0))
         .then((decoded) => {
-          scheduler.enqueue(payload.seq, decoded);
+          scheduler.enqueue(payload.seq, decoded, payload.turnId);
         })
         .catch((err) => console.error('[voice] failed to decode audio chunk:', err));
     });
@@ -150,6 +162,7 @@ export default function VoiceMicButton({ sessionId, inputEmpty = true }: VoiceMi
       schedulerRef.current?.stopAll();
     });
     return () => {
+      offSpeakingStart();
       offChunk();
       offStop();
     };

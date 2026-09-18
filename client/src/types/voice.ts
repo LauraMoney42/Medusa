@@ -45,6 +45,14 @@ export interface VoiceTranscriptPayload {
 
 export interface VoiceAudioChunkPayload {
   sessionId: string;
+  /**
+   * The turn this chunk belongs to. Single-speaker ownership: the scheduler
+   * (`lib/voice/audioScheduler.ts`) drops any chunk whose `turnId` is not the
+   * turn it is currently playing, which is what stops a superseded
+   * speculative turn's late chunk from overlapping the reply that replaced
+   * it. Optional only so older servers/tests without it still decode.
+   */
+  turnId?: string;
   seq: number;
   mime: string;
   /** Base64 (string) or binary (ArrayBuffer), depending on transport. */
@@ -53,6 +61,17 @@ export interface VoiceAudioChunkPayload {
 
 export interface VoiceStopAudioPayload {
   sessionId: string;
+  turnId?: string;
+}
+
+export interface VoiceSpeakingStartPayload {
+  sessionId: string;
+  turnId?: string;
+}
+
+export interface VoiceSpeakingEndPayload {
+  sessionId: string;
+  turnId?: string;
 }
 
 export interface VoiceLatencyPayload {

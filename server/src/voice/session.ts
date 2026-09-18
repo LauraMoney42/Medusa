@@ -136,19 +136,50 @@ export class VoiceSession {
    */
   private streamStarted = false;
   /**
-   * Turns we aborted and immediately replaced (a corrected speculative start,
-   * or a barge-in). The abort settles the old turn with its own
-   * `message:stream:end` (what the warm Kimi engine's `session/cancel`
-   * produces) or `message:error`, and the tap carries no turn identity, so
-   * that event is indistinguishable from the end of the turn now running. It
-   * also routinely lands AFTER the new turn's `message:stream:start`, so
-   * `streamStarted` cannot separate them; this counter does. Left unhandled it
-   * closes the live turn's TTS before a word is synthesized and the reply is
-   * never spoken at all.
+   * Identity of the turn currently allowed to speak, set from the real
+   * `message:stream:start` payload (its `id`) once it arrives. Every
+   * subsequent delta/end/error the tap forwards carries the same id when the
+   * caller (`voice-handlers.ts`) has one to give, and is compared here before
+   * touching this session's state.
+   *
+   * This replaces an earlier counter (`abandonedTurns`) that just counted how
+   * many stale end/error events to swallow: it worked only if those events
+   * arrived in the same order the turns were abandoned, which is not
+   * guaranteed. When a stale event from an old, aborted turn arrived AFTER
+   * the live turn's own terminal event, the counter swallowed the live turn's
+   * end instead and the reply was never spoken (the "sometimes shows no
+   * response" bug). Matching on the turn's real id is order-independent: an
+   * event either belongs to the live turn or it does not, regardless of when
+   * it shows up. `undefined` (no id given, e.g. in tests that call these
+   * methods directly) is treated as "matches", preserving the old
+   * single-turn-at-a-time behavior for callers that never pass one.
    */
-  private abandonedTurns = 0;
+  private liveMessageId: string | undefined = undefined;
+  /**
+   * Real message ids of turns known to have been explicitly replaced (a
+   * corrected speculative start, or a barge-in), recorded whenever we abort
+   * one that had already reached `onStreamStart`. A stale end/delta/error for
+   * one of these is rejected outright even if it arrives before the new
+   * turn's own `message:stream:start` (so `liveMessageId` is still
+   * `undefined` and cannot rule it out by comparison alone). Trimmed so a
+   * long always-on session cannot grow this without bound.
+   */
+  private readonly abandonedMessageIds = new Set<string>();
+  /**
+   * Local turn token, independent of the engine's own message id. Carried on
+   * every `voice:audio-chunk`, `voice:speaking-start/end` and
+   * `voice:stop-audio` so the client can drop audio that belongs to a turn it
+   * has already moved past (see `audioScheduler.ts`), which is what stops a
+   * superseded speculative turn's late chunk from overlapping the reply that
+   * replaced it.
+   */
+  private turnId = "";
   /** Set while a voice-originated send is in flight, so the tap can tag it. */
   private awaitingTurn = false;
+  /** True once `onDelta` has seen real text for the turn in progress. */
+  private turnHadText = false;
+  /** True once the TTS-failure warning has been logged for this turn. */
+  private noAudioWarned = false;
 
   /** Distinguishes her own echo from a real interruption; armed while thinking/speaking. */
   private bargeIn: BargeInDetector;
@@ -244,7 +275,9 @@ export class VoiceSession {
     this.stt = null;
     this.stopSpeaking();
     this.bargeIn.deactivate();
-    this.abandonedTurns = 0;
+    this.streamStarted = false;
+    this.liveMessageId = undefined;
+    this.abandonedMessageIds.clear();
     this.mode = "off";
     this.setState("idle");
   }
@@ -258,7 +291,8 @@ export class VoiceSession {
     }
     this.bargingIn = false;
     this.awaitingTurn = false;
-    this.abandonedTurns = 0;
+    this.streamStarted = false;
+    this.liveMessageId = undefined;
     this.speculativeText = "";
     this.speculation.reset();
     this.setState("listening");
@@ -270,7 +304,9 @@ export class VoiceSession {
     this.tts?.cancel();
     this.tts = null;
     this.bargeIn.deactivate();
-    this.abandonedTurns = 0;
+    this.streamStarted = false;
+    this.liveMessageId = undefined;
+    this.abandonedMessageIds.clear();
     this.state = "idle";
   }
 
@@ -402,7 +438,10 @@ export class VoiceSession {
       this.stopSpeaking();
       if (this.deps.isBusy()) {
         this.deps.abortTurn();
-        this.abandonedTurns++;
+        // The old turn's own end/error may still arrive after this; marking
+        // its id abandoned now (rather than counting it) is what lets that
+        // late event be recognized as stale regardless of when it shows up.
+        this.markAbandoned();
       }
       this.deps.activity(
         `voice: speculation discarded, restarting on "${text}" (guessed "${spoken}")`
@@ -422,7 +461,7 @@ export class VoiceSession {
       this.stopSpeaking();
       if (this.deps.isBusy()) {
         this.deps.abortTurn();
-        this.abandonedTurns++;
+        this.markAbandoned();
         this.deps.activity(`voice: aborted turn for barge-in after "${lastSpoken}"`);
       }
       if (lastSpoken) prompt = `${interruptionPrefix(lastSpoken)}${text}`;
@@ -440,6 +479,10 @@ export class VoiceSession {
     this.speakingStartEmitted = false;
     this.awaitingTurn = true;
     this.streamStarted = false;
+    this.liveMessageId = undefined;
+    this.turnHadText = false;
+    this.noAudioWarned = false;
+    this.turnId = randomUUID();
     this.turnStartedAt = Date.now();
 
     this.setState("thinking");
@@ -448,46 +491,86 @@ export class VoiceSession {
 
   // ---- assistant stream tap -------------------------------------------
 
+  /**
+   * True when a tapped stream event belongs to the turn this session is
+   * currently running. `messageId` is `undefined` for callers that don't
+   * track per-turn ids (unit tests calling these methods directly), which is
+   * treated as a match so their single-turn scenarios are unaffected.
+   */
+  private isLiveTurn(messageId: string | undefined): boolean {
+    if (messageId !== undefined && this.abandonedMessageIds.has(messageId)) return false;
+    if (this.streamStarted) {
+      if (messageId === undefined) return true;
+      return messageId === this.liveMessageId;
+    }
+    // The turn has not reached its own `message:stream:start` yet, so there
+    // is no id to compare against: an engine error can fail a turn before it
+    // ever streams a token. This looks like the live turn's own early
+    // failure exactly when we are still waiting on one turn's start; that
+    // window only exists because `startTurn` just ran, so it is the turn we
+    // care about. A known-stale id was already rejected above.
+    return this.awaitingTurn;
+  }
+
+  /** Record a turn's id (if we ever learned one) as explicitly superseded. */
+  private markAbandoned(): void {
+    if (this.liveMessageId !== undefined) this.abandonedMessageIds.add(this.liveMessageId);
+    if (this.abandonedMessageIds.size > 20) {
+      const oldest = this.abandonedMessageIds.values().next().value;
+      if (oldest !== undefined) this.abandonedMessageIds.delete(oldest);
+    }
+    this.streamStarted = false;
+    this.liveMessageId = undefined;
+  }
+
   /** A new assistant message started streaming for this session. */
-  onStreamStart(): void {
+  onStreamStart(messageId?: string): void {
     if (!this.active) return;
     this.awaitingTurn = false;
     this.streamStarted = true;
+    this.liveMessageId = messageId;
     // Barge-in detection is armed from "thinking" onward, not just once
     // audio starts, so a fast interruption during the thinking gap is
     // still caught by the sustained-energy bar rather than the plain VAD.
     this.bargeIn.activate();
+    // Cancel synchronously before attaching the replacement: a session must
+    // never have two TtsStreams attached (and thus never two turns able to
+    // call `deps.emit("voice:audio-chunk", ...)`) at once.
     this.tts?.cancel();
+    this.tts = null;
+    const turnId = this.turnId;
     this.tts = new TtsStream({
       synthesize: (t, v) => this.deps.tts.synthesize(t, v),
       voice: this.deps.voice,
       lookahead: 1,
       firstClauseChars: this.deps.firstClauseChars,
-      onChunk: (chunk) => this.handleAudioChunk(chunk),
+      onChunk: (chunk) => this.handleAudioChunk(chunk, turnId),
       onStart: () => {
         this.speakingStartEmitted = true;
         this.setState("speaking");
         this.bargeIn.beginPlayback();
-        this.deps.emit("voice:speaking-start", { sessionId: this.sessionId });
+        this.deps.emit("voice:speaking-start", { sessionId: this.sessionId, turnId });
       },
-      onEnd: () => this.handleSpeakingEnd(),
+      onEnd: () => this.handleSpeakingEnd(turnId),
       onError: (err) => this.deps.activity(`voice: synthesis failed: ${err.message}`),
     });
     this.setState("thinking");
   }
 
   /** One assistant text delta. */
-  onDelta(text: string): void {
+  onDelta(text: string, messageId?: string): void {
     if (!this.active || !text) return;
-    // A delta from a turn that was abandoned mid-flight; the new turn's own
-    // `message:stream:start` has not arrived yet.
-    if (!this.streamStarted) return;
+    // A delta from a turn that was abandoned mid-flight, or from a foreign
+    // (non-voice) turn: the live turn's own `message:stream:start` either
+    // has not arrived yet, or belongs to a different message id.
+    if (!this.isLiveTurn(messageId)) return;
+    this.turnHadText = true;
     // Measured from when the prompt went out, which is the transcript for a
     // normal turn and the stable partial for a speculative one.
     if (this.firstTokenMs === 0 && this.turnStartedAt > 0) {
       this.firstTokenMs = Date.now() - this.turnStartedAt;
     }
-    if (!this.tts) this.onStreamStart();
+    if (!this.tts) this.onStreamStart(messageId);
     const before = this.tts?.busy ?? false;
     this.tts?.push(text);
     // Mark when the first whole sentence became available, which is the start
@@ -498,18 +581,14 @@ export class VoiceSession {
   }
 
   /** The assistant message finished streaming. */
-  onStreamEnd(): void {
+  onStreamEnd(messageId?: string): void {
     if (!this.active) return;
-    // The end of a turn that has already been replaced: it has nothing to say
-    // and no latency of its own to report.
-    if (!this.streamStarted) return;
-    // Same, for the ordering where the replaced turn's end arrives after the
-    // replacement's own stream start. Consuming it here is what keeps the live
-    // turn's TTS open.
-    if (this.abandonedTurns > 0) {
-      this.abandonedTurns--;
-      return;
-    }
+    // The end of a turn that has already been replaced, or of a foreign
+    // (non-voice) turn: it has nothing to say and no latency of its own to
+    // report. Matching on the id (rather than counting abandoned turns) means
+    // this is correct regardless of which order the events actually arrive
+    // in, which a simple counter could not guarantee.
+    if (!this.isLiveTurn(messageId)) return;
     this.awaitingTurn = false;
     // A short reply ("Mango.") can end without ever completing a sentence
     // mid-stream, because the chunker waits for the character after the
@@ -517,6 +596,11 @@ export class VoiceSession {
     // text exists" clock starts for that turn.
     if (this.firstSentenceAt === 0) this.firstSentenceAt = Date.now();
     if (!this.tts) {
+      // Text streamed and finished, but no TtsStream was ever attached
+      // (engine error path aside, this only happens if synthesis never
+      // started at all). The text bubble already rendered through the normal
+      // chat path; make sure the silence is at least explained in the log.
+      if (this.turnHadText) this.warnIfTextWithoutAudio();
       this.setState("listening");
       return;
     }
@@ -524,16 +608,14 @@ export class VoiceSession {
   }
 
   /** The turn failed before producing text. */
-  onStreamError(): void {
+  onStreamError(messageId?: string): void {
     if (!this.active) return;
     // The abort we issued when replacing a turn can also surface as an error
-    // rather than an end. Either way it belongs to the turn that is already
-    // gone, so it must not cancel the live turn's TTS.
-    if (this.abandonedTurns > 0) {
-      this.abandonedTurns--;
-      return;
-    }
+    // rather than an end. Either way, if it is not the live turn it must not
+    // cancel the live turn's TTS.
+    if (!this.isLiveTurn(messageId)) return;
     this.awaitingTurn = false;
+    if (this.turnHadText) this.warnIfTextWithoutAudio();
     this.tts?.cancel();
     this.tts = null;
     this.setState("listening");
@@ -546,11 +628,12 @@ export class VoiceSession {
 
   // ---- outbound audio --------------------------------------------------
 
-  private handleAudioChunk(chunk: AudioChunk): void {
+  private handleAudioChunk(chunk: AudioChunk, turnId: string): void {
     this.firstAudioEmitted = true;
     this.lastSpoken = chunk.text;
     this.deps.emit("voice:audio-chunk", {
       sessionId: this.sessionId,
+      turnId,
       seq: chunk.seq,
       mime: chunk.mime,
       data: chunk.data,
@@ -558,18 +641,34 @@ export class VoiceSession {
     if (!this.latencyReported) this.reportLatency();
   }
 
+  /**
+   * A turn produced text but the client never got a single audio chunk for
+   * it (every sentence's synthesis failed, or none was ever attempted). The
+   * text bubble already rendered through the normal chat path regardless of
+   * voice, so nothing is visually blank, but the owner hears nothing and
+   * without this line the Activity Log gives no reason why.
+   */
+  private warnIfTextWithoutAudio(): void {
+    if (this.noAudioWarned || this.firstAudioEmitted) return;
+    this.noAudioWarned = true;
+    this.deps.activity(
+      "voice: reply had text but no audio (speech synthesis failed); showing text only"
+    );
+  }
+
   /** Emit `voice:stop-audio` and drop everything queued for synthesis. */
   private stopSpeaking(): void {
     const wasSpeaking =
       this.speakingStartEmitted || Boolean(this.tts?.speaking) || this.state === "speaking";
+    const turnId = this.turnId;
     // Stop the client's playback before anything else: that is the 100 ms the
     // user actually feels when they talk over her.
-    if (wasSpeaking) this.deps.emit("voice:stop-audio", { sessionId: this.sessionId });
+    if (wasSpeaking) this.deps.emit("voice:stop-audio", { sessionId: this.sessionId, turnId });
     const tts = this.tts;
     this.tts = null;
     tts?.cancel();
     if (this.speakingStartEmitted) {
-      this.deps.emit("voice:speaking-end", { sessionId: this.sessionId });
+      this.deps.emit("voice:speaking-end", { sessionId: this.sessionId, turnId });
       this.speakingStartEmitted = false;
     }
     // She is no longer speaking; keep the barge-in bar armed for the grace
@@ -578,13 +677,14 @@ export class VoiceSession {
     this.bargeIn.deactivateAfterGrace();
   }
 
-  private handleSpeakingEnd(): void {
+  private handleSpeakingEnd(turnId: string): void {
     if (this.speakingStartEmitted) {
-      this.deps.emit("voice:speaking-end", { sessionId: this.sessionId });
+      this.deps.emit("voice:speaking-end", { sessionId: this.sessionId, turnId });
       this.speakingStartEmitted = false;
     }
     this.bargeIn.deactivateAfterGrace();
     if (!this.latencyReported) this.reportLatency();
+    if (this.turnHadText) this.warnIfTextWithoutAudio();
     this.tts = null;
     if (this.state !== "idle") this.setState("listening");
   }

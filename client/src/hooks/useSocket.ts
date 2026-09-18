@@ -13,7 +13,7 @@ import type {
 } from '../stores/subagentStore';
 import { useActivityStore, type ActivityEvent } from '../stores/activityStore';
 import { useVoiceStore } from '../stores/voiceStore';
-import { emitAudioChunk, emitStopAudio } from '../lib/voice/voiceBus';
+import { emitAudioChunk, emitStopAudio, emitSpeakingStart, emitSpeakingEnd } from '../lib/voice/voiceBus';
 import type { ChatMessage, ToolUse } from '../types/message';
 import type {
   VoiceStatePayload,
@@ -21,6 +21,8 @@ import type {
   VoiceTranscriptPayload,
   VoiceAudioChunkPayload,
   VoiceStopAudioPayload,
+  VoiceSpeakingStartPayload,
+  VoiceSpeakingEndPayload,
   VoiceLatencyPayload,
   FollowupQueuedPayload,
   FollowupDeliveredPayload,
@@ -251,6 +253,17 @@ export function useSocket() {
       emitStopAudio(data);
     };
 
+    // Forwarded to the scheduler (not through voiceStore) so it learns a new
+    // turn's id before that turn's first audio chunk arrives (spec section 7;
+    // see voiceBus.ts and audioScheduler.ts's `beginTurn`).
+    const handleVoiceSpeakingStart = (data: VoiceSpeakingStartPayload) => {
+      emitSpeakingStart(data);
+    };
+
+    const handleVoiceSpeakingEnd = (data: VoiceSpeakingEndPayload) => {
+      emitSpeakingEnd(data);
+    };
+
     const handleVoiceLatency = (data: VoiceLatencyPayload) => {
       setVoiceLatency({
         sttMs: data.sttMs,
@@ -319,6 +332,8 @@ export function useSocket() {
     socket.on('voice:transcript', handleVoiceTranscript);
     socket.on('voice:audio-chunk', handleVoiceAudioChunk);
     socket.on('voice:stop-audio', handleVoiceStopAudio);
+    socket.on('voice:speaking-start', handleVoiceSpeakingStart);
+    socket.on('voice:speaking-end', handleVoiceSpeakingEnd);
     socket.on('voice:latency', handleVoiceLatency);
     socket.on('followup:queued', handleFollowupQueued);
     socket.on('followup:delivered', handleFollowupDelivered);
@@ -351,6 +366,8 @@ export function useSocket() {
       socket.off('voice:transcript', handleVoiceTranscript);
       socket.off('voice:audio-chunk', handleVoiceAudioChunk);
       socket.off('voice:stop-audio', handleVoiceStopAudio);
+      socket.off('voice:speaking-start', handleVoiceSpeakingStart);
+      socket.off('voice:speaking-end', handleVoiceSpeakingEnd);
       socket.off('voice:latency', handleVoiceLatency);
       socket.off('followup:queued', handleFollowupQueued);
       socket.off('followup:delivered', handleFollowupDelivered);
