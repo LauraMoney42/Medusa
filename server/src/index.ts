@@ -32,6 +32,7 @@ import { createQuickTasksRouter } from "./routes/quick-tasks.js";
 import { createCaffeineRouter, shutdownCaffeine } from "./routes/caffeine.js";
 import { createSettingsRouter } from "./routes/settings.js";
 import { createProvidersRouter } from "./routes/providers.js";
+import { createMedusaRouter, createPacksRouter } from "./packs/routes.js";
 import { createTicTalkRouter } from "./routes/tictalk.js";
 import { paginateDevlogs } from "./utils/devlog-paginator.js";
 import { TokenLogger } from "./metrics/token-logger.js";
@@ -240,6 +241,12 @@ app.get("/api/token-usage", generalLimiter, tokenUsageHandler);
 app.use("/api/caffeine", generalLimiter, createCaffeineRouter());
 app.use("/api/settings", generalLimiter, createSettingsRouter(processManager, io));
 app.use("/api/providers", generalLimiter, createProvidersRouter());
+// The Medusa layer (persona, rules, theme, voice, toolbox) and shareable packs.
+// These carry an embedded avatar data URL, so they get their own, larger body
+// limit rather than raising the 1mb default for every route.
+const packBody = express.json({ limit: "8mb" });
+app.use("/api/medusa", generalLimiter, packBody, createMedusaRouter());
+app.use("/api/packs", generalLimiter, packBody, createPacksRouter());
 app.use("/api/headroom", generalLimiter, createHeadroomRouter());
 app.use("/api/onenote", generalLimiter, createOneNoteRouter());
 // TicTalk proxy — forwards TicBuddy/TicTamer iOS app messages to Anthropic Claude API.

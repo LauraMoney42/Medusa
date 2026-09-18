@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useProviderStore } from '../../stores/providerStore';
-import { fetchSkills, type SkillInfo } from '../../api';
+import * as api from '../../api';
+import { fetchSkills, type MedusaRule, type SkillInfo } from '../../api';
 
 /**
  * Tools: a management view for what this chat can reach.
@@ -10,9 +11,13 @@ import { fetchSkills, type SkillInfo } from '../../api';
  * provider registry). The MCP tool list mirrors the `medusa` MCP server's
  * surface in server/src/mcp/tools.ts; the server has no route that enumerates
  * it yet, so it is a static list here and switches to a fetch once one exists.
- * Skills come from GET /api/skills. Rules are placeholders: the real Medusa
- * layer (`~/.medusa/rules/*.md`, workstream S13) lands later, so the toggles
- * only persist to localStorage for now and drive nothing server-side.
+ * Skills come from GET /api/skills.
+ *
+ * Rules are real now (S13): they are the `~/.medusa/rules/*.md` files, and a
+ * toggle writes through /api/medusa/rules so the next turn's system prompt
+ * carries exactly the enabled set, on every engine. The MCP tool and skill
+ * toggles still keep their state in localStorage, because no server route
+ * consumes them yet.
  */
 
 interface ToggleItem {
@@ -30,14 +35,13 @@ const MCP_TOOLS: ToggleItem[] = [
   { id: 'cancel_agent', label: 'cancel_agent', detail: 'Stop a running subagent' },
 ];
 
-/** Placeholder rule files until the Medusa layer ships (addendum, S13). */
-const RULES: ToggleItem[] = [
-  { id: 'adhd-mode', label: 'ADHD mode', detail: 'Short, action-first replies' },
-  { id: 'terse', label: 'Terse', detail: 'No preamble, no summaries' },
-  { id: 'tests-first', label: 'Tests first', detail: 'Write the failing test before the fix' },
-];
-
 const STORE_KEY = 'medusa.tools.enabled';
+
+/** First line of a rule file, for the one-line summary under its name. */
+function ruleSummary(rule: MedusaRule): string {
+  const line = rule.content.split('\n').find((l) => l.trim() && !l.trim().startsWith('#'));
+  return line?.trim() ?? rule.name;
+}
 
 /** Toggles are per chat, so one project can run a rule another does not. */
 function loadEnabled(): Record<string, Record<string, boolean>> {
@@ -61,6 +65,8 @@ export default function ToolsView() {
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [skillsReady, setSkillsReady] = useState(true);
   const [enabled, setEnabled] = useState<Record<string, boolean>>({});
+  const [rules, setRules] = useState<MedusaRule[]>([]);
+  const [rulesError, setRulesError] = useState<string | null>(null);
 
   useEffect(() => {
     void fetchProviderList();
@@ -70,7 +76,28 @@ export default function ToolsView() {
         setSkillsReady(r.ready);
       })
       .catch(() => setSkillsReady(false));
+    api
+      .fetchRules()
+      .then((r) => setRules(r.rules))
+      .catch((e: Error) => setRulesError(e.message));
   }, [fetchProviderList]);
+
+  /**
+   * Optimistic: flip the switch, then persist. A failed write puts the old
+   * value back, so the UI never claims a rule is on when the prompt says
+   * otherwise.
+   */
+  const toggleRule = useCallback(async (rule: MedusaRule) => {
+    const next = !rule.enabled;
+    setRules((prev) => prev.map((r) => (r.name === rule.name ? { ...r, enabled: next } : r)));
+    try {
+      await api.setRuleEnabled(rule.name, next);
+      setRulesError(null);
+    } catch (e) {
+      setRules((prev) => prev.map((r) => (r.name === rule.name ? { ...r, enabled: !next } : r)));
+      setRulesError(e instanceof Error ? e.message : 'Could not save that rule.');
+    }
+  }, []);
 
   const scope = activeSessionId ?? 'global';
   useEffect(() => {
@@ -152,17 +179,29 @@ export default function ToolsView() {
         <section style={styles.section}>
           <span style={styles.sectionLabel}>Rules</span>
           <div style={styles.card}>
-            {RULES.map((r) => (
-              <ToggleRow
-                key={r.id}
-                item={r}
-                on={enabled[r.id] ?? false}
-                onToggle={() => toggle(r.id, false)}
-              />
-            ))}
+            {rules.length === 0 ? (
+              <p style={styles.hint}>
+                No rules yet. Add a markdown file to your Medusa rules folder, or import
+                a pack from Settings, and it shows up here.
+              </p>
+            ) : (
+              rules.map((r) => (
+                <ToggleRow
+                  key={r.name}
+                  item={{
+                    id: r.name,
+                    label: r.name.replace(/\.md$/, ''),
+                    detail: ruleSummary(r),
+                  }}
+                  on={r.enabled}
+                  onToggle={() => void toggleRule(r)}
+                />
+              ))
+            )}
             <p style={styles.hint}>
-              Rules are placeholders. They start composing into the system prompt when
-              the Medusa persona layer ships.
+              {rulesError
+                ? rulesError
+                : 'Enabled rules are appended to the system prompt for every engine.'}
             </p>
           </div>
         </section>

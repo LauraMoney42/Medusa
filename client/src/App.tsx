@@ -17,6 +17,8 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import CaffeineToggle from './components/Caffeine/CaffeineToggle';
 import OnboardingView from './components/Onboarding/OnboardingView';
 import { checkAuth } from './api';
+import { useTtsStore } from './stores/ttsStore';
+import { applySavedLayer, importPackFile, isPackFile } from './packs';
 
 const ONBOARDING_KEY = 'medusa_onboarding_done';
 // Show launch screen once per browser session (sessionStorage resets on tab close)
@@ -118,6 +120,18 @@ function AuthenticatedApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // The Medusa layer's theme and voice are served to the client on load, so a
+  // saved theme paints before the first chat renders instead of flashing the
+  // shipped one first.
+  useEffect(() => {
+    const store = useTtsStore.getState();
+    void applySavedLayer((v) => {
+      store.setVoice(v.voiceId);
+      store.setSpeed(v.speed);
+      store.setSpeak(v.enabled);
+    });
+  }, []);
+
   // Re-fetch when socket (re)connects to pick up any changes
   useEffect(() => {
     if (connected) {
@@ -177,9 +191,22 @@ function AuthenticatedApp() {
     const droppedFiles = Array.from(e.dataTransfer.files);
     if (droppedFiles.length === 0) return;
 
+    // A Medusa pack dropped on the window is an import, not an attachment.
+    // The server validates it and backs up the current setup before applying.
+    const packs = droppedFiles.filter(isPackFile);
+    for (const pack of packs) {
+      importPackFile(pack)
+        .then((manifest) => {
+          window.alert(`Applied "${manifest.name}". Your previous setup was backed up.`);
+        })
+        .catch((err: Error) => window.alert(err.message));
+    }
+    const rest = droppedFiles.filter((f) => !isPackFile(f));
+    if (rest.length === 0) return;
+
     // Enforce 20MB per-file limit (match server)
     const MAX_SIZE = 20 * 1024 * 1024;
-    const validFiles = droppedFiles.filter((f) => f.size <= MAX_SIZE);
+    const validFiles = rest.filter((f) => f.size <= MAX_SIZE);
 
     if (validFiles.length === 0) return;
 
