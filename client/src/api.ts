@@ -668,6 +668,54 @@ export function fetchVoiceLoopStatus(): Promise<VoiceLoopStatus> {
   return request<VoiceLoopStatus>('/api/voice/status');
 }
 
+/**
+ * Providers settings tab (W8): store, verify and remove API keys for
+ * OpenRouter and the external voice services (Gemini, OpenAI, Deepgram)
+ * without hand-editing ~/.claude-chat/settings.json. GET never returns a
+ * full key, only whether one is set, where it came from, and its last 4
+ * characters.
+ */
+export interface ProviderKeyStatus {
+  id: string;
+  displayName: string;
+  hasKey: boolean;
+  source: 'settings' | 'env' | 'none';
+  keyUrl?: string;
+  last4?: string;
+}
+
+export interface ProviderVerifyResult {
+  ok: boolean;
+  message: string;
+  /** Gemini only: whether a native-audio live model is in the list. */
+  liveAudioModel?: boolean;
+}
+
+export function fetchProviderKeys(): Promise<{ providers: ProviderKeyStatus[] }> {
+  return request<{ providers: ProviderKeyStatus[] }>('/api/providers/keys');
+}
+
+export function saveProviderKey(id: string, apiKey: string): Promise<ProviderKeyStatus> {
+  return request<ProviderKeyStatus>(`/api/providers/${encodeURIComponent(id)}/key`, {
+    method: 'PUT',
+    body: JSON.stringify({ apiKey }),
+  });
+}
+
+export function removeProviderKey(id: string): Promise<ProviderKeyStatus> {
+  return request<ProviderKeyStatus>(`/api/providers/${encodeURIComponent(id)}/key`, {
+    method: 'DELETE',
+  });
+}
+
+/** `apiKey` lets Verify check a pasted-but-not-yet-saved key. */
+export function verifyProviderKey(id: string, apiKey?: string): Promise<ProviderVerifyResult> {
+  return request<ProviderVerifyResult>(`/api/providers/${encodeURIComponent(id)}/verify`, {
+    method: 'POST',
+    body: JSON.stringify(apiKey ? { apiKey } : {}),
+  });
+}
+
 export type ToolScope = 'read' | 'write' | 'shell';
 
 export interface ToolboxEntry {

@@ -5,6 +5,7 @@ import { useTtsStore } from '../../stores/ttsStore';
 import { useVoiceStore } from '../../stores/voiceStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useProviderStore } from '../../stores/providerStore';
+import { useSettingsTabStore } from '../../stores/settingsTabStore';
 import { s } from './settingsStyles';
 import Toggle from './Toggle';
 
@@ -50,6 +51,7 @@ export default function VoiceTab() {
   // Mute-speaker: moved out of the old VoiceBar strip. Lives here and as the
   // existing speaker icon in the chat header, both reading/writing the same
   // client-local voiceStore field.
+  const requestSettingsTab = useSettingsTabStore((st) => st.requestTab);
   const speakerMuted = useVoiceStore((st) => st.speakerMuted);
   const setSpeakerMuted = useVoiceStore((st) => st.setSpeakerMuted);
   // Echo guard + barge-in: client-local (localStorage), not part of the
@@ -569,15 +571,18 @@ export default function VoiceTab() {
         </p>
         {tierReason && <p style={s.hint}>{tierReason}</p>}
         {showFreeHint && (
-          <p style={s.hint}>
-            Live voice is free with a Google AI Studio key.{' '}
-            <a href={freeKeyUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>
-              Get one here
-            </a>
-            , then add it as <code>providers.gemini.apiKey</code> in{' '}
-            <code>~/.claude-chat/settings.json</code>, or set{' '}
-            <code>GEMINI_API_KEY</code>.
-          </p>
+          <div style={s.field}>
+            <p style={s.hint}>
+              Live voice is free with a Google AI Studio key.{' '}
+              <a href={freeKeyUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>
+                Get one here
+              </a>
+              , then add it in Providers.
+            </p>
+            <button style={s.btn} onClick={() => requestSettingsTab('providers')}>
+              Add your Gemini key in Providers
+            </button>
+          </div>
         )}
         {selectedRealtime?.reason && <p style={s.hint}>{selectedRealtime.reason}</p>}
 

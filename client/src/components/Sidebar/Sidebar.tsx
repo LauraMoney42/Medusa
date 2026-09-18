@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import ChatList from './ChatList';
 import NewChatModal from './NewChatModal';
 import SettingsModal from './SettingsModal';
 import { useSessionStore } from '../../stores/sessionStore';
+import { useSettingsTabStore } from '../../stores/settingsTabStore';
 
 interface SidebarProps {
   open?: boolean;
@@ -24,6 +25,17 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
   const [query, setQuery] = useState('');
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const openRequested = useSettingsTabStore((st) => st.openRequested);
+  const clearOpenRequest = useSettingsTabStore((st) => st.clearOpenRequest);
+
+  // The mic tier banner (VoiceTierBadge) can ask Settings to open straight to
+  // the Providers tab even when the modal isn't up yet.
+  useEffect(() => {
+    if (openRequested) {
+      setSettingsOpen(true);
+      clearOpenRequest();
+    }
+  }, [openRequested, clearOpenRequest]);
 
   // Opened with the system browser, not an in-app tab: this is a link out to
   // the project's issue tracker, which the user signs into as themselves.

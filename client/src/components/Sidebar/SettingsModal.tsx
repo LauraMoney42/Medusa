@@ -4,12 +4,14 @@ import type { SettingsResponse, OneNoteStatus, OneNoteDeviceCode, HeadroomStatus
 import { useTtsStore } from '../../stores/ttsStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import UsagePane from '../Usage/UsagePane';
+import ProvidersTab from '../Settings/ProvidersTab';
 import PersonaTab from '../Settings/PersonaTab';
 import ThemeTab from '../Settings/ThemeTab';
 import VoiceTab from '../Settings/VoiceTab';
 import ToolboxTab from '../Settings/ToolboxTab';
 import PacksTab from '../Settings/PacksTab';
 import { getSocket } from '../../socket';
+import { useSettingsTabStore } from '../../stores/settingsTabStore';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -26,6 +28,7 @@ interface SettingsModalProps {
  */
 type SettingsTab =
   | 'general'
+  | 'providers'
   | 'persona'
   | 'theme'
   | 'voice'
@@ -34,7 +37,10 @@ type SettingsTab =
   | 'usage'
   | 'stop';
 
+// Providers is first: it's where a key gets added before anything else here
+// (a model, Live voice) can work without one.
 const TABS: Array<{ id: SettingsTab; label: string }> = [
+  { id: 'providers', label: 'Providers' },
   { id: 'general', label: 'General' },
   { id: 'persona', label: 'Persona' },
   { id: 'theme', label: 'Theme' },
@@ -47,6 +53,17 @@ const TABS: Array<{ id: SettingsTab; label: string }> = [
 
 export default function SettingsModal({ onClose }: SettingsModalProps) {
   const [tab, setTab] = useState<SettingsTab>('general');
+  const requestedTab = useSettingsTabStore((st) => st.requested);
+  const clearTabRequest = useSettingsTabStore((st) => st.clearRequest);
+
+  // Another tab (VoiceTab's "Add your Gemini key" button) can ask this modal
+  // to switch tabs. Consumed once so it doesn't stick past this open.
+  useEffect(() => {
+    if (requestedTab) {
+      setTab(requestedTab);
+      clearTabRequest();
+    }
+  }, [requestedTab, clearTabRequest]);
   const [settings, setSettings] = useState<SettingsResponse | null>(null);
   const [showPicker, setShowPicker] = useState(false);
   const [working, setWorking] = useState(false);
@@ -194,6 +211,7 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
           ))}
         </div>
 
+        {tab === 'providers' && <div style={styles.tabPane}><ProvidersTab /></div>}
         {tab === 'persona' && <div style={styles.tabPane}><PersonaTab /></div>}
         {tab === 'theme' && <div style={styles.tabPane}><ThemeTab /></div>}
         {tab === 'voice' && <div style={styles.tabPane}><VoiceTab /></div>}

@@ -88,6 +88,7 @@ graph TB
 | Session state | `client/src/stores/sessionStore.ts` | current; `pendingTasks`/`devControl` dropped per spec Section D.4 |
 | Engine registry | `server/src/engine/` | current - `types.ts`, `registry.ts`, `claude-cli-engine.ts`, `kimi-cli-engine.ts`, `acp-engine.ts`, `code-puppy-engine.ts` |
 | Provider registry (OpenRouter, live model listing) | `server/src/settings/providers.ts`, `server/src/routes/providers.ts` | current |
+| Providers settings tab (W8: manage API keys for OpenRouter, Gemini/OpenAI/Deepgram voice services from the UI, no more hand-editing settings.json) | `client/src/components/Settings/ProvidersTab.tsx`, `server/src/routes/providers.ts` (`GET/PUT/DELETE /api/providers/keys`, `.../:id/key`, `POST .../:id/verify`) | current |
 | Socket error policy (auth-error detection, dedupe) | `server/src/socket/error-policy.ts` | current |
 | Desktop shell (Tauri v2, Node sidecar, tray, hotkey) | `desktop/` | current - see `desktop/README.md`; the older Swift `app/` is legacy |
 | Subagent lifecycle manager | `server/src/subagents/manager.ts` | planned, spec Section A.3 |

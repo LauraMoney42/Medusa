@@ -39,6 +39,8 @@ export interface ProviderConfig {
    * their own auth paths and are excluded from that env-construction logic.
    */
   anthropicCompatible?: boolean;
+  /** Where a user gets a key, shown in Settings > Providers. */
+  keyUrl?: string;
 }
 
 const SETTINGS_FILE = path.join(
@@ -70,6 +72,7 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
     baseUrl: "https://openrouter.ai/api",
     apiKeyEnv: "OPENROUTER_API_KEY",
     anthropicCompatible: true,
+    keyUrl: "https://openrouter.ai/keys",
     // Fallback list used offline / when /v1/models can't be reached.
     models: [
       { id: "openai/gpt-5.1", displayName: "GPT-5.1" },
@@ -104,6 +107,41 @@ function getOverride(id: string): RawProviderOverride | undefined {
   const raw = loadRawSettings();
   const map = raw.providers as Record<string, RawProviderOverride> | undefined;
   return map?.[id];
+}
+
+/** Atomic write + 600 permissions, matching settings/store.ts's own save(). */
+function saveRawSettings(raw: Record<string, unknown>): void {
+  const dir = path.dirname(SETTINGS_FILE);
+  fs.mkdirSync(dir, { recursive: true });
+  const tmp = SETTINGS_FILE + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(raw, null, 2), "utf-8");
+  fs.renameSync(tmp, SETTINGS_FILE);
+  fs.chmodSync(SETTINGS_FILE, 0o600);
+}
+
+/**
+ * Store an API key for any provider id (chat provider or external service)
+ * under `providers.<id>.apiKey` in the settings file, preserving any other
+ * override fields (baseUrl, displayName, models) already there for that id.
+ * Read back on the very next call: nothing here caches the file in memory.
+ */
+export function setProviderApiKey(id: string, apiKey: string): void {
+  const raw = loadRawSettings();
+  const providers = { ...(raw.providers as Record<string, RawProviderOverride> | undefined) };
+  providers[id] = { ...providers[id], apiKey };
+  raw.providers = providers;
+  saveRawSettings(raw);
+}
+
+/** Remove a stored key, keeping the rest of that provider's override intact. */
+export function removeProviderApiKey(id: string): void {
+  const raw = loadRawSettings();
+  const providers = raw.providers as Record<string, RawProviderOverride> | undefined;
+  if (!providers?.[id]?.apiKey) return;
+  const { apiKey: _drop, ...rest } = providers[id];
+  providers[id] = rest;
+  raw.providers = providers;
+  saveRawSettings(raw);
 }
 
 /** Merge the static registry entry with any user-supplied override from the settings file. */
@@ -197,6 +235,64 @@ export function getExternalProviderKey(id: string): string | undefined {
   return getExternalApiKey(entry.id, entry.apiKeyEnv);
 }
 
+/**
+ * Every provider whose key can be managed from Settings > Providers: chat
+ * providers with an `apiKeyEnv` (currently just OpenRouter — "claude" and
+ * "kimi" authenticate via CLI login, not a stored key) plus the external
+ * services (gemini, openai, deepgram). One list backs `GET
+ * /api/providers/keys`.
+ */
+export interface ManagedKeyProvider {
+  id: string;
+  displayName: string;
+  apiKeyEnv: string;
+  keyUrl?: string;
+}
+
+export function listManagedKeyProviders(): ManagedKeyProvider[] {
+  const chatProviders = Object.values(PROVIDERS)
+    .filter((p): p is ProviderConfig & { apiKeyEnv: string } => Boolean(p.apiKeyEnv))
+    .map((p) => ({ id: p.id, displayName: p.displayName, apiKeyEnv: p.apiKeyEnv, keyUrl: p.keyUrl }));
+  const externals = Object.values(EXTERNAL_PROVIDERS).map((e) => ({
+    id: e.id,
+    displayName: e.displayName,
+    apiKeyEnv: e.apiKeyEnv,
+    keyUrl: e.keyUrl,
+  }));
+  return [...chatProviders, ...externals];
+}
+
+export interface KeyStatus {
+  hasKey: boolean;
+  source: "settings" | "env" | "none";
+  /** Last 4 characters only. The full key is never returned to a client. */
+  last4?: string;
+}
+
+/** Resolve where a managed provider's key (if any) currently comes from. */
+export function getKeyStatus(id: string, apiKeyEnv: string): KeyStatus {
+  const override = getOverride(id);
+  if (override?.apiKey) {
+    return { hasKey: true, source: "settings", last4: override.apiKey.slice(-4) };
+  }
+  const envKey = process.env[apiKeyEnv];
+  if (envKey) {
+    return { hasKey: true, source: "env", last4: envKey.slice(-4) };
+  }
+  return { hasKey: false, source: "none" };
+}
+
+/**
+ * The actual key value for any managed provider (settings first, env
+ * second), for the one place (POST /:id/verify) that needs to use a real key
+ * server-side. Never returned to a client as-is.
+ */
+export function resolveManagedProviderKey(id: string, apiKeyEnv: string): string | undefined {
+  const override = getOverride(id);
+  if (override?.apiKey) return override.apiKey;
+  return process.env[apiKeyEnv] || undefined;
+}
+
 // ---- Live model listing (with cache + static fallback) --------------------
 
 const MODEL_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
@@ -253,6 +349,64 @@ export async function listModels(id: string): Promise<ModelInfo[]> {
 /** Clears the model cache. Test-only escape hatch. */
 export function _clearModelCache(): void {
   modelCache.clear();
+}
+
+// ---- Key verification (one cheap authenticated call per provider) ---------
+
+export interface VerifyResult {
+  ok: boolean;
+  message: string;
+  /** Gemini only: whether a native-audio live model is in the list. */
+  liveAudioModel?: boolean;
+}
+
+/**
+ * Make one cheap authenticated call to confirm a key actually works, without
+ * spending anything beyond a models/projects list. Never logs or returns the
+ * key itself.
+ */
+export async function verifyProviderKey(id: string, apiKey: string): Promise<VerifyResult> {
+  try {
+    if (id === "openrouter") {
+      const res = await fetch("https://openrouter.ai/api/v1/models", {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      if (!res.ok) return { ok: false, message: `OpenRouter rejected the key (HTTP ${res.status}).` };
+      return { ok: true, message: "Key works." };
+    }
+    if (id === "gemini") {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`
+      );
+      if (!res.ok) return { ok: false, message: `Gemini rejected the key (HTTP ${res.status}).` };
+      const body = (await res.json()) as { models?: Array<{ name?: string }> };
+      const liveAudioModel = (body.models ?? []).some((m) => (m.name ?? "").includes("native-audio"));
+      return {
+        ok: true,
+        message: liveAudioModel
+          ? "Key works. Live audio model available."
+          : "Key works, but no native-audio live model was found on this account.",
+        liveAudioModel,
+      };
+    }
+    if (id === "openai") {
+      const res = await fetch("https://api.openai.com/v1/models", {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      if (!res.ok) return { ok: false, message: `OpenAI rejected the key (HTTP ${res.status}).` };
+      return { ok: true, message: "Key works." };
+    }
+    if (id === "deepgram") {
+      const res = await fetch("https://api.deepgram.com/v1/projects", {
+        headers: { Authorization: `Token ${apiKey}` },
+      });
+      if (!res.ok) return { ok: false, message: `Deepgram rejected the key (HTTP ${res.status}).` };
+      return { ok: true, message: "Key works." };
+    }
+    return { ok: false, message: `Unknown provider '${id}'.` };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : "Verification failed." };
+  }
 }
 
 // ---- Env construction for spawning `claude` against an Anthropic-compatible provider ----
