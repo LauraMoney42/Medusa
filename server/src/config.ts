@@ -4,8 +4,11 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Single-file bundlers (pkg, some bun modes) leave import.meta.url undefined;
+// fall back to cwd so the MEDUSA_* overrides below can still take effect.
+const __dirname = import.meta.url
+  ? path.dirname(fileURLToPath(import.meta.url))
+  : process.cwd();
 
 // Path-resolution overrides, needed by hosts (e.g. the Tauri sidecar) that
 // run this server from a compiled/bundled location where import.meta.url no

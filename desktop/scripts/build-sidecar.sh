@@ -6,8 +6,7 @@
 # target triple suffix (see desktop/src-tauri/tauri.conf.json ->
 # bundle.externalBin). This script figures out the triple, builds the
 # Node/TS server, and compiles server/dist into one binary:
-#   - bun build --compile, if bun is installed (fast, small binary), else
-#   - npx pkg, as a fallback (works anywhere Node/npm is available).
+#   - bun build --compile (bun is required; pkg cannot run this ESM server).
 #
 # Usage:
 #   bash desktop/scripts/build-sidecar.sh
@@ -92,20 +91,18 @@ cp -r "$SERVER_DIR/dist/public" "$RESOURCES_DIR/public"
 # longer needed now that the paths are overridable directly).
 ENTRY="$SERVER_DIR/dist/index.js"
 
-if command -v bun >/dev/null 2>&1; then
-  echo "bun found -- compiling with 'bun build --compile'..."
-  bun build --compile --target=bun "$ENTRY" --outfile "$OUT_BIN"
-else
-  echo "bun not found -- falling back to 'npx pkg'..."
-  echo "warning: pkg cannot load this server's ESM output at all (fails with" >&2
-  echo "         MODULE_NOT_FOUND on the compiled binary) -- install bun instead:" >&2
-  echo "         https://bun.sh/install" >&2
-  # Best-effort attempt anyway, bundled to CJS first via esbuild so pkg has
-  # something it can at least try to snapshot.
-  BUNDLE="$(mktemp -d)/bundle.cjs"
-  (cd "$SERVER_DIR" && npx --yes esbuild dist/index.js --bundle --platform=node --format=cjs --outfile="$BUNDLE")
-  npx --yes pkg "$BUNDLE" --targets node18 --output "$OUT_BIN"
+# bun is required: pkg cannot run this ESM server (import.meta.url is lost).
+# Look on PATH first, then in bun's default install location.
+BUN="$(command -v bun 2>/dev/null || true)"
+if [ -z "$BUN" ] && [ -x "$HOME/.bun/bin/bun" ]; then
+  BUN="$HOME/.bun/bin/bun"
 fi
+if [ -z "$BUN" ]; then
+  echo "error: bun not found (PATH or ~/.bun/bin). Install it: https://bun.sh/install" >&2
+  exit 1
+fi
+echo "compiling sidecar with $BUN ($("$BUN" --version))..."
+"$BUN" build --compile --target=bun "$ENTRY" --outfile "$OUT_BIN"
 
 if [ ! -f "$OUT_BIN" ]; then
   echo "error: sidecar binary was not produced at $OUT_BIN" >&2
