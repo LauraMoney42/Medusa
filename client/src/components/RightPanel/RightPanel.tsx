@@ -1,5 +1,6 @@
 import CoworkPane from '../Cowork/CoworkPane';
 import SimulatorPane from '../Cowork/SimulatorPane';
+import TasksPanel from '../Tasks/TasksPanel';
 import { useLayoutStore } from '../../stores/layoutStore';
 
 /**
@@ -30,6 +31,12 @@ export default function RightPanel() {
         >
           Simulator
         </button>
+        <button
+          onClick={() => setPanelTab('tasks')}
+          style={{ ...styles.tab, ...(tab === 'tasks' ? styles.tabActive : {}) }}
+        >
+          Tasks
+        </button>
 
         <div style={styles.tabActions}>
           <button
@@ -58,6 +65,9 @@ export default function RightPanel() {
       </div>
       <div style={{ ...styles.pane, display: tab === 'simulator' ? 'flex' : 'none' }}>
         <SimulatorPane />
+      </div>
+      <div style={{ ...styles.pane, display: tab === 'tasks' ? 'flex' : 'none' }}>
+        <TasksPanel />
       </div>
     </div>
   );

@@ -97,6 +97,7 @@ function SubagentCardBody({
 
   return (
     <div
+      id={`subagent-card-${agent.id}`}
       style={{
         ...styles.container,
         border: isError

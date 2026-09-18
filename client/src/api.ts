@@ -103,6 +103,29 @@ export function fetchSessions(): Promise<SessionMeta[]> {
   return request<SessionMeta[]>('/api/sessions');
 }
 
+/** One row from `GET /api/subagents?all=1`, tagged with its parent chat. */
+export interface AllSubagentsRow {
+  agentId: string;
+  name: string;
+  status: 'queued' | 'running' | 'done' | 'error' | 'cancelled';
+  engine: string;
+  model: string | null;
+  startedAt: string;
+  endedAt?: string;
+  toolCallCount: number;
+  tokens: { inputTokens: number; outputTokens: number; costUsd: number };
+  parentSessionId: string;
+}
+
+/**
+ * Every chat's subagents in one call, so the Tasks panel (S15) can hydrate on
+ * page load instead of coming up empty until the next socket event.
+ */
+export async function fetchAllSubagents(): Promise<AllSubagentsRow[]> {
+  const data = await request<{ agents: AllSubagentsRow[] }>('/api/subagents?all=1');
+  return data.agents;
+}
+
 /** Fields accepted by POST /api/sessions. `workingDir` is required. */
 export interface CreateSessionInput {
   workingDir: string;

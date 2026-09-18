@@ -1,4 +1,6 @@
 import { useLayoutStore } from '../../stores/layoutStore';
+import { useSubagentStore } from '../../stores/subagentStore';
+import { useTasksStore, countRunningSubagents } from '../../stores/tasksStore';
 
 /**
  * The chat header's top-right icon group: Browser, Simulator, Activity Log.
@@ -14,10 +16,14 @@ export default function ChatHeaderControls() {
   const toggleTab = useLayoutStore((s) => s.toggleTab);
   const activityOpen = useLayoutStore((s) => s.activityOpen);
   const toggleActivity = useLayoutStore((s) => s.toggleActivity);
+  const subagentsById = useSubagentStore((s) => s.byId);
+  const hydrated = useTasksStore((s) => s.hydrated);
+  const runningCount = countRunningSubagents(subagentsById, hydrated);
 
   const panelOpen = panelState !== 'hidden';
   const browserOn = panelOpen && panelTab === 'browser';
   const simulatorOn = panelOpen && panelTab === 'simulator';
+  const tasksOn = panelOpen && panelTab === 'tasks';
 
   return (
     <div style={styles.row}>
@@ -51,6 +57,19 @@ export default function ChatHeaderControls() {
         <line x1="4" y1="12" x2="16" y2="12" />
         <line x1="4" y1="17" x2="19" y2="17" />
       </IconButton>
+
+      <IconButton
+        on={tasksOn}
+        onClick={() => toggleTab('tasks')}
+        title="Tasks (⌘⇧T)"
+        label="Tasks"
+        badge={runningCount > 0 ? runningCount : undefined}
+      >
+        <path d="M9 6h11M9 12h11M9 18h11" />
+        <path d="M4 6l1.5 1.5L8 5" />
+        <path d="M4 12l1.5 1.5L8 11" />
+        <path d="M4 18l1.5 1.5L8 17" />
+      </IconButton>
     </div>
   );
 }
@@ -60,12 +79,14 @@ function IconButton({
   onClick,
   title,
   label,
+  badge,
   children,
 }: {
   on: boolean;
   onClick: () => void;
   title: string;
   label: string;
+  badge?: number;
   children: React.ReactNode;
 }) {
   return (
@@ -93,6 +114,11 @@ function IconButton({
       >
         {children}
       </svg>
+      {badge != null && (
+        <span style={styles.badge} aria-hidden="true">
+          {badge > 99 ? '99+' : badge}
+        </span>
+      )}
     </button>
   );
 }
@@ -104,6 +130,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 2,
   },
   iconBtn: {
+    position: 'relative',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -119,5 +146,20 @@ const styles: Record<string, React.CSSProperties> = {
     borderColor: 'transparent',
     cursor: 'pointer',
     transition: 'color 0.15s, background 0.15s',
+  },
+  badge: {
+    position: 'absolute',
+    top: 1,
+    right: 1,
+    minWidth: 14,
+    height: 14,
+    padding: '0 3px',
+    borderRadius: 7,
+    background: 'var(--danger, #c0392b)',
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: 700,
+    lineHeight: '14px',
+    textAlign: 'center',
   },
 };

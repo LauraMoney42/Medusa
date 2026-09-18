@@ -4,6 +4,7 @@ import { getSocket, disconnectSocket } from '../socket';
 import { useChatStore } from '../stores/chatStore';
 import { useSessionStore } from '../stores/sessionStore';
 import { useSubagentStore } from '../stores/subagentStore';
+import { useTasksStore } from '../stores/tasksStore';
 import type {
   SubagentStartPayload,
   SubagentDeltaPayload,
@@ -49,6 +50,8 @@ export function useSocket() {
   const subagentDelta = useSubagentStore((s) => s.appendDelta);
   const subagentTool = useSubagentStore((s) => s.addToolEvent);
   const subagentEnd = useSubagentStore((s) => s.end);
+  const markFollowupQueued = useTasksStore((s) => s.markFollowupQueued);
+  const clearFollowupQueued = useTasksStore((s) => s.clearFollowupQueued);
   const pushActivity = useActivityStore((s) => s.push);
   const setServerShuttingDown = useSessionStore((s) => s.setServerShuttingDown);
   const setVoiceLoopState = useVoiceStore((s) => s.setState);
@@ -265,6 +268,7 @@ export function useSocket() {
 
     // ---- Event-driven subagent follow-ups (S14-B) ----
     const handleFollowupQueued = (data: FollowupQueuedPayload) => {
+      markFollowupQueued(data.agentId);
       pushActivity({
         sessionId: data.sessionId,
         ts: new Date().toISOString(),
@@ -275,6 +279,7 @@ export function useSocket() {
     };
 
     const handleFollowupDelivered = (data: FollowupDeliveredPayload) => {
+      clearFollowupQueued(data.agentIds);
       pushActivity({
         sessionId: data.sessionId,
         ts: new Date().toISOString(),
