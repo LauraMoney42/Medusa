@@ -28,6 +28,8 @@ const KIND_COLOR: Record<ActivityKind, string> = {
   subagent_end: 'var(--success)',
   // A distinct hue so a `voice:latency` line reads at a glance in a busy log.
   voice_latency: '#c084fc',
+  // Same family as the latency line: both are voice-loop telemetry.
+  voice_tier: '#c084fc',
   followup: 'var(--accent)',
 };
 
@@ -48,6 +50,7 @@ const KIND_LABEL: Record<ActivityKind, string> = {
   subagent_tool_result: 'sub res',
   subagent_end: 'sub✓',
   voice_latency: 'voice',
+  voice_tier: 'tier',
   followup: 'follow-up',
 };
 

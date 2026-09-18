@@ -57,6 +57,8 @@ S14-A and S14-B both touch the handler/index wiring: S14-A owns `socket/handler.
 Client -> server: `voice:start {sessionId, mode}`, `voice:audio {sessionId, pcm16: ArrayBuffer}`, `voice:stop {sessionId}`, `voice:interrupt {sessionId}`.
 Server -> client: `voice:state {sessionId, state}`, `voice:partial {sessionId, text}`, `voice:transcript {sessionId, text, messageId}`, `voice:audio-chunk {sessionId, seq, mime, data}`, `voice:stop-audio {sessionId}`, `voice:latency {sessionId, sttMs, firstTokenMs, firstAudioMs, totalMs}`, `followup:queued {sessionId, agentId}`, `followup:delivered {sessionId, agentIds}`.
 
+Added in S17: `voice:tier {sessionId, tier, provider, model, reason}`, server -> client, emitted once when voice starts and again on any mid-session fallback. `tier` is `live` or `pipeline`; `reason` is one sentence written to be shown to the user verbatim, and on the pipeline tier it also says how to move up. Every other event above is emitted identically on both tiers, which is what lets the client stay unchanged.
+
 ## 7b. S16 live mode
 
 **Date:** 2026-09-18. Goal: "speech to speech as live as possible". The S14 loop worked but measured 12.7 s from speech end to first spoken word, 10.5 s of which was the Kimi CLI's time to first token, because a CLI was spawned per turn.
@@ -85,7 +87,7 @@ Server -> client: `voice:state {sessionId, state}`, `voice:partial {sessionId, t
 ### 4. Live mode (interface and stub)
 
 - `server/src/voice/realtime.ts` defines `RealtimeVoiceProvider` and implements `OpenAiRealtimeProvider` over a server-side WebSocket, including the tool bridge: every Medusa MCP tool becomes a realtime function definition and every call is executed against Medusa's own HTTP API through `callMedusa`, so `spawn_agent` and friends still run in Medusa.
-- Not wired to the socket layer yet: nothing routes `voice:audio` into a realtime session or posts both transcripts into the chat. `GET /api/voice/status` reports `realtime.implemented: false` and Settings > Voice disables the toggle with that explanation, plus a second explanation when no OpenAI key exists.
+- Not wired to the socket layer at the time of writing. **Superseded by S17** (`docs/LIVE_VOICE.md`), which added the Gemini Live provider, the socket wiring, automatic tier selection and the pipeline fallback. `GET /api/voice/status` now reports `realtime.implemented: true`.
 
 ### 5. Settings
 

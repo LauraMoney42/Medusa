@@ -24,6 +24,8 @@ export type ActivityKind =
   | 'subagent_end'
   // S14: voice loop and event-driven follow-up lines (spec section 6/7).
   | 'voice_latency'
+  // S17: which voice tier a chat landed on, and why.
+  | 'voice_tier'
   | 'followup';
 
 export interface ActivityTokens {

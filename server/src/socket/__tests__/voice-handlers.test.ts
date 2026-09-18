@@ -152,7 +152,7 @@ describe("registerVoiceHandlers", () => {
     expect(joined).toContain("s1");
     expect(getVoiceSession("s1")?.currentState).toBe("listening");
     expect(listVoiceSessions()).toEqual([
-      { sessionId: "s1", state: "listening", mode: "always-on" },
+      { sessionId: "s1", state: "listening", mode: "always-on", tier: "pipeline" },
     ]);
     expect(wire.some((w) => w.event === "voice:state")).toBe(true);
   });

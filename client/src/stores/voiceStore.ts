@@ -66,6 +66,14 @@ interface VoiceState {
   lastLatency: VoiceLatency | null;
   /** True while the socket has an active voice:start for this session. */
   active: boolean;
+  /**
+   * S17: which tier the server put this chat on. Null until `voice:tier`
+   * arrives (an older server never sends it, and the badge stays hidden).
+   */
+  tier: 'live' | 'pipeline' | null;
+  /** Why that tier, including how to move up for free. Shown as the tooltip. */
+  tierReason: string | null;
+  tierModel: string | null;
   /** 0..1 input level for the waveform, updated at animation-frame rate. */
   inputLevel: number;
 }
@@ -81,6 +89,7 @@ interface VoiceActions {
   setBargeInMinSpeechMs: (ms: number) => void;
   setLastLatency: (latency: VoiceLatency) => void;
   setActive: (active: boolean) => void;
+  setTier: (tier: { tier: 'live' | 'pipeline'; reason?: string; model?: string | null }) => void;
   setInputLevel: (level: number) => void;
   /** voice:stop-audio and interrupts both return the loop to a clean slate. */
   reset: () => void;
@@ -101,6 +110,9 @@ export const useVoiceStore = create<VoiceState & VoiceActions>((set) => ({
   bargeInMinSpeechMs: Number(ls('medusa-voice-bargein-ms', '300')) || 300,
   lastLatency: null,
   active: false,
+  tier: null,
+  tierReason: null,
+  tierModel: null,
   inputLevel: 0,
 
   setMode: (mode) => {
@@ -131,6 +143,8 @@ export const useVoiceStore = create<VoiceState & VoiceActions>((set) => ({
   },
   setLastLatency: (lastLatency) => set({ lastLatency }),
   setActive: (active) => set({ active }),
+  setTier: ({ tier, reason, model }) =>
+    set({ tier, tierReason: reason ?? null, tierModel: model ?? null }),
   setInputLevel: (inputLevel) => set({ inputLevel }),
   reset: () => set({ state: 'idle', partialTranscript: '', inputLevel: 0 }),
 }));

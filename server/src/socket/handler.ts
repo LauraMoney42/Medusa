@@ -904,7 +904,12 @@ export function setupSocketHandler(
       }
     });
 
-    registerVoiceHandlers(io, socket, { store, processManager, sendMessage: handleMessageSend });
+    registerVoiceHandlers(io, socket, {
+      store,
+      processManager,
+      chatStore,
+      sendMessage: handleMessageSend,
+    });
 
     socket.on("disconnect", () => {
       console.log(`[socket] disconnected: ${socket.id}`);

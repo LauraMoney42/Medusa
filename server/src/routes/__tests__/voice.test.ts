@@ -9,6 +9,10 @@ vi.mock("../../voice/providers.js", () => ({
   // S16 added a live-mode section to the same payload; the route calls this
   // unconditionally, so the mock has to answer it too.
   listRealtimeProviders: () => [{ id: "openai-realtime", enabled: false, ready: false }],
+  // S17: the route also asks which tier a new voice session would get, which
+  // means resolving realtime providers. No key in a test run, so none resolve
+  // and the reported tier is the local pipeline.
+  getRealtimeProvider: () => null,
 }));
 
 const fakeEvents = [{ ts: 1, type: "barge-in", detail: { energy: 5000, ms: 300 } }];

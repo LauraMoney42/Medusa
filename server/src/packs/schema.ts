@@ -127,7 +127,19 @@ export const VoiceSchema = z.object({
   speculativeStart: z.boolean().default(true),
   firstClauseAudio: z.boolean().default(true),
   liveMode: z.boolean().default(false),
-  liveProvider: z.string().max(60).default("openai-realtime"),
+  liveProvider: z.string().max(60).default("gemini-live"),
+
+  /**
+   * S17: voice always works, and Medusa picks the best tier she can reach.
+   * `auto` takes Live when a realtime key exists and the local pipeline
+   * otherwise; `pipeline` pins the local loop; `live` says "prefer Live", and
+   * still falls back to the pipeline rather than leaving voice broken, because
+   * a missing key must never mean a dead mic. `liveMode` above is the old
+   * on/off flag and is kept only so an existing voice.json still loads.
+   */
+  liveTier: z.enum(["auto", "pipeline", "live"]).default("auto"),
+  /** Realtime model id. Empty means the provider's own default. */
+  liveModel: z.string().max(120).default(""),
 });
 export type Voice = z.infer<typeof VoiceSchema>;
 

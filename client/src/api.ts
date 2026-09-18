@@ -610,6 +610,15 @@ export interface MedusaVoice {
   /** Hand the spoken conversation to a realtime speech model. */
   liveMode?: boolean;
   liveProvider?: string;
+  /**
+   * S17: how Medusa picks a voice tier. `auto` takes Live when a realtime key
+   * exists and the local pipeline otherwise, `pipeline` pins the local loop,
+   * `live` prefers Live. None of them can leave voice switched off: a missing
+   * key falls back rather than failing.
+   */
+  liveTier?: 'auto' | 'pipeline' | 'live';
+  /** Realtime model id. Empty means the provider's own default. */
+  liveModel?: string;
 }
 
 /** One realtime (Live mode) provider and whether it has a key. */
@@ -618,6 +627,14 @@ export interface RealtimeProviderStatus {
   displayName: string;
   ready: boolean;
   reason?: string;
+  /** Model used when Settings names none. */
+  defaultModel?: string;
+  /** Known model ids for the model select. */
+  models?: string[];
+  /** Where the user gets a key. */
+  keyUrl?: string;
+  /** True when a free key is enough. */
+  free?: boolean;
 }
 
 /** GET /api/voice/status, the voice loop's own readiness report. */
@@ -633,6 +650,15 @@ export interface VoiceLoopStatus {
   realtime?: {
     implemented: boolean;
     providers: RealtimeProviderStatus[];
+    /** The tier a voice session started right now would get. */
+    tier?: 'live' | 'pipeline';
+    provider?: string | null;
+    model?: string | null;
+    hasKey?: boolean;
+    /** One sentence, written to be shown verbatim. */
+    reason?: string;
+    preference?: 'auto' | 'pipeline' | 'live';
+    freeKeyUrl?: string;
   };
 }
 

@@ -20,9 +20,11 @@ import {
 } from "./streaming-stt.js";
 import {
   OpenAiRealtimeProvider,
+  OPENAI_REALTIME_MODEL,
   type RealtimeProviderStatus,
   type RealtimeVoiceProvider,
 } from "./realtime.js";
+import { GeminiLiveProvider, GEMINI_LIVE_MODEL } from "./live/gemini-live.js";
 
 export interface SttProvider {
   readonly id: string;
@@ -205,6 +207,7 @@ export function setVoiceProviders(next: {
 export const VOICE_KEY_ENV = {
   deepgram: "DEEPGRAM_API_KEY",
   openai: "OPENAI_API_KEY",
+  gemini: "GEMINI_API_KEY",
 } as const;
 
 /**
@@ -226,24 +229,62 @@ export function getStreamingSttProvider(
   return new RollingWindowSttProvider(getSttProvider());
 }
 
-/** The realtime provider for Live mode, or null when it has no key. */
+/**
+ * The realtime provider for Live mode, or null when it has no key.
+ *
+ * Gemini is first because it is the only one with a free tier that speaks
+ * native audio, and because Anthropic has no realtime audio API at all, so
+ * "Medusa's own provider" is not an option here. OpenAI Realtime sits behind
+ * the same `RealtimeVoiceProvider` interface for anyone who already pays for
+ * it. `model` overrides the provider's default and comes from Settings.
+ */
 export function getRealtimeProvider(
-  id: string = "openai-realtime"
+  id: string = "gemini-live",
+  model?: string
 ): RealtimeVoiceProvider | null {
-  if (id !== "openai-realtime") return null;
-  const apiKey = getExternalApiKey("openai", VOICE_KEY_ENV.openai);
-  if (!apiKey) return null;
-  return new OpenAiRealtimeProvider({ apiKey });
+  if (id === "gemini-live") {
+    const apiKey = getExternalApiKey("gemini", VOICE_KEY_ENV.gemini);
+    if (!apiKey) return null;
+    return new GeminiLiveProvider({ apiKey, ...(model ? { model } : {}) });
+  }
+  if (id === "openai-realtime") {
+    const apiKey = getExternalApiKey("openai", VOICE_KEY_ENV.openai);
+    if (!apiKey) return null;
+    return new OpenAiRealtimeProvider({ apiKey, ...(model ? { model } : {}) });
+  }
+  return null;
 }
 
 /** Live-mode provider inventory for Settings > Voice. */
 export function listRealtimeProviders(): RealtimeProviderStatus[] {
+  const hasGemini = Boolean(getExternalApiKey("gemini", VOICE_KEY_ENV.gemini));
   const hasOpenAi = Boolean(getExternalApiKey("openai", VOICE_KEY_ENV.openai));
   return [
+    {
+      id: "gemini-live",
+      displayName: "Gemini Live (native audio)",
+      ready: hasGemini,
+      defaultModel: GEMINI_LIVE_MODEL,
+      models: [GEMINI_LIVE_MODEL, "gemini-3.5-transcribe-live"],
+      keyUrl: "https://aistudio.google.com/apikey",
+      free: true,
+      ...(hasGemini
+        ? {}
+        : {
+            reason:
+              "No Gemini key. A free Google AI Studio key is enough: get one at " +
+              "https://aistudio.google.com/apikey, then add it as " +
+              "providers.gemini.apiKey in ~/.claude-chat/settings.json, or set " +
+              "GEMINI_API_KEY.",
+          }),
+    },
     {
       id: "openai-realtime",
       displayName: "OpenAI Realtime",
       ready: hasOpenAi,
+      defaultModel: OPENAI_REALTIME_MODEL,
+      models: [OPENAI_REALTIME_MODEL],
+      keyUrl: "https://platform.openai.com/api-keys",
       ...(hasOpenAi
         ? {}
         : {

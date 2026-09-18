@@ -6,6 +6,7 @@ import { GaplessAudioQueue } from '../../lib/voice/audioScheduler';
 import { onAudioChunk, onStopAudio } from '../../lib/voice/voiceBus';
 import type { VoiceAudioChunkPayload } from '../../types/voice';
 import { fetchVoiceSettings } from '../../api';
+import VoiceTierBadge from './VoiceTierBadge';
 
 /**
  * Settings > Voice's "VAD sensitivity" is a 0..1 dial (spec section 4); the
@@ -456,7 +457,12 @@ export default function VoiceMicButton({ sessionId, inputEmpty = true }: VoiceMi
           ? 'Thinking - hold to stop voice'
           : 'Click again to stop voice';
 
+  // The tier badge is a sibling of the button, not a child: a <button> may not
+  // contain another interactive-looking element, and the surrounding row is a
+  // flex container, so a fragment lands it right beside the mic.
   return (
+    <>
+    <VoiceTierBadge />
     <button
       type="button"
       onMouseDown={handlePointerDown}
@@ -497,6 +503,7 @@ export default function VoiceMicButton({ sessionId, inputEmpty = true }: VoiceMi
         <span style={{ display: 'none' }}>{partialTranscript}</span>
       )}
     </button>
+    </>
   );
 }
 

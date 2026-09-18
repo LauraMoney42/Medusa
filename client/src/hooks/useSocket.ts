@@ -22,6 +22,7 @@ import type {
   VoiceAudioChunkPayload,
   VoiceStopAudioPayload,
   VoiceLatencyPayload,
+  VoiceTierPayload,
   FollowupQueuedPayload,
   FollowupDeliveredPayload,
 } from '../types/voice';
@@ -57,6 +58,7 @@ export function useSocket() {
   const setVoiceLoopState = useVoiceStore((s) => s.setState);
   const setVoicePartial = useVoiceStore((s) => s.setPartialTranscript);
   const setVoiceLatency = useVoiceStore((s) => s.setLastLatency);
+  const setVoiceTier = useVoiceStore((s) => s.setTier);
   // Subscribe to sessions so we can join rooms after fetchSessions() resolves
   const sessions = useSessionStore((s) => s.sessions);
 
@@ -266,6 +268,21 @@ export function useSocket() {
       });
     };
 
+    /**
+     * S17: which voice tier the server put this chat on. Emitted once on
+     * `voice:start` and again on any mid-session fallback, so the badge under
+     * the mic always names the tier that is actually running.
+     */
+    const handleVoiceTier = (data: VoiceTierPayload) => {
+      setVoiceTier({ tier: data.tier, reason: data.reason, model: data.model });
+      pushActivity({
+        sessionId: data.sessionId,
+        ts: new Date().toISOString(),
+        kind: 'voice_tier',
+        summary: data.reason ?? `voice tier: ${data.tier}`,
+      });
+    };
+
     // ---- Event-driven subagent follow-ups (S14-B) ----
     const handleFollowupQueued = (data: FollowupQueuedPayload) => {
       markFollowupQueued(data.agentId);
@@ -320,6 +337,7 @@ export function useSocket() {
     socket.on('voice:audio-chunk', handleVoiceAudioChunk);
     socket.on('voice:stop-audio', handleVoiceStopAudio);
     socket.on('voice:latency', handleVoiceLatency);
+    socket.on('voice:tier', handleVoiceTier);
     socket.on('followup:queued', handleFollowupQueued);
     socket.on('followup:delivered', handleFollowupDelivered);
 
@@ -352,6 +370,7 @@ export function useSocket() {
       socket.off('voice:audio-chunk', handleVoiceAudioChunk);
       socket.off('voice:stop-audio', handleVoiceStopAudio);
       socket.off('voice:latency', handleVoiceLatency);
+      socket.off('voice:tier', handleVoiceTier);
       socket.off('followup:queued', handleFollowupQueued);
       socket.off('followup:delivered', handleFollowupDelivered);
 

@@ -151,6 +151,52 @@ export function getExternalApiKey(id: string, envVar: string): string | undefine
   return process.env[envVar] || undefined;
 }
 
+/**
+ * The non-chat providers, as data. Same `providers.<id>.apiKey` slot in
+ * ~/.claude-chat/settings.json and the same env fallback as everything above,
+ * but kept out of `PROVIDERS` on purpose: none of them can drive a chat, so
+ * none of them may appear in the model picker.
+ *
+ * `gemini` is here for Live voice (server/src/voice/live/gemini-live.ts). A
+ * free Google AI Studio key is enough for it, which is why Settings offers the
+ * link: it is the one way to move up a tier at no cost.
+ */
+export interface ExternalProviderConfig {
+  id: string;
+  displayName: string;
+  apiKeyEnv: string;
+  /** Where a user gets a key, shown in Settings. */
+  keyUrl?: string;
+}
+
+export const EXTERNAL_PROVIDERS: Record<string, ExternalProviderConfig> = {
+  gemini: {
+    id: "gemini",
+    displayName: "Google Gemini",
+    apiKeyEnv: "GEMINI_API_KEY",
+    keyUrl: "https://aistudio.google.com/apikey",
+  },
+  openai: {
+    id: "openai",
+    displayName: "OpenAI",
+    apiKeyEnv: "OPENAI_API_KEY",
+    keyUrl: "https://platform.openai.com/api-keys",
+  },
+  deepgram: {
+    id: "deepgram",
+    displayName: "Deepgram",
+    apiKeyEnv: "DEEPGRAM_API_KEY",
+    keyUrl: "https://console.deepgram.com",
+  },
+};
+
+/** Resolve an external provider's key from settings or its env var. */
+export function getExternalProviderKey(id: string): string | undefined {
+  const entry = EXTERNAL_PROVIDERS[id];
+  if (!entry) return undefined;
+  return getExternalApiKey(entry.id, entry.apiKeyEnv);
+}
+
 // ---- Live model listing (with cache + static fallback) --------------------
 
 const MODEL_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes

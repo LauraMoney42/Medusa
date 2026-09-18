@@ -128,18 +128,21 @@ export default function VoiceTab() {
 
   const voices = tts?.voices ?? [{ id: voice.voiceId, label: voice.voiceId }];
 
-  // Live mode needs both a key on the server and the socket wiring that routes
-  // audio into the realtime session; the status route reports both.
+  // S17: voice always works, so nothing here is ever disabled. The server
+  // reports the tier a session would get right now, plus why, and this section
+  // shows that verbatim rather than second-guessing it.
   const realtimeProviders = loop?.realtime?.providers ?? [];
-  const selectedRealtime =
-    realtimeProviders.find((p) => p.id === (voice.liveProvider ?? 'openai-realtime')) ?? null;
-  const liveImplemented = loop?.realtime?.implemented ?? false;
-  const liveAvailable = liveImplemented && Boolean(selectedRealtime?.ready);
-  const liveReason = !liveImplemented
-    ? 'Live mode is not switched on yet: the realtime provider and its Medusa '
-      + 'tool bridge are implemented on the server, but the socket wiring that '
-      + 'routes microphone audio into a realtime session is still to come.'
-    : selectedRealtime?.reason ?? null;
+  const liveProviderId = voice.liveProvider ?? 'gemini-live';
+  const selectedRealtime = realtimeProviders.find((p) => p.id === liveProviderId) ?? null;
+  const liveTier = voice.liveTier ?? 'auto';
+  const activeTier = loop?.realtime?.tier ?? 'pipeline';
+  const tierReason = loop?.realtime?.reason ?? null;
+  const modelOptionsLive = selectedRealtime?.models ?? [];
+  const freeKeyUrl = selectedRealtime?.keyUrl ?? loop?.realtime?.freeKeyUrl
+    ?? 'https://aistudio.google.com/apikey';
+  // The upgrade line only makes sense while she is actually on the local tier
+  // and the provider that would lift her out of it is free.
+  const showFreeHint = activeTier !== 'live' && !selectedRealtime?.ready;
 
   return (
     <div style={s.pane}>
@@ -475,16 +478,34 @@ export default function VoiceTab() {
         </div>
       </div>
 
-      {/* S16 item 4: Live mode. */}
+      {/* S17: Live voice. Voice always works; this only picks which tier. */}
       <div style={s.card}>
         <div style={s.spread}>
-          <span style={s.fieldLabel}>Live mode (realtime model)</span>
-          <Toggle
-            on={(voice.liveMode ?? false) && liveAvailable}
-            label="Live mode (realtime model)"
-            disabled={!liveAvailable}
-            onChange={(next) => patch({ liveMode: next })}
-          />
+          <span style={s.fieldLabel}>Live voice</span>
+          <span
+            style={{
+              ...s.hint,
+              color: activeTier === 'live' ? '#4aa8ff' : 'var(--text-muted)',
+              textTransform: 'uppercase',
+              letterSpacing: 0.3,
+            }}
+          >
+            {activeTier === 'live' ? 'Live' : 'Local'}
+          </span>
+        </div>
+
+        <div style={s.field}>
+          <label style={s.fieldLabel} htmlFor="voice-live-tier">Tier</label>
+          <select
+            id="voice-live-tier"
+            style={{ ...s.select, width: '100%' }}
+            value={liveTier}
+            onChange={(e) => patch({ liveTier: e.target.value as 'auto' | 'pipeline' | 'live' })}
+          >
+            <option value="auto">Auto (best available)</option>
+            <option value="pipeline">Pipeline only (local Whisper and Kokoro)</option>
+            <option value="live">Live only (fall back if the key is missing)</option>
+          </select>
         </div>
 
         <div style={s.field}>
@@ -492,9 +513,8 @@ export default function VoiceTab() {
           <select
             id="voice-live-provider"
             style={{ ...s.select, width: '100%' }}
-            value={voice.liveProvider ?? 'openai-realtime'}
-            disabled={!liveAvailable}
-            onChange={(e) => patch({ liveProvider: e.target.value })}
+            value={liveProviderId}
+            onChange={(e) => patch({ liveProvider: e.target.value, liveModel: '' })}
           >
             {realtimeProviders.map((p) => (
               <option key={p.id} value={p.id}>
@@ -505,17 +525,50 @@ export default function VoiceTab() {
           </select>
         </div>
 
+        <div style={s.field}>
+          <label style={s.fieldLabel} htmlFor="voice-live-model">Model</label>
+          <select
+            id="voice-live-model"
+            style={{ ...s.select, width: '100%' }}
+            value={voice.liveModel ?? ''}
+            onChange={(e) => patch({ liveModel: e.target.value })}
+          >
+            <option value="">
+              Default{selectedRealtime?.defaultModel ? ` (${selectedRealtime.defaultModel})` : ''}
+            </option>
+            {modelOptionsLive.map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+        </div>
+
         <p style={s.hint}>
-          Live mode hands the spoken conversation to a realtime speech model and
-          gives it Medusa's own tools (spawn_agent, agent_status, agent_result,
-          list_agents, cancel_agent), so subagents still run here and both sides
-          of the conversation land in the chat as normal messages.
+          Live voice is true speech to speech: your voice goes straight to a
+          realtime model and its voice comes straight back, instead of being
+          transcribed, answered and re-synthesized. She still keeps Medusa's own
+          tools (spawn_agent, agent_status, agent_result, list_agents,
+          cancel_agent), so subagents run here as usual and both sides of the
+          conversation land in the chat as normal messages. If the realtime
+          service fails mid-conversation she says so and drops to the local
+          pipeline, so voice never stops working.
         </p>
-        {liveReason && <p style={s.hint}>{liveReason}</p>}
+        {tierReason && <p style={s.hint}>{tierReason}</p>}
+        {showFreeHint && (
+          <p style={s.hint}>
+            Live voice is free with a Google AI Studio key.{' '}
+            <a href={freeKeyUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>
+              Get one here
+            </a>
+            , then add it as <code>providers.gemini.apiKey</code> in{' '}
+            <code>~/.claude-chat/settings.json</code>, or set{' '}
+            <code>GEMINI_API_KEY</code>.
+          </p>
+        )}
+        {selectedRealtime?.reason && <p style={s.hint}>{selectedRealtime.reason}</p>}
 
         <div style={s.row}>
-          <button style={s.btnPrimary} disabled={!liveAvailable} onClick={handleSave}>
-            Save live mode
+          <button style={s.btnPrimary} onClick={handleSave}>
+            Save live voice
           </button>
         </div>
       </div>

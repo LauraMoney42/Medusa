@@ -4,6 +4,9 @@ import { listProviders, listRealtimeProviders } from "../voice/providers.js";
 import { DIVERGENCE_THRESHOLD, STABLE_MS } from "../voice/speculation.js";
 import { ROLLING_DEFAULTS } from "../voice/streaming-stt.js";
 import { listVoiceSessions, getVoiceSession } from "../socket/voice-handlers.js";
+import { readVoice } from "../packs/store.js";
+import { tierFromSettings } from "../voice/live/live-session.js";
+import { getRealtimeProvider } from "../voice/providers.js";
 import { VAD_DEFAULTS } from "../voice/vad.js";
 import { BARGE_IN_DEFAULTS } from "../voice/barge-in.js";
 import { MAX_SENTENCE_CHARS, FIRST_CLAUSE_CHARS } from "../voice/sentence-chunker.js";
@@ -21,6 +24,22 @@ router.get("/status", (req: Request, res: Response) => {
   const stt = providers.find((p) => p.role === "stt");
   const tts = providers.find((p) => p.role === "tts");
   const sessions = listVoiceSessions();
+
+  // Which tier a new voice session would get, decided the same way
+  // `voice:start` decides it, so Settings and the mic badge cannot disagree.
+  let settings: ReturnType<typeof readVoice> | null = null;
+  try {
+    settings = readVoice();
+  } catch {
+    // Defaults win when the pack cannot be read.
+  }
+  const preference = settings?.liveTier ?? "auto";
+  const realtimeProviders = listRealtimeProviders();
+  const decision = tierFromSettings(settings, getRealtimeProvider);
+  const selected =
+    realtimeProviders.find((p) => p.id === decision.providerId) ??
+    realtimeProviders.find((p) => p.id === (settings?.liveProvider || "gemini-live")) ??
+    null;
   const body: Record<string, unknown> = {
     // Voice mode needs both halves: transcription in and speech out.
     enabled: Boolean(stt?.enabled && tts?.enabled),
@@ -40,15 +59,22 @@ router.get("/status", (req: Request, res: Response) => {
       speculationDivergence: DIVERGENCE_THRESHOLD,
     },
     /**
-     * Live mode (S16 item 4). The realtime provider and its Medusa tool
-     * bridge are implemented (`voice/realtime.ts`); the socket wiring that
-     * would route `voice:audio` into a realtime session and post both sides'
-     * transcripts into the chat is NOT, so the settings toggle stays
-     * informational for now. `ready` is what the UI disables on.
+     * Live mode (S17). Wired end to end now: `voice:start` picks a tier,
+     * `voice:audio` is routed to the realtime model when Live wins, and both
+     * transcripts land in the chat. `tier` is what this chat would get right
+     * now if voice started this second, so Settings can show it without a
+     * live session existing.
      */
     realtime: {
-      implemented: false,
-      providers: listRealtimeProviders(),
+      implemented: true,
+      providers: realtimeProviders,
+      tier: decision.tier,
+      provider: decision.providerId ?? null,
+      model: decision.model ?? selected?.defaultModel ?? null,
+      hasKey: Boolean(selected?.ready),
+      reason: decision.reason,
+      preference,
+      freeKeyUrl: "https://aistudio.google.com/apikey",
     },
   };
   // The owner can share this: the last 200 voice events per session (state

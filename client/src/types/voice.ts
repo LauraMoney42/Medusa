@@ -63,6 +63,19 @@ export interface VoiceLatencyPayload {
   totalMs: number;
 }
 
+/**
+ * S17: which voice tier this chat is on. Emitted once when voice starts and
+ * again on any mid-session fallback, so the badge under the mic always says
+ * what is actually running and `reason` explains how to move up.
+ */
+export interface VoiceTierPayload {
+  sessionId: string;
+  tier: 'live' | 'pipeline';
+  provider?: string | null;
+  model?: string | null;
+  reason?: string;
+}
+
 export interface FollowupQueuedPayload {
   sessionId: string;
   agentId: string;

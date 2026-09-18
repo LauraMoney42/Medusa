@@ -170,6 +170,8 @@ describe("export and import round trip", () => {
       firstClauseAudio: true,
       liveMode: false,
       liveProvider: "openai-realtime",
+      liveTier: "auto",
+      liveModel: "",
     });
     writeToolbox({
       servers: [{ id: "git", label: "Git", detail: "", enabled: true, scope: "read" }],

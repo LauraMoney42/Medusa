@@ -30,8 +30,20 @@ export type RealtimeState = "connecting" | "listening" | "thinking" | "speaking"
 export interface RealtimeHandlers {
   /** Final transcript of what the user said; posted as a user message. */
   onUserTranscript?: (text: string) => void;
+  /**
+   * The user's words as they settle, before the utterance is final. Forwarded
+   * as `voice:partial` so the mic bar reads the same in Live mode as in the
+   * pipeline. Optional: a provider that cannot stream input transcription
+   * simply never calls it.
+   */
+  onUserPartial?: (text: string) => void;
   /** Final transcript of what she said; posted as an assistant message. */
   onAssistantTranscript?: (text: string) => void;
+  /**
+   * Her words as they are spoken, so the chat bubble fills in while she
+   * talks instead of appearing whole at the end of the turn.
+   */
+  onAssistantDelta?: (delta: string) => void;
   /** Audio to play, base64, in order. */
   onAudio?: (chunk: { seq: number; mime: string; data: string }) => void;
   /** The model started a new response: stop any audio still playing. */
@@ -142,6 +154,11 @@ export class OpenAiRealtimeProvider implements RealtimeVoiceProvider {
   readonly displayName = "OpenAI Realtime";
 
   constructor(private readonly options: OpenAiRealtimeOptions) {}
+
+  /** Reported in `/api/voice/status` and on `voice:tier`. */
+  get model(): string {
+    return this.options.model ?? OPENAI_REALTIME_MODEL;
+  }
 
   isReady(): boolean {
     return Boolean(this.options.apiKey);
@@ -331,4 +348,12 @@ export interface RealtimeProviderStatus {
   ready: boolean;
   /** Why it is unavailable, for the disabled control's tooltip. */
   reason?: string;
+  /** Model used when Settings names none. */
+  defaultModel?: string;
+  /** Known model ids for the Settings select. */
+  models?: string[];
+  /** Where the user gets a key. */
+  keyUrl?: string;
+  /** True when a free key is enough, which is what the upgrade hint offers. */
+  free?: boolean;
 }
