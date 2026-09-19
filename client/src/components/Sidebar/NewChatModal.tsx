@@ -202,7 +202,9 @@ export default function NewChatModal({ onClose }: NewChatModalProps) {
       try {
         const session = await createSession({
           workingDir: dir,
-          // The title defaults to the folder basename; the server dedupes it.
+          // Leave title blank to get the server's sequential default:
+          // "Chat", then "Chat 1", "Chat 2", ... (see nextAutoTitle in
+          // server/src/routes/sessions.ts).
           ...(name.trim() ? { name: name.trim() } : {}),
           providerId,
           engineId,
@@ -282,7 +284,7 @@ export default function NewChatModal({ onClose }: NewChatModalProps) {
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder={workingDir ? basename(workingDir) : 'Folder name'}
+          placeholder="Chat"
           style={styles.input}
         />
 

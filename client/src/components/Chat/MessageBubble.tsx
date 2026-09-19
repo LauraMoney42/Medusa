@@ -82,7 +82,7 @@ export default function MessageBubble({ message, botName, onSpeak }: MessageBubb
               color: isUser ? 'rgba(255,255,255,0.85)' : 'var(--accent)',
             }}
           >
-            {isUser ? 'You' : (botName || 'Claude')}
+            {isUser ? 'You' : (botName || 'Medusa')}
           </span>
           <span style={{ flex: 1 }} />
           {!isUser && onSpeak && message.text && (

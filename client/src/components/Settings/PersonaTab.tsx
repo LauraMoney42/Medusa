@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import * as api from '../../api';
 import type { Persona } from '../../api';
 import { s } from './settingsStyles';
+import { usePersonaStore } from '../../stores/personaStore';
 
 /**
  * Persona editor: name, avatar, personality prose and greeting, with a live
@@ -21,6 +22,7 @@ export default function PersonaTab() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const setPersonaName = usePersonaStore((s) => s.setName);
 
   useEffect(() => {
     api.fetchPersona().then(setPersona).catch((e: Error) => setError(e.message));
@@ -63,26 +65,30 @@ export default function PersonaTab() {
     setSaving(true);
     setError(null);
     try {
-      setPersona(await api.savePersona(persona));
+      const saved = await api.savePersona(persona);
+      setPersona(saved);
+      setPersonaName(saved.name);
       setStatus('Saved. New chats pick this up on their next turn.');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Save failed');
     } finally {
       setSaving(false);
     }
-  }, [persona]);
+  }, [persona, setPersonaName]);
 
   const handleReset = useCallback(async () => {
     setSaving(true);
     try {
-      setPersona(await api.resetPersona());
+      const reset = await api.resetPersona();
+      setPersona(reset);
+      setPersonaName(reset.name);
       setStatus('Back to the default Medusa persona.');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Reset failed');
     } finally {
       setSaving(false);
     }
-  }, []);
+  }, [setPersonaName]);
 
   if (!persona) {
     return <div style={s.pane}><p style={s.hint}>{error ?? 'Loading…'}</p></div>;

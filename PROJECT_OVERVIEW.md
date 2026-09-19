@@ -52,6 +52,13 @@ Six layers, top to bottom:
      (server/src/mcp/tool-content.ts). See CHANGELOG.md for the full writeup.
 6. **Sessions** - one JSON-backed session per chat (`SessionMeta`): folder,
    provider, model, and (planned) engine, persisted under `~/.claude-chat/`.
+   - Default chat titles are sequential, not folder-derived, as of
+     2026-09-19: a chat created with no explicit title gets "Chat", then
+     "Chat 1", "Chat 2", ... (`nextAutoTitle` in
+     server/src/routes/sessions.ts). `SessionMeta.autoNamed` marks a
+     system-generated title; renaming a chat (PATCH /api/sessions/:id)
+     clears it permanently, so a manually-renamed chat is never renumbered
+     or overwritten again. See CHANGELOG.md for the full writeup.
 
 ```mermaid
 graph TB

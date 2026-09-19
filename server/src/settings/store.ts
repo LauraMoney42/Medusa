@@ -63,10 +63,17 @@ function load(): SettingsData {
 
 function save(data: SettingsData): void {
   try {
+    // Merge onto the freshest raw disk content rather than overwriting the
+    // whole file: other modules (settings/providers.ts, the OneNote helpers
+    // below) write fields to this same file that aren't in SettingsSchema,
+    // and a plain overwrite here would silently erase them (e.g. wiping a
+    // saved provider API key the moment any other setting is saved).
+    const raw = loadRaw();
+    const merged = { ...raw, ...data };
     const dir = path.dirname(SETTINGS_FILE);
     fs.mkdirSync(dir, { recursive: true });
     const tmp = SETTINGS_FILE + ".tmp";
-    fs.writeFileSync(tmp, JSON.stringify(data, null, 2), "utf-8");
+    fs.writeFileSync(tmp, JSON.stringify(merged, null, 2), "utf-8");
     fs.renameSync(tmp, SETTINGS_FILE);
     fs.chmodSync(SETTINGS_FILE, 0o600);
   } catch (err) {

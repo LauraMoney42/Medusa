@@ -79,16 +79,33 @@ describe("POST /api/sessions", () => {
     expect(res.status).toBe(400);
   });
 
-  it("defaults the title to the folder basename", async () => {
+  it("defaults the title to 'Chat' for the first auto-named chat", async () => {
     const res = await post({ workingDir: projectDir });
     expect(res.status).toBe(201);
-    expect((await res.json()).name).toBe(path.basename(projectDir));
+    const body = await res.json();
+    expect(body.name).toBe("Chat");
+    expect(body.autoNamed).toBe(true);
   });
 
-  it("dedupes a repeated default title", async () => {
+  it("numbers subsequent auto-named chats sequentially", async () => {
     await post({ workingDir: projectDir });
+    const second = await post({ workingDir: projectDir });
+    expect((await second.json()).name).toBe("Chat 1");
+    const third = await post({ workingDir: projectDir });
+    expect((await third.json()).name).toBe("Chat 2");
+  });
+
+  it("does not mark an explicitly-titled chat as auto-named", async () => {
+    const res = await post({ workingDir: projectDir, name: "My project" });
+    const body = await res.json();
+    expect(body.name).toBe("My project");
+    expect(body.autoNamed).toBeUndefined();
+  });
+
+  it("does not count a manually-titled chat toward the running number", async () => {
+    await post({ workingDir: projectDir, name: "Custom" });
     const res = await post({ workingDir: projectDir });
-    expect((await res.json()).name).toBe(`${path.basename(projectDir)} 2`);
+    expect((await res.json()).name).toBe("Chat");
   });
 
   it("stores engine, provider and model", async () => {
@@ -144,6 +161,21 @@ describe("PATCH /api/sessions/:id", () => {
     const res = await patch(id, { name: "Renamed" });
     expect((await res.json()).name).toBe("Renamed");
     expect(store.get(id)!.name).toBe("Renamed");
+  });
+
+  it("permanently clears autoNamed once a chat is manually renamed", async () => {
+    // Create with no explicit title so it starts out auto-named.
+    const created = await post({ workingDir: projectDir });
+    const { id } = await created.json();
+    expect(store.get(id)!.autoNamed).toBe(true);
+
+    await patch(id, { name: "My renamed chat" });
+    expect(store.get(id)!.autoNamed).toBeUndefined();
+
+    // It must not count toward the running "Chat N" number afterward: with
+    // zero auto-named chats left, the next one starts back at "Chat".
+    const next = await post({ workingDir: projectDir });
+    expect((await next.json()).name).toBe("Chat");
   });
 
   it("updates engine and provider", async () => {

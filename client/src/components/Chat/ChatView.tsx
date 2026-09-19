@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useChatStore } from '../../stores/chatStore';
 import { useTtsStore } from '../../stores/ttsStore';
+import { usePersonaStore } from '../../stores/personaStore';
 import { getSocket } from '../../socket';
 import MessageBubble from './MessageBubble';
 import ChatHeaderControls from './ChatHeaderControls';
@@ -48,6 +49,17 @@ export default function ChatView({ onMenuToggle, onNewChat }: ChatViewProps) {
 
   const activeSession = sessions.find((s) => s.id === activeSessionId) ?? null;
   const isBusy = activeSession ? statuses[activeSession.id] === 'busy' : false;
+
+  // The assistant's sender label is always the persona name (default
+  // "Medusa"), never the chat's own title, which is a separate, user-editable
+  // field (see personaStore.ts). Fetched once; PersonaTab refreshes this
+  // store whenever the persona is saved or reset.
+  const personaName = usePersonaStore((s) => s.name);
+  const personaLoaded = usePersonaStore((s) => s.loaded);
+  const refreshPersona = usePersonaStore((s) => s.refresh);
+  useEffect(() => {
+    if (!personaLoaded) refreshPersona().catch(console.error);
+  }, [personaLoaded, refreshPersona]);
 
   const [text, setText] = useState('');
   const [images, setImages] = useState<{ file: File; preview: string }[]>();
@@ -445,7 +457,7 @@ export default function ChatView({ onMenuToggle, onNewChat }: ChatViewProps) {
                   // disclosure works by handing it a message with its tool
                   // cards withheld while the section is collapsed.
                   message={toolsOpen || toolCount === 0 ? msg : { ...msg, toolUses: undefined }}
-                  botName={activeSession.name}
+                  botName={personaName}
                   onSpeak={ttsAvailable ? playTTS : undefined}
                 />
                 {msg.role === 'assistant' && !msg.isStreaming && (

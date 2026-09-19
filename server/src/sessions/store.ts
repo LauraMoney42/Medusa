@@ -28,6 +28,15 @@ const SessionMetaSchema = z.object({
   /** Which provider env this chat uses ("claude" | "kimi" | "openrouter"). */
   providerId: z.string().optional(),
   archived: z.boolean().optional(),
+  /**
+   * True only while `name` is a system-generated "Chat" / "Chat N" title.
+   * Drives the sequential default-naming feature: only auto-named chats are
+   * counted toward the next number, and renaming a chat (see
+   * SessionStore.rename) clears this so it is never touched again.
+   * Missing/undefined (all pre-existing chats, and any chat created with an
+   * explicit title) is treated as "custom" so old titles are never rewritten.
+   */
+  autoNamed: z.boolean().optional(),
 });
 
 const SessionsFileSchema = z.array(SessionMetaSchema);
@@ -218,11 +227,16 @@ export class SessionStore {
     return this.sessions.find((s) => s.id === id);
   }
 
-  /** Rename a session. */
+  /**
+   * Rename a session. This is always a user-driven action (the rename/edit
+   * title feature), so it permanently opts the chat out of the sequential
+   * "Chat" / "Chat N" auto-naming: `autoNamed` is cleared and never set again.
+   */
   rename(id: string, name: string): SessionMeta | undefined {
     const session = this.sessions.find((s) => s.id === id);
     if (!session) return undefined;
     session.name = name;
+    session.autoNamed = undefined;
     this.persist();
     return session;
   }

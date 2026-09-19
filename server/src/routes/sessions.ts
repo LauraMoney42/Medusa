@@ -36,15 +36,19 @@ function resolveWorkingDir(workingDir: string): string | null {
 }
 
 /**
- * A chat's title defaults to its folder's basename, deduped against the
- * existing titles ("Medusa", "Medusa 2", "Medusa 3").
+ * A chat created with no explicit title gets a sequential default: "Chat"
+ * for the first one, then "Chat 1", "Chat 2", ... for each one after that.
+ *
+ * Only chats still carrying `autoNamed: true` count toward the running
+ * number, so once a chat is manually renamed (which clears `autoNamed`, see
+ * SessionStore.rename) it drops out of the count permanently and is never
+ * renumbered or reused. This is a simple running counter, not a search for
+ * unused numbers: a custom-named chat that happens to collide with a future
+ * "Chat N" is not de-duped against, by design (see task notes).
  */
-function dedupeName(base: string, existing: SessionMeta[]): string {
-  const taken = new Set(existing.map((s) => s.name));
-  if (!taken.has(base)) return base;
-  let n = 2;
-  while (taken.has(`${base} ${n}`)) n++;
-  return `${base} ${n}`;
+function nextAutoTitle(existing: SessionMeta[]): string {
+  const autoNamedCount = existing.filter((s) => s.autoNamed).length;
+  return autoNamedCount === 0 ? "Chat" : `Chat ${autoNamedCount}`;
 }
 
 export function createSessionsRouter(
@@ -93,9 +97,8 @@ export function createSessionsRouter(
 
     const id = uuidv4();
     const now = new Date().toISOString();
-    const title = name?.trim()
-      ? name.trim()
-      : dedupeName(path.basename(resolvedDir), store.loadAll());
+    const hasExplicitTitle = Boolean(name?.trim());
+    const title = hasExplicitTitle ? name!.trim() : nextAutoTitle(store.loadAll());
 
     const session: SessionMeta = {
       id,
@@ -107,6 +110,10 @@ export function createSessionsRouter(
       ...(engineId ? { engineId } : {}),
       ...(providerId ? { providerId } : {}),
       ...(model ? { model } : {}),
+      // Only a system-generated title is eligible for future renumbering.
+      // A user-supplied title at creation time counts as a manual name, same
+      // as a later rename, so it must never be touched afterward.
+      ...(hasExplicitTitle ? {} : { autoNamed: true }),
     };
 
     store.save(session);
