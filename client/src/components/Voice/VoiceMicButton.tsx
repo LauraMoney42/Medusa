@@ -3,7 +3,8 @@ import { getSocket } from '../../socket';
 import { useVoiceStore } from '../../stores/voiceStore';
 import { MicCapture } from '../../lib/voice/micCapture';
 import { GaplessAudioQueue } from '../../lib/voice/audioScheduler';
-import { EchoGate, floorFor } from '../../lib/voice/echoGate';
+import type { EchoGate } from '../../lib/voice/echoGate';
+import { micGateFor, reportsLocalBargeIn, sentGainFor } from '../../lib/voice/micGating';
 import { onAudioChunk, onStopAudio, onSpeakingStart } from '../../lib/voice/voiceBus';
 import type { VoiceAudioChunkPayload } from '../../types/voice';
 import { fetchVoiceSettings } from '../../api';
@@ -61,6 +62,9 @@ export default function VoiceMicButton({ sessionId, inputEmpty = true }: VoiceMi
   const echoGuardDuckFactor = useVoiceStore((s) => s.echoGuardDuckFactor);
   const bargeInEnergyThreshold = useVoiceStore((s) => s.bargeInEnergyThreshold);
   const bargeInMinSpeechMs = useVoiceStore((s) => s.bargeInMinSpeechMs);
+  // Which tier owns turn-taking. In "live" the provider's own VAD does, so
+  // nothing here may gate or duck the outgoing mic (see lib/voice/micGating.ts).
+  const tier = useVoiceStore((s) => s.tier);
   const active = useVoiceStore((s) => s.active);
   const setActive = useVoiceStore((s) => s.setActive);
   const reset = useVoiceStore((s) => s.reset);
@@ -105,19 +109,30 @@ export default function VoiceMicButton({ sessionId, inputEmpty = true }: VoiceMi
     return { ctx: playbackCtxRef.current!, scheduler: schedulerRef.current! };
   }, [setLoopState]);
 
-  // Echo gate: while she speaks, only sustained loud frames leave this
-  // machine. Ducking alone still sent playback leakage to the server, and in
-  // Live mode Gemini's own VAD treats that as the user talking: it cuts her
-  // off and restarts, which is what "talking over itself" sounds like.
+  // Echo gate, pipeline tier only: while she speaks, only sustained loud
+  // frames leave this machine, because the server's own Whisper/VAD loop would
+  // otherwise transcribe her speaker leakage as a user turn. `micGateFor`
+  // returns null in live tier, where Gemini's VAD needs the continuous stream
+  // and a closed gate left it deaf to the user's next turn.
   const echoGateRef = useRef<EchoGate | null>(null);
+  // Mirrored so `sendFrame` (captured once by MicCapture) always sees the
+  // current tier without the capture having to be torn down and restarted.
+  const tierRef = useRef(tier);
   useEffect(() => {
-    echoGateRef.current = echoGuardEnabled
-      ? new EchoGate({
-          floor: floorFor(bargeInEnergyThreshold, echoGuardDuckFactor),
-          minSpeechMs: bargeInMinSpeechMs,
-        })
-      : null;
-  }, [echoGuardEnabled, bargeInEnergyThreshold, bargeInMinSpeechMs, echoGuardDuckFactor]);
+    tierRef.current = tier;
+  }, [tier]);
+  useEffect(() => {
+    echoGateRef.current = micGateFor({
+      tier,
+      echoGuardEnabled,
+      echoGuardDuckFactor,
+      bargeInEnergyThreshold,
+      bargeInMinSpeechMs,
+    });
+    // A gate created mid-turn has to be told the turn is already in progress,
+    // or it would sit wide open for the rest of it.
+    echoGateRef.current?.setSpeaking(useVoiceStore.getState().state === 'speaking');
+  }, [tier, echoGuardEnabled, bargeInEnergyThreshold, bargeInMinSpeechMs, echoGuardDuckFactor]);
   useEffect(() => {
     echoGateRef.current?.setSpeaking(loopState === 'speaking');
   }, [loopState]);
@@ -126,20 +141,20 @@ export default function VoiceMicButton({ sessionId, inputEmpty = true }: VoiceMi
     (pcm16: ArrayBuffer) => {
       const socket = getSocket();
       const gate = echoGateRef.current;
+      // No gate (live tier, or the echo guard switched off): every captured
+      // frame goes out, for the whole life of the session, whatever the loop
+      // state is. This is the only way the provider's own VAD can find the
+      // start of the user's next turn.
       if (!gate) {
         socket.emit('voice:audio', { sessionId, pcm16 });
         return;
       }
       const wasOpen = gate.isOpen;
       const frames = gate.accept(new Int16Array(pcm16));
-      // Local barge-in. The gate opening while she speaks means sustained,
-      // above-the-floor speech from the user, not playback leakage. Stopping
-      // here rather than waiting for the provider to notice is what makes her
-      // shut up instantly: Gemini's own VAD took ~2 s to report the same
-      // interruption, which is long enough to sound like she is talking over
-      // you. The server's `voice:interrupt` is idempotent with the provider's
-      // own interruption that follows.
-      if (!wasOpen && gate.isOpen) {
+      // Local barge-in, pipeline tier only. The gate opening while she speaks
+      // means sustained, above-the-floor speech from the user, not playback
+      // leakage, and the local loop has nothing else watching for it.
+      if (!wasOpen && gate.isOpen && reportsLocalBargeIn(tierRef.current)) {
         schedulerRef.current?.stopAll(schedulerRef.current.activeTurnId ?? undefined);
         socket.emit('voice:interrupt', { sessionId });
       }
@@ -215,23 +230,31 @@ export default function VoiceMicButton({ sessionId, inputEmpty = true }: VoiceMi
     schedulerRef.current?.setMuted(speakerMuted);
   }, [speakerMuted]);
 
-  // Echo guard: duck the sent mic level from speaking-start until 400 ms
-  // after speaking-end, not just while `loopState === 'speaking'`. Her
-  // echo lingers in the room (and in the speaker's own decay) for a beat
-  // after playback stops, so releasing the duck the instant the state
-  // flips back to "listening" left a short window where a full-gain mic
-  // could still trip the barge-in detector on nothing but room echo.
+  // Echo guard, pipeline tier only: duck the sent mic level from
+  // speaking-start until 400 ms after speaking-end, not just while
+  // `loopState === 'speaking'`. Her echo lingers in the room (and in the
+  // speaker's own decay) for a beat after playback stops, so releasing the duck
+  // the instant the state flips back to "listening" left a short window where a
+  // full-gain mic could still trip the barge-in detector on nothing but room
+  // echo.
+  //
+  // In live tier `sentGainFor` is always 1: the outgoing mic is never touched,
+  // because the provider's VAD is listening to it for the user's next turn even
+  // while she is mid-reply. Only the SPEAKER side is ever quietened there
+  // (`speakerMuted` -> the scheduler).
   const duckReleaseTimerRef = useRef<number | null>(null);
   useEffect(() => {
     if (duckReleaseTimerRef.current != null) {
       window.clearTimeout(duckReleaseTimerRef.current);
       duckReleaseTimerRef.current = null;
     }
+    const guard = { tier, echoGuardEnabled, echoGuardDuckFactor };
     if (loopState === 'speaking') {
-      micRef.current?.setSentGain(echoGuardEnabled ? echoGuardDuckFactor : 1);
+      micRef.current?.setSentGain(sentGainFor(guard, true));
       return;
     }
-    if (!echoGuardEnabled) {
+    if (sentGainFor(guard, true) === 1) {
+      // Nothing was ducked on the way in, so there is nothing to release.
       micRef.current?.setSentGain(1);
       return;
     }
@@ -247,7 +270,7 @@ export default function VoiceMicButton({ sessionId, inputEmpty = true }: VoiceMi
         duckReleaseTimerRef.current = null;
       }
     };
-  }, [loopState, echoGuardEnabled, echoGuardDuckFactor]);
+  }, [loopState, tier, echoGuardEnabled, echoGuardDuckFactor]);
 
   // Fetch the account's saved VAD gains for voice:start, and (only when this
   // browser has never chosen a mode locally) seed the toggle from Settings >

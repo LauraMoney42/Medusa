@@ -1,18 +1,13 @@
 /**
- * Mic gate for the window in which she is speaking.
+ * Mic gate for the window in which she is speaking. PIPELINE TIER ONLY.
  *
  * The echo guard ducks the *sent* mic level while the assistant speaks
  * (MicCapture.setSentGain), but ducking is not silencing: on a laptop the
- * speaker still leaks into the mic, and in Live mode those frames go straight
- * to Gemini, whose own server VAD then hears "the user is talking". Measured
- * against the real service (headless client, playback fed back at the duck
- * factor): she cut herself off 0.7 s into her own reply, her own voice was
- * transcribed as a user turn, and she restarted the sentence. That is what
- * "talking over itself randomly" sounds like from the outside.
- *
- * So while she speaks, a frame has to earn its way out. This is the client
- * side of the same rule `server/src/voice/barge-in.ts` applies on the
- * pipeline tier, with the same defaults:
+ * speaker still leaks into the mic, and the server's Whisper/VAD loop will
+ * transcribe that leakage as a user turn. So while she speaks, a frame has to
+ * earn its way out. This is the client side of the same rule
+ * `server/src/voice/barge-in.ts` applies on the pipeline tier, with the same
+ * defaults:
  *
  *  - the first `floorMeasureMs` of each spoken turn are used to measure how
  *    loud her own echo actually is on this speaker setup (the gate stays shut
@@ -23,6 +18,11 @@
  * Once the gate opens it stays open until she stops speaking, so a real
  * barge-in is never chopped mid-word, and the frames that opened it are
  * released too, so the first syllable is not lost either.
+ *
+ * Live tier gets no gate at all: Gemini runs its own VAD on the mic stream and
+ * needs it continuous, so `lib/voice/micGating.ts` refuses to build one there.
+ * Withholding frames from a server-side VAD is not caution, it is deafness: it
+ * left the user's second turn unheard.
  */
 
 export interface EchoGateOptions {

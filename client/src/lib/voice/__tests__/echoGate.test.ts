@@ -1,12 +1,11 @@
 /**
- * The mic gate that keeps her own voice from reaching the realtime model.
+ * The mic gate that keeps her own voice out of the LOCAL pipeline's ears.
  *
- * Measured against the real service on 2026-09-18 with playback fed back into
- * the mic at the echo-guard duck factor: with no gate she cut herself off
- * 0.7 s into her own reply, her own voice came back as a user turn ("WHY DID
- * THE PROGRAMMER-"), and she restarted the sentence. With the gate, zero
- * spurious interruptions across the same script, and a real barge-in still
- * stopped her.
+ * Pipeline tier only. Whisper and `server/src/voice/vad.ts` cannot tell her
+ * speaker leakage from the user, so while she speaks a frame has to earn its
+ * way out. Live tier gets no gate: see lib/voice/micGating.ts, and its tests
+ * for why withholding frames from Gemini's own VAD left the user's second turn
+ * unheard.
  *
  * Plain node:test, like the other tests here: no vitest in client/.
  */

@@ -417,37 +417,23 @@ describe("LiveVoiceSession turn identity", () => {
     expect(h.of("voice:audio-chunk")[1].turnId).toBe(next);
   });
 
-  it("drops audio for a turn the user cut off until the service catches up", () => {
+  it("keeps speaking the very next turn after an interrupt, with no suppression window", () => {
     const h = harness();
     h.handlers.onState?.("speaking");
     h.handlers.onAudio?.({ seq: 0, mime: "audio/pcm;rate=24000", data: silence(LIVE_CHUNK_SAMPLES) });
     expect(h.of("voice:audio-chunk")).toHaveLength(1);
 
-    // The client heard the user talk over her, about a second before the
-    // service's own VAD will notice.
+    // The interrupt button. The old code latched an audio-suppression window
+    // here until the service echoed the interruption, which it does not do for
+    // an interrupt it never detected: the user's next turn came back silent.
     h.live.interrupt();
-    h.handlers.onAudio?.({ seq: 1, mime: "audio/pcm;rate=24000", data: silence(LIVE_CHUNK_SAMPLES) });
-    h.handlers.onAudio?.({ seq: 2, mime: "audio/pcm;rate=24000", data: silence(LIVE_CHUNK_SAMPLES) });
-    expect(h.of("voice:audio-chunk")).toHaveLength(1); // she stays quiet
-    expect(h.of("voice:speaking-start")).toHaveLength(1); // and no new turn opens
+    expect(h.of("voice:stop-audio")).toHaveLength(1);
 
-    // The service confirms the interruption; the next turn speaks normally.
-    h.handlers.onInterrupt?.();
-    h.handlers.onState?.("listening");
     h.handlers.onState?.("speaking");
     h.handlers.onAudio?.({ seq: 0, mime: "audio/pcm;rate=24000", data: silence(LIVE_CHUNK_SAMPLES) });
     expect(h.of("voice:audio-chunk")).toHaveLength(2);
     expect(h.of("voice:speaking-start")).toHaveLength(2);
-  });
-
-  it("releases the suppression when the user's next turn is transcribed", () => {
-    const h = harness();
-    h.handlers.onState?.("speaking");
-    h.live.interrupt();
-    h.handlers.onUserTranscript?.("tell me a joke instead");
-    h.handlers.onState?.("speaking");
-    h.handlers.onAudio?.({ seq: 0, mime: "audio/pcm;rate=24000", data: silence(LIVE_CHUNK_SAMPLES) });
-    expect(h.of("voice:audio-chunk")).toHaveLength(1);
+    expect(h.of("voice:state").at(-1).state).toBe("speaking");
   });
 
   it("writes an interrupted reply into the chat exactly once", () => {
@@ -465,18 +451,19 @@ describe("LiveVoiceSession turn identity", () => {
 });
 
 describe("LiveVoiceSession state while an interruption is settling", () => {
-  it("does not reopen a speaking turn for audio the user already cut off", () => {
+  it("opens a fresh turn for the audio that follows an interruption", () => {
     const h = harness();
     h.handlers.onState?.("speaking");
-    h.live.interrupt();
-    // The service has not caught up: it keeps streaming the old turn, and its
-    // state flaps back to speaking.
+    const first = h.of("voice:speaking-start")[0].turnId;
+    h.handlers.onInterrupt?.();
     h.handlers.onState?.("listening");
     h.handlers.onState?.("speaking");
     h.handlers.onAudio?.({ seq: 0, mime: "audio/pcm;rate=24000", data: silence(LIVE_CHUNK_SAMPLES) });
 
-    expect(h.of("voice:speaking-start")).toHaveLength(1);
-    expect(h.of("voice:state").at(-1).state).toBe("listening");
+    const starts = h.of("voice:speaking-start");
+    expect(starts).toHaveLength(2);
+    expect(starts[1].turnId).not.toBe(first);
+    expect(h.of("voice:state").at(-1).state).toBe("speaking");
   });
 
   it("puts the client back into speaking when a real turn opens on its first chunk", () => {

@@ -163,9 +163,29 @@ export function toLoopState(state: RealtimeState): string {
   }
 }
 
+/**
+ * Live mode runs Gemini's turn-taking, and only Gemini's.
+ *
+ * This is the explicit split from the local pipeline: `VoiceSession` owns a
+ * `Vad` and a `BargeInDetector` because Whisper and Kokoro have no idea who is
+ * talking, whereas the Live API "automatically performs VAD on a continuous
+ * audio input stream", decides both ends of every turn, cancels its own
+ * generation when the user talks over it, and says so with
+ * `serverContent.interrupted`. Two authorities deciding whose turn it is meant
+ * both sides talked at once, so this file must never import `../vad.js` or
+ * `../barge-in.js` (there is a test for that) and must never start or stop
+ * listening off the local state machine. Mic frames are forwarded exactly as
+ * they arrive, for the whole life of the session, including while she speaks.
+ */
 export class LiveVoiceSession {
   readonly sessionId: string;
   readonly tier: VoiceTier = "live";
+  /**
+   * Read by the tests and by anything auditing the split: Live mode does no
+   * turn-taking of its own, so nothing here may gate the mic or the speaker on
+   * a locally computed guess about whose turn it is.
+   */
+  static readonly usesLocalTurnTaking = false;
   private readonly deps: LiveSessionDeps;
   private readonly now: () => number;
   private realtime: LiveRealtimeSession | null = null;
@@ -185,15 +205,6 @@ export class LiveVoiceSession {
    * was what made her talk over herself. Null between turns.
    */
   private currentTurnId: string | null = null;
-  /**
-   * True between an interrupt we raised and the service acknowledging it.
-   * Audio that arrives in that window belongs to the turn that was cut off.
-   */
-  private suppressAudio = false;
-  /** Set only for the duration of our own `interrupt()` call, to tell the two paths apart. */
-  private localInterrupt = false;
-  private suppressTimer: ReturnType<typeof setTimeout> | null = null;
-  private static readonly SUPPRESS_TIMEOUT_MS = 4_000;
   private fatal = false;
   private disposed = false;
 
@@ -273,45 +284,22 @@ export class LiveVoiceSession {
   }
 
   /**
-   * Cut her off from our side: the interrupt button, or the client hearing
-   * the user talk over her (which it notices about a second before the
-   * service's own VAD does).
+   * Cut her off from our side. In Live mode this is only ever a deliberate
+   * human act: the interrupt button, or Escape. It is NOT a barge-in detector,
+   * because Live mode has no Medusa-side turn-taking at all (see the note at
+   * the top of the class): Gemini runs its own VAD on the continuous mic
+   * stream and reports every real interruption as `serverContent.interrupted`.
    *
-   * The service does not know yet, so it keeps sending audio for the turn we
-   * just stopped. Those chunks would otherwise open a brand new turn here and
-   * she would carry on talking after being told to stop, so audio is dropped
-   * until the service confirms the interruption, the user's next turn is
-   * transcribed, or the guard times out.
+   * Nothing is latched here. The previous version held an "audio suppression"
+   * window open until the service confirmed the interruption, which meant a
+   * local interrupt the service never echoed (it does not, when the mic stream
+   * was gated and its own VAD saw nothing) swallowed the whole of her NEXT
+   * reply: the user spoke again and got silence. Stopping the turn in progress
+   * and letting the next frames supersede is the documented behaviour.
    */
   interrupt(): void {
     if (!this.realtime) return;
-    this.localInterrupt = true;
-    this.suppressAudio = true;
-    this.armSuppressionTimeout();
-    try {
-      this.realtime.interrupt();
-    } finally {
-      this.localInterrupt = false;
-    }
-  }
-
-  /** Never let a missing confirmation leave her permanently mute. */
-  private armSuppressionTimeout(): void {
-    if (this.suppressTimer) clearTimeout(this.suppressTimer);
-    this.suppressTimer = setTimeout(() => {
-      this.suppressAudio = false;
-      this.suppressTimer = null;
-    }, LiveVoiceSession.SUPPRESS_TIMEOUT_MS);
-    // A stray timer must not hold the process open.
-    (this.suppressTimer as unknown as { unref?: () => void }).unref?.();
-  }
-
-  private releaseSuppression(): void {
-    this.suppressAudio = false;
-    if (this.suppressTimer) {
-      clearTimeout(this.suppressTimer);
-      this.suppressTimer = null;
-    }
+    this.realtime.interrupt();
   }
 
   /**
@@ -333,7 +321,6 @@ export class LiveVoiceSession {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    this.releaseSuppression();
     // Voice off (or a demotion to the pipeline) means stop, not "play the
     // last 200 ms first". Flushing here used to push a final chunk out after
     // the tier had already changed, which the pipeline session then talked
@@ -350,11 +337,8 @@ export class LiveVoiceSession {
     if (this.state === state) return;
     this.state = state;
     if (state === "speaking") {
-      // Audio for a turn the user cut off is still coming; that is not a new
-      // turn and must not put the client back into "speaking" (which would
-      // duck its mic again for a reply nobody will hear). `startSpeaking`
-      // emits the state itself when a turn really does open.
-      if (this.suppressAudio) return;
+      // `startSpeaking` emits the state itself, because a turn can open on the
+      // first audio chunk rather than on the provider's state change.
       this.startSpeaking();
       return;
     }
@@ -402,9 +386,6 @@ export class LiveVoiceSession {
     const timestamp = new Date().toISOString();
     this.userTurnEndedAt = this.now();
     this.firstAudioAt = null;
-    // A new user turn always ends the suppression window: whatever she says
-    // next is an answer to this, not the tail of the turn that was cut off.
-    this.releaseSuppression();
 
     const msg = {
       id: messageId,
@@ -480,10 +461,10 @@ export class LiveVoiceSession {
   }
 
   private handleAudio(chunk: { seq: number; mime: string; data: string }): void {
-    // Audio for a turn the user already cut off: the service has not caught
-    // up with the interruption yet. Dropping it is what stops her finishing a
-    // sentence nobody is listening to any more.
-    if (this.suppressAudio) return;
+    // Every chunk the service sends is forwarded. Gemini cancels and discards
+    // an interrupted generation itself, so audio arriving here is audio it
+    // still means to say; second-guessing that is what left her mute for a
+    // whole turn.
     if (this.firstAudioAt === null) this.firstAudioAt = this.now();
     // Audio can reach us before the provider's state change does; a chunk
     // must never be emitted without a turn to belong to.
@@ -512,13 +493,12 @@ export class LiveVoiceSession {
   }
 
   private handleInterrupt(): void {
-    // Raised by the service rather than by us: the interruption we were
-    // waiting for, so audio may flow again.
-    if (!this.localInterrupt) this.releaseSuppression();
-    // Barge-in: drop what has not been sent and tell the client to stop what
-    // it is already playing. `stop-audio` names the turn being cut off, so a
-    // chunk of that turn still decoding on the client is dropped rather than
-    // scheduled on top of the reply that replaces it.
+    // `serverContent.interrupted` maps straight onto `voice:stop-audio`, with
+    // no Medusa-side gating in between: the documented client action for an
+    // interruption is "stop playing audio and clear queued playback".
+    // `stop-audio` names the turn being cut off, so a chunk of that turn still
+    // decoding on the client is dropped rather than scheduled on top of the
+    // reply that replaces it.
     this.abortSpokenTurn();
     // An interrupted reply is still what she said up to that point.
     this.finishAssistantMessage();
@@ -529,10 +509,9 @@ export class LiveVoiceSession {
    * queued on the client, and no id left that a late chunk could ride in on.
    */
   private abortSpokenTurn(): void {
-    // Idempotent. The client now cuts her off locally the moment it hears the
-    // user, and Gemini's own VAD reports the same interruption a beat later;
-    // a second `stop-audio` with no turn to name would flush whatever turn had
-    // started in between.
+    // Idempotent: the interrupt button and Gemini's own `interrupted` can both
+    // land for one barge-in, and a second `stop-audio` with no turn to name
+    // would flush whatever turn had started in between.
     if (!this.speakingEmitted && !this.currentTurnId && this.pending.length === 0) return;
     const turnId = this.currentTurnId;
     this.pending = [];

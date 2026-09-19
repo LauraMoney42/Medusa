@@ -468,9 +468,9 @@ export class GeminiLiveProvider implements RealtimeVoiceProvider {
       interrupt: () => {
         // There is no cancel message: the documented way to cut her off is to
         // start a new turn, which the model's own VAD does when real audio
-        // arrives. For an interrupt raised on our side (the button, or the
-        // client hearing the user talk over her), stop local playback and let
-        // the next frames supersede.
+        // arrives. For an interrupt raised on our side (only ever the interrupt
+        // button or Escape, since Live mode runs no barge-in detector of its
+        // own), stop local playback and let the next frames supersede.
         //
         // Settling the half-spoken reply here matters: the service reports
         // the SAME interruption a second or two later, and a `serverContent
