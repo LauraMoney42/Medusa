@@ -22,7 +22,7 @@
 import { v4 as uuidv4 } from "uuid";
 import type { ChatStore } from "../../chat/store.js";
 import type { ShimEnv } from "../../mcp/client.js";
-import { ALL_MCP_TOOLS } from "../../mcp/tools.js";
+import { selectTools, SUBAGENT_TOOLSET } from "../../mcp/tools.js";
 import type { Voice } from "../../packs/schema.js";
 import { buildOrchestratorPrompt } from "../../sessions/orchestrator-prompt.js";
 import { pcm16ToWav } from "../providers.js";
@@ -221,7 +221,12 @@ export class LiveVoiceSession {
     this.realtime = this.deps.provider.open({
       instructions,
       tools: this.deps.shim,
-      toolSpecs: ALL_MCP_TOOLS,
+      // Live mode's system instruction tells the model it has ONLY the
+      // subagent functions (orchestrator-prompt.ts's liveTools contract), so
+      // the declared function set has to match: newer toolsets like
+      // take_screenshot must not leak in here even though ALL_MCP_TOOLS now
+      // carries them for the other engines.
+      toolSpecs: selectTools([SUBAGENT_TOOLSET]),
       // liveVoice names a realtime speaker; voiceId is a local Kokoro voice and
       // means nothing to a realtime provider (Gemini closes the socket with 1007).
       voice: this.deps.voice?.liveVoice || undefined,

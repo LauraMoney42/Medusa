@@ -26,6 +26,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { MCP_ENV, MEDUSA_MCP_SERVER_NAME } from "./descriptor.js";
 import { selectTools, type McpToolSpec } from "./tools.js";
+import { buildToolResultContent } from "./tool-content.js";
 
 import { callMedusa, readShimEnv, type ShimEnv } from "./client.js";
 export { callMedusa, readShimEnv, type ShimEnv };
@@ -71,8 +72,9 @@ export function createShimServer(shim: ShimEnv): Server {
       };
     }
 
-    const { text, isError } = await callMedusa(shim, spec, args);
-    return { content: [{ type: "text" as const, text }], isError };
+    const callResult = await callMedusa(shim, spec, args);
+    const { content, isError } = buildToolResultContent(spec, callResult);
+    return { content, isError };
   });
 
   return server;

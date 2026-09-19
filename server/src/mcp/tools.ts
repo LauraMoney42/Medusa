@@ -150,8 +150,36 @@ export const SUBAGENT_TOOLS: McpToolSpec[] = [
   },
 ];
 
+export const SCREENSHOT_TOOLSET = "screenshot";
+
+export const SCREENSHOT_TOOLS: McpToolSpec[] = [
+  {
+    name: "take_screenshot",
+    toolset: SCREENSHOT_TOOLSET,
+    description:
+      "Capture a screenshot of the user's screen (macOS `screencapture`) and return it as " +
+      "an image plus a short text confirmation. `fullscreen` (default) always works; " +
+      "`window`/`region` are interactive and best-effort, waiting on the user to click or " +
+      "drag-select.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: {
+          type: "string",
+          enum: ["fullscreen", "window", "region"],
+          default: "fullscreen",
+          description:
+            "fullscreen: the whole screen, non-interactive. window: user clicks a window. " +
+            "region: user drags to select an area.",
+        },
+      },
+    },
+    request: (args) => ({ method: "POST", path: "/api/screenshot", body: args }),
+  },
+];
+
 /** Every tool the shim can host. Future toolsets are concatenated here. */
-export const ALL_MCP_TOOLS: McpToolSpec[] = [...SUBAGENT_TOOLS];
+export const ALL_MCP_TOOLS: McpToolSpec[] = [...SUBAGENT_TOOLS, ...SCREENSHOT_TOOLS];
 
 /** Filter by toolset id; an empty/undefined list means "everything". */
 export function selectTools(toolsets?: string[] | null): McpToolSpec[] {

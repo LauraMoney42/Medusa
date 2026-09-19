@@ -9,7 +9,12 @@ import {
   resolveShimPath,
   type McpStdioEntry,
 } from "../config.js";
-import { ALL_MCP_TOOLS, selectTools, SUBAGENT_TOOLSET } from "../tools.js";
+import {
+  ALL_MCP_TOOLS,
+  selectTools,
+  SUBAGENT_TOOLSET,
+  SCREENSHOT_TOOLSET,
+} from "../tools.js";
 
 function descriptor(overrides = {}) {
   return buildMedusaMcpDescriptor({
@@ -121,13 +126,14 @@ describe("buildAcpMcpServers", () => {
 });
 
 describe("the tool surface", () => {
-  it("exposes exactly the five subagent tools of spec A.4", () => {
+  it("exposes the five subagent tools of spec A.4 plus take_screenshot", () => {
     expect(ALL_MCP_TOOLS.map((t) => t.name)).toEqual([
       "spawn_agent",
       "agent_status",
       "agent_result",
       "list_agents",
       "cancel_agent",
+      "take_screenshot",
     ]);
   });
 
@@ -181,7 +187,36 @@ describe("the tool surface", () => {
   it("selects by toolset so more tool groups can share the shim", () => {
     expect(selectTools(null)).toEqual(ALL_MCP_TOOLS);
     expect(selectTools([])).toEqual(ALL_MCP_TOOLS);
-    expect(selectTools([SUBAGENT_TOOLSET])).toEqual(ALL_MCP_TOOLS);
+    expect(selectTools([SUBAGENT_TOOLSET, SCREENSHOT_TOOLSET])).toEqual(ALL_MCP_TOOLS);
     expect(selectTools(["browser"])).toEqual([]);
+  });
+
+  it("can restrict to only the subagent tools, e.g. for Live mode", () => {
+    expect(selectTools([SUBAGENT_TOOLSET]).map((t) => t.name)).toEqual([
+      "spawn_agent",
+      "agent_status",
+      "agent_result",
+      "list_agents",
+      "cancel_agent",
+    ]);
+  });
+
+  it("take_screenshot defaults to fullscreen, requires nothing, and posts to /api/screenshot", () => {
+    const spec = ALL_MCP_TOOLS.find((t) => t.name === "take_screenshot")!;
+    expect(spec.toolset).toBe(SCREENSHOT_TOOLSET);
+    expect(spec.inputSchema.required).toBeUndefined();
+    expect(
+      (spec.inputSchema.properties.target as { enum: string[] }).enum
+    ).toEqual(["fullscreen", "window", "region"]);
+    expect(spec.request({})).toEqual({
+      method: "POST",
+      path: "/api/screenshot",
+      body: {},
+    });
+    expect(spec.request({ target: "window" })).toEqual({
+      method: "POST",
+      path: "/api/screenshot",
+      body: { target: "window" },
+    });
   });
 });

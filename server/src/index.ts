@@ -16,6 +16,7 @@ import { createAuthRouter } from "./routes/auth.js";
 import { createSessionsRouter } from "./routes/sessions.js";
 import imagesRouter from "./routes/images.js";
 import filesRouter from "./routes/files.js";
+import { createScreenshotRouter } from "./routes/screenshot.js";
 import sttRouter from "./routes/stt.js";
 import ttsRouter from "./routes/tts.js";
 import voiceRouter from "./routes/voice.js";
@@ -306,6 +307,7 @@ app.use("/api/runners", generalLimiter, createRunnersRouter(runnerManager));
 // `spawn_agent` with wait:true holds this request open for the whole subagent
 // run, so this mount must stay out of any future request-timeout middleware.
 app.use("/api/subagents", generalLimiter, createSubagentsRouter(subagentManager));
+app.use("/api/screenshot", generalLimiter, createScreenshotRouter());
 const { metricsRouter, tokenUsageHandler } = createMetricsRouter(tokenLogger);
 app.use("/api/metrics", generalLimiter, metricsRouter);
 // Clean alias: GET /api/token-usage?period=day|week|month (for Token Usage Dashboard)

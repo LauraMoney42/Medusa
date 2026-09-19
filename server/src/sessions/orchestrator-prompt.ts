@@ -33,6 +33,7 @@ const SUBAGENT_TOOLS = [
   "agent_result",
   "list_agents",
   "cancel_agent",
+  "take_screenshot",
 ] as const;
 
 /**
@@ -195,6 +196,27 @@ export function buildOrchestratorPrompt(input: OrchestratorPromptInput): string 
       "output.",
     ].join("\n")
   );
+
+  // Live mode's declared function set is deliberately just the subagent
+  // tools (see the `## Your tools` block above and live-session.ts), so this
+  // section is skipped there: mentioning a tool the model cannot actually
+  // call would make it try and fail.
+  if (!liveTools) {
+    sections.push(
+      [
+        "## Screen capture",
+        "",
+        `You can take a real screenshot of the user's screen by calling`,
+        `\`${t("take_screenshot")}\`. It takes an optional \`target\`:`,
+        '"fullscreen" (default, always works), "window" (the user clicks a',
+        'window), or "region" (the user drags to select an area). It returns',
+        "the image plus a short confirmation with the saved path. Use it",
+        "whenever the user asks you to look at their screen or take a",
+        "screenshot. You do not need to say you cannot access their desktop,",
+        "because you can.",
+      ].join("\n")
+    );
+  }
 
   sections.push(
     [

@@ -44,6 +44,12 @@ Six layers, top to bottom:
    `spawn_agent` / `agent_status` / `agent_result` / `list_agents` /
    `cancel_agent` plus the Browser/Simulator/file tools. *Planned, spec
    Section A* - not present in this checkout.
+   - `take_screenshot` (target: fullscreen/window/region) has shipped as of
+     2026-09-18: it captures via the macOS `screencapture` CLI directly from
+     this server process (server/src/routes/screenshot.ts), the same
+     per-process permission model already used for mic input, and returns
+     the PNG as an MCP image content block plus a text confirmation
+     (server/src/mcp/tool-content.ts). See CHANGELOG.md for the full writeup.
 6. **Sessions** - one JSON-backed session per chat (`SessionMeta`): folder,
    provider, model, and (planned) engine, persisted under `~/.claude-chat/`.
 

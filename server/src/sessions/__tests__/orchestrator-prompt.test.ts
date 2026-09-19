@@ -306,4 +306,25 @@ describe("buildOrchestratorPrompt: live tools contract", () => {
     const prompt = build({ engineId: "claude" });
     expect(prompt).not.toContain("## Your tools");
   });
+
+  it("omits screen capture from Live mode: it is not in the declared function set", () => {
+    const prompt = build({ engineId: undefined, liveTools: true, voiceMode: true });
+    expect(prompt).not.toContain("## Screen capture");
+    expect(prompt).not.toContain("take_screenshot");
+  });
+});
+
+describe("buildOrchestratorPrompt: screen capture", () => {
+  it("documents take_screenshot so the model does not claim it lacks the capability", () => {
+    const prompt = build({ engineId: "claude" });
+    expect(prompt).toContain("## Screen capture");
+    expect(prompt).toContain("`mcp__medusa__take_screenshot`");
+    expect(prompt).toContain("fullscreen");
+  });
+
+  it("uses the bare tool name for non-claude engines", () => {
+    const prompt = build({ engineId: "kimi" });
+    expect(prompt).toContain("`take_screenshot`");
+    expect(prompt).not.toContain("mcp__medusa__take_screenshot");
+  });
 });

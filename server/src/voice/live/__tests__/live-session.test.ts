@@ -191,6 +191,11 @@ describe("LiveVoiceSession", () => {
     expect(h.opened.instructions).toContain("`spawn_agent`");
     expect(h.opened.instructions).not.toContain("mcp__medusa__spawn_agent");
     expect(h.opened.toolSpecs?.map((s) => s.name)).toContain("spawn_agent");
+    // Live mode's system instruction says the model has ONLY the subagent
+    // functions (orchestrator-prompt.ts liveTools contract), so newer
+    // toolsets like take_screenshot must never be declared here even though
+    // ALL_MCP_TOOLS carries them for the other engines.
+    expect(h.opened.toolSpecs?.map((s) => s.name)).not.toContain("take_screenshot");
     expect(h.opened.tools.parentSessionId).toBe("s1");
   });
 
