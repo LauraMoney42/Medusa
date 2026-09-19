@@ -120,8 +120,11 @@ export default function NewChatModal({ onClose }: NewChatModalProps) {
   const globalProviderId = useProviderStore((s) => s.activeProviderId);
 
   const recentDirs = useMemo(readRecentDirs, []);
+  // Default to Documents (resolved server-side against the user's home dir,
+  // see resolveWorkingDir in server/src/routes/sessions.ts) so a first-time
+  // or in-a-hurry user isn't blocked on picking a folder.
   const [workingDir, setWorkingDir] = useState(
-    () => localStorage.getItem(LAST_DIR_KEY) ?? '',
+    () => localStorage.getItem(LAST_DIR_KEY) ?? 'Documents',
   );
   const [name, setName] = useState('');
   const [providerId, setProviderId] = useState(globalProviderId);
