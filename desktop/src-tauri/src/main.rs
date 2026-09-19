@@ -161,16 +161,116 @@ fn health_check_ok(port: u16) -> bool {
     response.starts_with("HTTP/1.1 200") || response.starts_with("HTTP/1.0 200")
 }
 
-/// Polls the health endpoint until it responds or `timeout` elapses.
-fn wait_for_health(port: u16, timeout: Duration) -> bool {
+/// How long startup may take before the splash starts telling the user that
+/// this is slower than usual. Not a deadline: `wait_for_health` keeps
+/// polling past it (see there for why there is no deadline at all).
+const SLOW_STARTUP_NOTICE: Duration = Duration::from_secs(20);
+
+/// Polls the health endpoint until it responds, reporting progress to the
+/// boot splash as it goes. Returns true once the server answers, or false if
+/// `sidecar_dead` is set first (the process exited, so no amount of waiting
+/// will produce a healthy server).
+///
+/// There is deliberately no give-up timeout. This used to stop after 30s and
+/// simply `return`, which left the window parked on about:blank forever with
+/// no message, no retry and nothing in the UI -- a solid black window that
+/// looked exactly like a crashed app even though the server was fine and
+/// came up a few seconds later. A cold start blows through any fixed budget
+/// easily: the first launch after a rebuild pays for Gatekeeper's first-run
+/// scan of a freshly compiled 60MB sidecar binary on top of the server's own
+/// startup. Since the sidecar is our own child process, "not healthy yet"
+/// only ever means "still starting": waiting is always the right answer, and
+/// the splash keeps the user informed while we do.
+fn wait_for_health(
+    app: &AppHandle,
+    port: u16,
+    sidecar_dead: &std::sync::atomic::AtomicBool,
+) -> bool {
     let start = Instant::now();
-    while start.elapsed() < timeout {
-        if health_check_ok(port) {
+    poll_for_health(
+        port,
+        &|| health_check_ok(port),
+        &|| sidecar_dead.load(std::sync::atomic::Ordering::SeqCst),
+        &|| start.elapsed(),
+        &mut |status, detail| set_boot_status(app, status, detail),
+        &|d| std::thread::sleep(d),
+    )
+}
+
+/// The polling loop behind `wait_for_health`, with every side effect passed
+/// in so the waiting policy itself can be unit tested without a real server,
+/// a real clock or a real window (see the tests at the bottom of this file).
+fn poll_for_health(
+    port: u16,
+    healthy: &dyn Fn() -> bool,
+    dead: &dyn Fn() -> bool,
+    elapsed: &dyn Fn() -> Duration,
+    report: &mut dyn FnMut(&str, &str),
+    sleep: &dyn Fn(Duration),
+) -> bool {
+    let mut warned = false;
+    // The poll runs every 300ms but the status line only counts whole
+    // seconds, so repaint at most once per second rather than evaluating JS
+    // in the webview three times for the same text.
+    let mut last_reported_secs = u64::MAX;
+    loop {
+        if healthy() {
             return true;
         }
-        std::thread::sleep(Duration::from_millis(300));
+        // Checked after the health probe: a server that answered and then
+        // exited in the same tick still counts as healthy, and the window
+        // gets its chance to load.
+        if dead() {
+            return false;
+        }
+        let waited = elapsed();
+        if waited >= SLOW_STARTUP_NOTICE && !warned {
+            warned = true;
+            eprintln!(
+                "[medusa-desktop] server still starting after {}s on port {port}; still waiting",
+                waited.as_secs()
+            );
+        }
+        if warned && waited.as_secs() != last_reported_secs {
+            last_reported_secs = waited.as_secs();
+            report(
+                "Still starting the local server…",
+                &format!(
+                    "This is taking longer than usual ({}s). The first launch after an \
+                     update is slower while macOS verifies the new app. Medusa will open \
+                     as soon as the server answers on port {port}.",
+                    waited.as_secs()
+                ),
+            );
+        }
+        sleep(Duration::from_millis(300));
     }
-    false
+}
+
+/// Paints the boot splash into whatever document this window is currently
+/// showing. Runs as part of the window's initialization script, so it also
+/// covers the about:blank document the window starts on -- before the
+/// sidecar is healthy there is no app to show, and an unpainted about:blank
+/// renders as a featureless black rectangle that is indistinguishable from a
+/// crashed app. `set_boot_status` updates the message in place as startup
+/// progresses; the whole splash is discarded by the navigation to the real
+/// UI, since that replaces the document.
+/// Updates the boot splash message shown by client/public/boot.html, the
+/// page this window starts on.
+///
+/// Best-effort, and guarded on the function existing: once the window has
+/// navigated to the real app the splash is gone and this is a no-op. A
+/// failure here only means the user sees a slightly staler status line,
+/// never a broken startup, so errors are swallowed rather than propagated.
+fn set_boot_status(app: &AppHandle, status: &str, detail: &str) {
+    if let Some(window) = app.get_webview_window("main") {
+        let script = format!(
+            "window.__medusaBootStatus && window.__medusaBootStatus({}, {});",
+            serde_json::to_string(status).unwrap_or_else(|_| "\"\"".into()),
+            serde_json::to_string(detail).unwrap_or_else(|_| "\"\"".into()),
+        );
+        let _ = window.eval(&script);
+    }
 }
 
 /// Creates the main window up front, pointed at about:blank, with an
@@ -181,16 +281,20 @@ fn wait_for_health(port: u16, timeout: Duration) -> bool {
 /// (see app/Sources/WebViewController.swift), but as an init script instead
 /// of a one-shot post-load evaluate, since here the token must be present
 /// before the redirected page's own JS (client/src/socket.ts) runs.
+///
+/// The window starts on client/public/boot.html (a real bundled page), not
+/// about:blank. about:blank is why a slow server start looked like a crashed
+/// app: it paints as a solid black rectangle, and neither an initialization
+/// script nor a `WebviewWindow::eval` from Rust reaches that initial empty
+/// document -- both were tried against a real build and neither drew
+/// anything. A bundled page has neither problem, and `set_boot_status` can
+/// talk to it.
 fn create_main_window(app: &AppHandle, auth_token: &str) -> tauri::Result<()> {
     let init_script = format!("localStorage.setItem('auth-token', '{auth_token}');");
 
-    // WebviewUrl::App treats its string as a path *within* frontendDist, so
-    // "about:blank" there would resolve to a missing file in client/dist and
-    // render a blank/errored page. WebviewUrl::External with a real
-    // "about:blank" URL is what actually gives a blank starting page here.
-    let blank = "about:blank".parse().expect("about:blank is a valid URL");
-
-    WebviewWindowBuilder::new(app, "main", WebviewUrl::External(blank))
+    // WebviewUrl::App resolves its path within frontendDist (client/dist),
+    // where vite copies client/public/boot.html verbatim.
+    WebviewWindowBuilder::new(app, "main", WebviewUrl::App("boot.html".into()))
         .title("Medusa")
         .inner_size(1200.0, 800.0)
         .min_inner_size(800.0, 600.0)
@@ -244,6 +348,13 @@ fn start_sidecar_and_navigate(app: &AppHandle, port: u16, auth_token: String) {
 
     let (mut rx, child) = command.spawn().expect("failed to spawn medusa-server sidecar");
 
+    // Set when the sidecar process goes away. `wait_for_health` waits
+    // indefinitely for a *starting* server, so it needs to be told when there
+    // is no longer a server to wait for -- otherwise a sidecar that dies on
+    // startup would spin the poll loop forever behind the splash.
+    let sidecar_dead = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let sidecar_dead_writer = sidecar_dead.clone();
+
     // Drain the sidecar's stdout/stderr into the terminal Tauri was launched
     // from, so `npm run tauri dev` shows server logs like scripts/dev.sh does.
     tauri::async_runtime::spawn(async move {
@@ -258,9 +369,12 @@ fn start_sidecar_and_navigate(app: &AppHandle, port: u16, auth_token: String) {
                 }
                 CommandEvent::Error(err) => {
                     eprintln!("[medusa-server] error: {err}");
+                    sidecar_dead_writer.store(true, std::sync::atomic::Ordering::SeqCst);
+                    break;
                 }
                 CommandEvent::Terminated(payload) => {
                     eprintln!("[medusa-server] exited: {:?}", payload.code);
+                    sidecar_dead_writer.store(true, std::sync::atomic::Ordering::SeqCst);
                     break;
                 }
                 _ => {}
@@ -274,13 +388,26 @@ fn start_sidecar_and_navigate(app: &AppHandle, port: u16, auth_token: String) {
         .unwrap()
         .replace(child);
 
+    // Paint the splash straight away. Until the server answers there is
+    // nothing else in this window, and an unpainted about:blank is a solid
+    // black rectangle that reads as a hung app.
+    set_boot_status(app, "Starting the local server…", "");
+
     let app_handle = app.clone();
     std::thread::spawn(move || {
-        // Same 30s startup budget the Swift ServerManager used (pollHealth timeout).
-        let healthy = wait_for_health(port, Duration::from_secs(30));
+        // Waits for as long as the sidecar is alive and still starting; the
+        // only way out without a healthy server is the sidecar dying.
+        let healthy = wait_for_health(&app_handle, port, &sidecar_dead);
 
         if !healthy {
-            eprintln!("[medusa-desktop] server did not become healthy within 30s on port {port}");
+            eprintln!("[medusa-desktop] medusa-server exited before it became healthy");
+            set_boot_status(
+                &app_handle,
+                "The local server stopped unexpectedly.",
+                "Medusa could not start its server, so there is nothing to show. \
+                 Quit Medusa from the menu bar icon and open it again; if this keeps \
+                 happening, the server's output is in Console.app under medusa-server.",
+            );
             return;
         }
 
@@ -306,6 +433,15 @@ fn start_sidecar_and_navigate(app: &AppHandle, port: u16, auth_token: String) {
                     // up in server access logs.
                     if let Err(e) = window.navigate(target) {
                         eprintln!("[medusa-desktop] failed to navigate window: {e}");
+                        // The splash is still the live document here, so say
+                        // so rather than leaving it on "Starting…" forever.
+                        set_boot_status(
+                            &app_handle,
+                            "Could not open the Medusa interface.",
+                            &format!("The server is running on port {port}, but the window \
+                                      could not load it ({e}). Quit Medusa from the menu bar \
+                                      icon and open it again."),
+                        );
                     }
                 }
                 Err(e) => eprintln!("[medusa-desktop] failed to parse server URL {url}: {e}"),
@@ -515,4 +651,87 @@ fn main() {
                 kill_sidecar(app_handle);
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+
+    /// Drives `poll_for_health` with a fake clock that advances 300ms per
+    /// poll, matching the real sleep interval.
+    struct Harness {
+        polls: Cell<u32>,
+        healthy_after: u32,
+        dead_after: Option<u32>,
+    }
+
+    impl Harness {
+        fn run(&self) -> (bool, Vec<String>) {
+            let reports = std::cell::RefCell::new(Vec::new());
+            let ok = poll_for_health(
+                4321,
+                &|| {
+                    let n = self.polls.get() + 1;
+                    self.polls.set(n);
+                    n >= self.healthy_after
+                },
+                &|| self.dead_after.is_some_and(|d| self.polls.get() >= d),
+                &|| Duration::from_millis(300 * u64::from(self.polls.get())),
+                &mut |status, _detail| reports.borrow_mut().push(status.to_string()),
+                &|_| {},
+            );
+            (ok, reports.into_inner())
+        }
+    }
+
+    /// The regression this file's fix exists for: a server that takes longer
+    /// than the old fixed 30s budget must still be waited for. Before the
+    /// fix, `wait_for_health` returned false here and the caller silently
+    /// returned, leaving the window on an unpainted about:blank forever --
+    /// the "solid black window, no UI, indefinitely" bug.
+    #[test]
+    fn waits_past_the_old_thirty_second_budget() {
+        // 30s at one poll per 300ms is 100 polls; become healthy at 400
+        // (two minutes), far beyond any fixed deadline.
+        let h = Harness { polls: Cell::new(0), healthy_after: 400, dead_after: None };
+        let (ok, _) = h.run();
+        assert!(ok, "a slow-starting server must still be waited for");
+        assert_eq!(h.polls.get(), 400);
+    }
+
+    /// A server that comes up promptly must not be delayed, and must not
+    /// show the "taking longer than usual" notice.
+    #[test]
+    fn returns_immediately_when_already_healthy() {
+        let h = Harness { polls: Cell::new(0), healthy_after: 1, dead_after: None };
+        let (ok, reports) = h.run();
+        assert!(ok);
+        assert_eq!(h.polls.get(), 1);
+        assert!(reports.is_empty(), "no slow-start notice for a fast start");
+    }
+
+    /// Waiting forever is only correct while there is still a process to
+    /// wait for. A sidecar that exits must end the wait so the caller can
+    /// tell the user, rather than spinning behind the splash.
+    #[test]
+    fn gives_up_when_the_sidecar_dies() {
+        let h = Harness { polls: Cell::new(0), healthy_after: u32::MAX, dead_after: Some(5) };
+        let (ok, _) = h.run();
+        assert!(!ok, "a dead sidecar must end the wait");
+    }
+
+    /// Past the notice threshold the user must be told what is happening;
+    /// the black window was as much a reporting failure as a timeout one.
+    #[test]
+    fn reports_slow_startup_to_the_splash() {
+        // SLOW_STARTUP_NOTICE is 20s == 67 polls at 300ms.
+        let h = Harness { polls: Cell::new(0), healthy_after: 120, dead_after: None };
+        let (ok, reports) = h.run();
+        assert!(ok);
+        assert!(
+            reports.iter().any(|r| r.contains("Still starting")),
+            "expected a slow-startup status, got {reports:?}"
+        );
+    }
 }

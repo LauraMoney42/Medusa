@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Medusa</title>
+    <style>
+      /* Matches the app's own body background (client/src/styles/global.css)
+         so the handoff to the real UI is not a visible colour change. */
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #141416;
+        color: #8e8e93;
+        font: 14px system-ui, -apple-system, 'SF Pro Display', 'Segoe UI', sans-serif;
+      }
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .box {
+        text-align: center;
+        line-height: 1.6;
+        padding: 24px;
+        max-width: 460px;
+      }
+      .name {
+        font-size: 17px;
+        color: #e5e5ea;
+        margin-bottom: 8px;
+      }
+      .detail {
+        margin-top: 10px;
+        font-size: 12px;
+        color: #636366;
+      }
+    </style>
+  </head>
+  <body>
+    <!--
+      The desktop shell's boot splash (desktop/src-tauri/src/main.rs).
+
+      The window is created pointed here rather than at about:blank, and is
+      navigated to the real server URL once the sidecar answers /api/health.
+      about:blank was the previous starting page and is why a slow server
+      start looked like a crashed app: an unpainted about:blank renders as a
+      solid black rectangle, and neither an initialization script nor an
+      eval from Rust reaches that initial empty document, so there was no way
+      to say anything to the user. A real page in the bundle has neither
+      problem.
+    -->
+    <div class="box">
+      <div class="name">Medusa</div>
+      <div id="status">Starting the local server…</div>
+      <div class="detail" id="detail"></div>
+    </div>
+    <script>
+      // Called from Rust via WebviewWindow::eval (see set_boot_status).
+      window.__medusaBootStatus = function (status, detail) {
+        var s = document.getElementById('status');
+        var d = document.getElementById('detail');
+        if (s) s.textContent = status;
+        if (d) d.textContent = detail || '';
+      };
+    </script>
+  </body>
+</html>
