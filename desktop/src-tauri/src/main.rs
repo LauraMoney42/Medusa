@@ -93,11 +93,33 @@ fn dirs_home_fallback() -> std::path::PathBuf {
 /// Holds the running sidecar child so it can be killed on window close / app exit.
 struct SidecarState(Mutex<Option<CommandChild>>);
 
-/// Picks a free TCP port on 127.0.0.1 by binding to port 0 and reading back
-/// the OS-assigned port, then immediately releasing the listener. There is a
-/// small race between releasing the listener and the sidecar binding the same
-/// port, but it mirrors what the previous Swift shell already tolerated.
+/// Prefer this fixed port across launches so the webview's origin
+/// (http://127.0.0.1:<port>) stays stable. A stable origin means WKWebView's
+/// localStorage for this app is the SAME storage every time, so data written
+/// last week is still readable and versioned as expected. A random port
+/// every launch (the previous behavior) made each run a distinct origin,
+/// which mostly meant a fresh, empty localStorage -- until the OS's ephemeral
+/// port allocator happened to recycle a port an EARLIER, unrelated launch had
+/// used, at which point WKWebView silently resurrected that old origin's
+/// leftover data. If that data predates a schema change (a store shape that
+/// no longer matches what the current bundle expects), reading it can throw
+/// during module evaluation -- before React even mounts, before any
+/// ErrorBoundary exists to catch it -- producing a permanently blank window
+/// with no error visible anywhere. A stable port turns that from "rare,
+/// unreproducible, silent" into "the same origin every time," so real data
+/// migrations are the only source of schema drift, not port-recycling luck.
+const PREFERRED_PORT: u16 = 51763;
+
+/// Binds to `PREFERRED_PORT` if it's free, else falls back to an OS-assigned
+/// ephemeral port (binding to port 0 and reading back the assignment), then
+/// immediately releases the listener. There is a small race between
+/// releasing the listener and the sidecar binding the same port, but it
+/// mirrors what the previous Swift shell already tolerated.
 fn pick_free_port() -> u16 {
+    if let Ok(listener) = TcpListener::bind(("127.0.0.1", PREFERRED_PORT)) {
+        drop(listener);
+        return PREFERRED_PORT;
+    }
     let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind to an ephemeral port");
     let port = listener.local_addr().expect("failed to read local addr").port();
     drop(listener);
